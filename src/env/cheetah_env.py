@@ -206,7 +206,7 @@ class MiniCheetahEnv(gym.Env):
         ]).astype(np.float32)
 
         if self.randomize_domain:
-            obs += np.random.randn(OBS_DIM).astype(np.float32) * 0.02
+            obs += self.np_random.standard_normal(OBS_DIM).astype(np.float32) * 0.02
 
         return obs
 
@@ -305,11 +305,12 @@ class MiniCheetahEnv(gym.Env):
 
     def _apply_domain_randomization(self):
         rng = self.np_random if hasattr(self, 'np_random') else np.random
-        mass_scale = rng.uniform(0.8, 1.2)
         friction_scale = rng.uniform(0.5, 1.5)
 
+        # Per-body mass randomization for more realistic variation
         for i in range(self.model.nbody):
-            self.model.body_mass[i] = self._base_masses[i] * mass_scale
+            body_scale = rng.uniform(0.85, 1.15)
+            self.model.body_mass[i] = self._base_masses[i] * body_scale
 
         # Floor friction
         for i in range(self.model.ngeom):
@@ -321,11 +322,14 @@ class MiniCheetahEnv(gym.Env):
 
     @staticmethod
     def _quat_rotate_inv(quat, vec):
-        """Rotate a world-frame vector into body frame. MuJoCo quat = [w,x,y,z]."""
+        """Rotate a world-frame vector into body frame. MuJoCo quat = [w,x,y,z].
+
+        Computes q_conj * v * q (inverse/passive rotation).
+        Uses Rodrigues formula with negated q_vec for conjugate.
+        """
         w, x, y, z = quat
         v = np.array(vec, dtype=np.float64)
         q_vec = np.array([x, y, z], dtype=np.float64)
-        # v_body = R^T @ v = q_conj * v * q
         t = 2.0 * np.cross(q_vec, v)
-        result = v + w * t + np.cross(q_vec, t)
+        result = v - w * t + np.cross(q_vec, t)
         return result.astype(np.float32)

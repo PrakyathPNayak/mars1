@@ -283,12 +283,15 @@ class AdvancedTerrainEnv(gym.Env):
     def _find_model(self):
         base = os.path.dirname(os.path.abspath(__file__))
         project_root = os.path.dirname(os.path.dirname(base))
+        # Terrain env uses the heightfield-enabled XML
+        terrain_xml = os.path.join(project_root, "assets", "mini_cheetah_terrain.xml")
+        if os.path.exists(terrain_xml):
+            return terrain_xml
+        # Fallback to flat-floor XML
         primary = os.path.join(project_root, "assets", "mini_cheetah.xml")
         if os.path.exists(primary):
             return primary
-        if os.path.exists("assets/mini_cheetah.xml"):
-            return os.path.abspath("assets/mini_cheetah.xml")
-        raise FileNotFoundError(f"Cannot find mini_cheetah.xml")
+        raise FileNotFoundError(f"Cannot find mini_cheetah_terrain.xml or mini_cheetah.xml")
 
     def _init_simulator(self):
         import mujoco
@@ -299,6 +302,17 @@ class AdvancedTerrainEnv(gym.Env):
         self.model = mujoco.MjModel.from_xml_path(model_path)
         self.data = mujoco.MjData(self.model)
         self._base_masses = self.model.body_mass.copy()
+
+        # Cache hfield id for terrain updates
+        self._hfield_id = mujoco.mj_name2id(
+            self.model, mujoco.mjtObj.mjOBJ_HFIELD, "terrain"
+        )
+        self._has_hfield = self._hfield_id >= 0
+        # Cache floor geom id for height offset
+        self._floor_geom_id = mujoco.mj_name2id(
+            self.model, mujoco.mjtObj.mjOBJ_GEOM, "floor"
+        )
+
         self.viewer = None
         self.renderer = None
         if self.render_mode == "rgb_array":
@@ -315,16 +329,6 @@ class AdvancedTerrainEnv(gym.Env):
         mujoco.mj_resetData(self.model, self.data)
         self.model.body_mass[:] = self._base_masses
 
-        # Set initial pose
-        self.data.qpos[2] = 0.32
-        self.data.qpos[3] = 1.0
-        self.data.qpos[4:7] = 0.0
-        self.data.qpos[7:7 + NUM_JOINTS] = DEFAULT_STANCE
-        mujoco.mj_forward(self.model, self.data)
-
-        if self.randomize_domain:
-            self._apply_domain_randomization()
-
         # Randomize terrain
         rng = self.np_random if hasattr(self, 'np_random') and self.np_random is not None else np.random
         if self.randomize_terrain:
@@ -332,7 +336,40 @@ class AdvancedTerrainEnv(gym.Env):
             self.terrain_type = str(rng.choice(terrain_types))
             self.difficulty = float(rng.uniform(0.0, 1.0))
         self.terrain_gen = TerrainGenerator(seed=int(rng.integers(0, 2**31)) if hasattr(rng, 'integers') else int(rng.randint(0, 2**31)))
-        self.terrain_gen.generate(self.terrain_type, self.difficulty)
+        heights = self.terrain_gen.generate(self.terrain_type, self.difficulty)
+
+        # Apply heightfield to MuJoCo physics
+        start_terrain_height = 0.0
+        if self._has_hfield:
+            h_min, h_max = float(heights.min()), float(heights.max())
+            h_range = h_max - h_min
+            if h_range > 1e-6:
+                normalized = (heights - h_min) / h_range
+            else:
+                normalized = np.zeros_like(heights)
+            self.model.hfield_data[:] = normalized.flatten().astype(np.float32)
+            # Update hfield z-size to match actual height range
+            self.model.hfield_size[self._hfield_id][2] = max(h_range, 0.001)
+            self.model.hfield_size[self._hfield_id][3] = 0.01
+            # Offset floor geom so data=0 maps to h_min in world frame
+            if self._floor_geom_id >= 0:
+                self.model.geom_pos[self._floor_geom_id][2] = h_min
+            # Terrain height under robot spawn (center of hfield)
+            n = self.terrain_gen.resolution
+            center = n // 2
+            r = max(1, n // 20)
+            patch = heights[center - r:center + r, center - r:center + r]
+            start_terrain_height = float(patch.mean()) if patch.size > 0 else 0.0
+
+        # Set initial pose — adjust for terrain height
+        self.data.qpos[2] = 0.32 + start_terrain_height
+        self.data.qpos[3] = 1.0
+        self.data.qpos[4:7] = 0.0
+        self.data.qpos[7:7 + NUM_JOINTS] = DEFAULT_STANCE
+        mujoco.mj_forward(self.model, self.data)
+
+        if self.randomize_domain:
+            self._apply_domain_randomization()
 
         # Randomize skill mode
         if self.randomize_skill:
@@ -410,7 +447,7 @@ class AdvancedTerrainEnv(gym.Env):
         ]).astype(np.float32)
 
         if self.randomize_domain:
-            obs[:BASE_OBS_DIM] += np.random.randn(BASE_OBS_DIM).astype(np.float32) * 0.02
+            obs[:BASE_OBS_DIM] += self.np_random.standard_normal(BASE_OBS_DIM).astype(np.float32) * 0.02
 
         return obs
 
@@ -468,7 +505,7 @@ class AdvancedTerrainEnv(gym.Env):
 
         # -- Terrain adaptability: reward for traversing rough terrain --
         terrain_difficulty = self._terrain_encoding[1] + self._terrain_encoding[7]  # std + gap
-        r_terrain = 0.2 * terrain_difficulty * (base_linvel[0] > 0.1)
+        r_terrain = 0.2 * terrain_difficulty * float(base_linvel[0] > 0.1)
 
         total = (r_linvel + r_yaw + r_height + r_orientation +
                  r_lin_vel_z + r_ang_vel_xy + r_torque + r_smooth +
@@ -520,11 +557,12 @@ class AdvancedTerrainEnv(gym.Env):
 
     def _apply_domain_randomization(self):
         rng = self.np_random if hasattr(self, 'np_random') else np.random
-        mass_scale = rng.uniform(0.8, 1.2)
         friction_scale = rng.uniform(0.5, 1.5)
 
+        # Per-body mass randomization for more realistic variation
         for i in range(self.model.nbody):
-            self.model.body_mass[i] = self._base_masses[i] * mass_scale
+            body_scale = rng.uniform(0.85, 1.15)
+            self.model.body_mass[i] = self._base_masses[i] * body_scale
 
         for i in range(self.model.ngeom):
             name = self._mj.mj_id2name(self.model, self._mj.mjtObj.mjOBJ_GEOM, i)
@@ -578,9 +616,13 @@ class AdvancedTerrainEnv(gym.Env):
 
     @staticmethod
     def _quat_rotate_inv(quat, vec):
+        """Rotate a world-frame vector into body frame. MuJoCo quat = [w,x,y,z].
+
+        Computes q_conj * v * q (inverse/passive rotation).
+        """
         w, x, y, z = quat
         v = np.array(vec, dtype=np.float64)
         q_vec = np.array([x, y, z], dtype=np.float64)
         t = 2.0 * np.cross(q_vec, v)
-        result = v + w * t + np.cross(q_vec, t)
+        result = v - w * t + np.cross(q_vec, t)
         return result.astype(np.float32)

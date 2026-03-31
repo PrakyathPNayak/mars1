@@ -1,0 +1,12 @@
+.git
+__pycache__
+*.pyc
+*.pyo
+.devcontainer
+logs/
+*.zip
+*.tar.gz
+env/
+.venv/
+node_modules/
+key.txt

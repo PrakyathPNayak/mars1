@@ -161,8 +161,10 @@ class TransformerExtractor(BaseFeaturesExtractor):
             nn.SiLU(),
         )
 
-        # Step counter for phase oscillator
-        self._step_counter = 0
+        # Step counter for phase oscillator (buffer so it survives save/load)
+        self.register_buffer(
+            "_step_counter_buf", torch.tensor(0, dtype=torch.long)
+        )
 
         self._init_weights()
 
@@ -231,8 +233,10 @@ class TransformerExtractor(BaseFeaturesExtractor):
         terrain_features, _ = self.terrain_estimator(norm_history)
 
         # Gait phase
-        step_count = torch.full((batch_size,), self._step_counter, device=device)
-        self._step_counter += 1
+        step_count = torch.full(
+            (batch_size,), self._step_counter_buf.item(), device=device
+        )
+        self._step_counter_buf += 1
         command = latest_obs[..., 45:48]
         phase_features = self.phase_oscillator(step_count, command)
 

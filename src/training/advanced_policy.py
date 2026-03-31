@@ -340,8 +340,10 @@ class MixtureOfExperts(nn.Module):
             p = F.softmax(gate_logits, dim=-1).mean(dim=0)  # (n_experts,)
             balance_loss = self.n_experts * (f * p).sum()
             self._last_balance_loss = balance_loss.item()
-            # Add small load-balance gradient to output
-            output = output + 0.0 * balance_loss  # attach to graph
+            # Straight-through estimator: adds zero to forward pass but
+            # backpropagates the balance loss gradient through gate params
+            auxiliary = self.load_balance_coeff * balance_loss
+            output = output + (auxiliary - auxiliary.detach())
             # Store for external access
             self._balance_loss = balance_loss
 
@@ -666,7 +668,7 @@ class TransformerFeaturesExtractor(nn.Module):
 
         # Symmetry on latest
         latest_enc = encoded[:, -1]
-        sym_enc = self.symmetry_aug(obs, latest_enc, self.encode_single)
+        sym_enc = self.symmetry_aug(obs, latest_enc)
         encoded = encoded.clone()
         encoded[:, -1] = sym_enc
 
