@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MIT Mini Cheetah — MuJoCo MJCF model (corrected to match official MIT parameters)
+
+  Source: https://github.com/mit-biomimetics/Cheetah-Software
+  File:   common/include/Dynamics/MiniCheetah.h
+
+  Key official parameters:
+    Body mass:        3.3 kg
+    Body dimensions:  0.38 x 0.098 x 0.10 m (L x W x H)
+    Body inertia:     diag(0.011253, 0.036203, 0.042673) kg·m²
+    Abad link:        0.062 m, 0.54 kg
+    Hip (thigh) link: 0.209 m, 0.634 kg
+    Knee (shin) link: 0.195 m, 0.064 kg
+    Gear ratios:      abad=6, hip=6, knee=9.33
+    Motor tau max:    3.0 Nm → joint torque max = 18/18/28 Nm
+    Joint damping:    0.01, dry friction: 0.2
+-->
+<mujoco model="mini_cheetah">
+  <compiler angle="radian" autolimits="true" balanceinertia="true"/>
+
+  <option timestep="0.002" gravity="0 0 -9.81" iterations="50" solver="Newton" cone="elliptic"/>
+
+  <visual>
+    <headlight ambient="0.5 0.5 0.5" diffuse="0.8 0.8 0.8" specular="0.1 0.1 0.1"/>
+    <map force="0.1" zfar="30"/>
+    <quality shadowsize="2048"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.4 0.6 0.8" rgb2="0.05 0.05 0.2" width="100" height="100"/>
+    <texture name="floor_tex" type="2d" builtin="checker" rgb1="0.6 0.6 0.6" rgb2="0.4 0.4 0.4" width="300" height="300"/>
+    <material name="floor_mat" texture="floor_tex" texrepeat="10 10" specular="0.5" shininess="0.3" reflectance="0.1"/>
+    <material name="body_mat" rgba="0.2 0.3 0.8 1" specular="0.5" shininess="0.8"/>
+    <material name="leg_mat" rgba="0.25 0.25 0.25 1" specular="0.3" shininess="0.5"/>
+    <material name="foot_mat" rgba="0.1 0.1 0.1 1" specular="0.2" shininess="0.3"/>
+  </asset>
+
+  <default>
+    <joint limited="true" armature="0.01" damping="0.01"/>
+    <geom condim="6" friction="0.8 0.02 0.01" margin="0.001"/>
+    <!-- Abad/hip motors: 3 Nm * gear 6 = 18 Nm max -->
+    <motor ctrllimited="true" ctrlrange="-18.0 18.0"/>
+  </default>
+
+  <worldbody>
+    <light name="top" pos="0 0 3" dir="0 0 -1" directional="true" diffuse="0.8 0.8 0.8" specular="0.2 0.2 0.2"/>
+    <light name="front" pos="2 -2 2" dir="-1 1 -1" diffuse="0.3 0.3 0.3"/>
+    <geom name="floor" type="plane" size="50 50 0.1" material="floor_mat" condim="6" friction="1.0 0.005 0.0001"/>
+
+    <!-- Robot body: 3.3 kg, inertia from CAD -->
+    <body name="base" pos="0 0 0.300">
+      <freejoint name="root"/>
+      <inertial pos="0 0 0" mass="3.3" fullinertia="0.011253 0.036203 0.042673 0 0 0"/>
+      <geom name="body_box" type="box" size="0.1900 0.0490 0.0500" material="body_mat" contype="0" conaffinity="0"/>
+      <site name="imu_site" pos="0 0 0" size="0.01"/>
+
+      <!-- ============================================================ -->
+      <!-- FR leg (Front Right): y-negative side                        -->
+      <!-- Abad at (bodyLength/2, -bodyWidth/2, 0) = (0.19, -0.049, 0) -->
+      <!-- ============================================================ -->
+      <body name="FR_hip" pos="0.1900 -0.0490 0">
+        <inertial pos="0 -0.036 0" mass="0.54" fullinertia="0.000381 0.000560 0.000444 0.000058 0.00000045 0.00000095"/>
+        <joint name="FR_hip_abduct" axis="1 0 0" range="-0.523 0.523" damping="0.01" armature="0.01"/>
+        <geom name="FR_hip_geom" type="capsule" size="0.025 0.02" quat="0.707 0 0.707 0" material="leg_mat" contype="0" conaffinity="0"/>
+
+        <body name="FR_thigh" pos="0 -0.0620 0">
+          <inertial pos="0 -0.016 -0.02" mass="0.634" fullinertia="0.001983 0.002103 0.000408 0.000245 0.000013 0.0000015"/>
+          <joint name="FR_hip_rotate" axis="0 1 0" range="-1.047 1.047" damping="0.01" armature="0.01"/>
+          <geom name="FR_thigh_geom" type="capsule" fromto="0 0 0 0 0 -0.2090" size="0.018" material="leg_mat" contype="0" conaffinity="0"/>
+
+          <body name="FR_shin" pos="0 0 -0.2090">
+            <inertial pos="0 0 -0.061" mass="0.064" fullinertia="0.000248 0.000245 0.000006 0 0 0"/>
+            <joint name="FR_knee" axis="0 1 0" range="-2.697 -0.524" damping="0.01" armature="0.01"/>
+            <geom name="FR_shin_geom" type="capsule" fromto="0 0 0 0 0 -0.1950" size="0.013" material="leg_mat" contype="0" conaffinity="0"/>
+
+            <body name="FR_foot" pos="0 0 -0.1950">
+              <inertial pos="0 0 0" mass="0.01" diaginertia="0.000001 0.000001 0.000001"/>
+              <geom name="FR_foot_geom" type="sphere" size="0.0200" material="foot_mat" condim="6" friction="1.5 0.005 0.0001" solimp="0.9 0.95 0.001" solref="0.02 1"/>
+              <site name="FR_foot_site" pos="0 0 0" size="0.01"/>
+            </body>
+          </body>
+        </body>
+      </body>
+
+      <!-- ============================================================ -->
+      <!-- FL leg (Front Left): y-positive side                         -->
+      <!-- Abad at (bodyLength/2, +bodyWidth/2, 0) = (0.19, +0.049, 0) -->
+      <!-- ============================================================ -->
+      <body name="FL_hip" pos="0.1900 0.0490 0">
+        <inertial pos="0 0.036 0" mass="0.54" fullinertia="0.000381 0.000560 0.000444 0.000058 0.00000045 0.00000095"/>
+        <joint name="FL_hip_abduct" axis="1 0 0" range="-0.523 0.523" damping="0.01" armature="0.01"/>
+        <geom name="FL_hip_geom" type="capsule" size="0.025 0.02" quat="0.707 0 0.707 0" material="leg_mat" contype="0" conaffinity="0"/>
+
+        <body name="FL_thigh" pos="0 0.0620 0">
+          <inertial pos="0 0.016 -0.02" mass="0.634" fullinertia="0.001983 0.002103 0.000408 0.000245 0.000013 0.0000015"/>
+          <joint name="FL_hip_rotate" axis="0 1 0" range="-1.047 1.047" damping="0.01" armature="0.01"/>
+          <geom name="FL_thigh_geom" type="capsule" fromto="0 0 0 0 0 -0.2090" size="0.018" material="leg_mat" contype="0" conaffinity="0"/>
+
+          <body name="FL_shin" pos="0 0 -0.2090">
+            <inertial pos="0 0 -0.061" mass="0.064" fullinertia="0.000248 0.000245 0.000006 0 0 0"/>
+            <joint name="FL_knee" axis="0 1 0" range="-2.697 -0.524" damping="0.01" armature="0.01"/>
+            <geom name="FL_shin_geom" type="capsule" fromto="0 0 0 0 0 -0.1950" size="0.013" material="leg_mat" contype="0" conaffinity="0"/>
+
+            <body name="FL_foot" pos="0 0 -0.1950">
+              <inertial pos="0 0 0" mass="0.01" diaginertia="0.000001 0.000001 0.000001"/>
+              <geom name="FL_foot_geom" type="sphere" size="0.0200" material="foot_mat" condim="6" friction="1.5 0.005 0.0001" solimp="0.9 0.95 0.001" solref="0.02 1"/>
+              <site name="FL_foot_site" pos="0 0 0" size="0.01"/>
+            </body>
+          </body>
+        </body>
+      </body>
+
+      <!-- ============================================================ -->
+      <!-- RR leg (Rear Right): y-negative side                         -->
+      <!-- ============================================================ -->
+      <body name="RR_hip" pos="-0.1900 -0.0490 0">
+        <inertial pos="0 -0.036 0" mass="0.54" fullinertia="0.000381 0.000560 0.000444 0.000058 0.00000045 0.00000095"/>
+        <joint name="RR_hip_abduct" axis="1 0 0" range="-0.523 0.523" damping="0.01" armature="0.01"/>
+        <geom name="RR_hip_geom" type="capsule" size="0.025 0.02" quat="0.707 0 0.707 0" material="leg_mat" contype="0" conaffinity="0"/>
+
+        <body name="RR_thigh" pos="0 -0.0620 0">
+          <inertial pos="0 -0.016 -0.02" mass="0.634" fullinertia="0.001983 0.002103 0.000408 0.000245 0.000013 0.0000015"/>
+          <joint name="RR_hip_rotate" axis="0 1 0" range="-1.047 1.047" damping="0.01" armature="0.01"/>
+          <geom name="RR_thigh_geom" type="capsule" fromto="0 0 0 0 0 -0.2090" size="0.018" material="leg_mat" contype="0" conaffinity="0"/>
+
+          <body name="RR_shin" pos="0 0 -0.2090">
+            <inertial pos="0 0 -0.061" mass="0.064" fullinertia="0.000248 0.000245 0.000006 0 0 0"/>
+            <joint name="RR_knee" axis="0 1 0" range="-2.697 -0.524" damping="0.01" armature="0.01"/>
+            <geom name="RR_shin_geom" type="capsule" fromto="0 0 0 0 0 -0.1950" size="0.013" material="leg_mat" contype="0" conaffinity="0"/>
+
+            <body name="RR_foot" pos="0 0 -0.1950">
+              <inertial pos="0 0 0" mass="0.01" diaginertia="0.000001 0.000001 0.000001"/>
+              <geom name="RR_foot_geom" type="sphere" size="0.0200" material="foot_mat" condim="6" friction="1.5 0.005 0.0001" solimp="0.9 0.95 0.001" solref="0.02 1"/>
+              <site name="RR_foot_site" pos="0 0 0" size="0.01"/>
+            </body>
+          </body>
+        </body>
+      </body>
+
+      <!-- ============================================================ -->
+      <!-- RL leg (Rear Left): y-positive side                          -->
+      <!-- ============================================================ -->
+      <body name="RL_hip" pos="-0.1900 0.0490 0">
+        <inertial pos="0 0.036 0" mass="0.54" fullinertia="0.000381 0.000560 0.000444 0.000058 0.00000045 0.00000095"/>
+        <joint name="RL_hip_abduct" axis="1 0 0" range="-0.523 0.523" damping="0.01" armature="0.01"/>
+        <geom name="RL_hip_geom" type="capsule" size="0.025 0.02" quat="0.707 0 0.707 0" material="leg_mat" contype="0" conaffinity="0"/>
+
+        <body name="RL_thigh" pos="0 0.0620 0">
+          <inertial pos="0 0.016 -0.02" mass="0.634" fullinertia="0.001983 0.002103 0.000408 0.000245 0.000013 0.0000015"/>
+          <joint name="RL_hip_rotate" axis="0 1 0" range="-1.047 1.047" damping="0.01" armature="0.01"/>
+          <geom name="RL_thigh_geom" type="capsule" fromto="0 0 0 0 0 -0.2090" size="0.018" material="leg_mat" contype="0" conaffinity="0"/>
+
+          <body name="RL_shin" pos="0 0 -0.2090">
+            <inertial pos="0 0 -0.061" mass="0.064" fullinertia="0.000248 0.000245 0.000006 0 0 0"/>
+            <joint name="RL_knee" axis="0 1 0" range="-2.697 -0.524" damping="0.01" armature="0.01"/>
+            <geom name="RL_shin_geom" type="capsule" fromto="0 0 0 0 0 -0.1950" size="0.013" material="leg_mat" contype="0" conaffinity="0"/>
+
+            <body name="RL_foot" pos="0 0 -0.1950">
+              <inertial pos="0 0 0" mass="0.01" diaginertia="0.000001 0.000001 0.000001"/>
+              <geom name="RL_foot_geom" type="sphere" size="0.0200" material="foot_mat" condim="6" friction="1.5 0.005 0.0001" solimp="0.9 0.95 0.001" solref="0.02 1"/>
+              <site name="RL_foot_site" pos="0 0 0" size="0.01"/>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <!-- Abad/hip: 3 Nm * gear 6 = 18 Nm; Knee: 3 Nm * gear 9.33 = 28 Nm -->
+    <motor name="FR_hip_abduct_motor" joint="FR_hip_abduct" gear="1" ctrlrange="-18.0 18.0"/>
+    <motor name="FR_hip_rotate_motor" joint="FR_hip_rotate" gear="1" ctrlrange="-18.0 18.0"/>
+    <motor name="FR_knee_motor"       joint="FR_knee"        gear="1" ctrlrange="-28.0 28.0"/>
+    <motor name="FL_hip_abduct_motor" joint="FL_hip_abduct" gear="1" ctrlrange="-18.0 18.0"/>
+    <motor name="FL_hip_rotate_motor" joint="FL_hip_rotate" gear="1" ctrlrange="-18.0 18.0"/>
+    <motor name="FL_knee_motor"       joint="FL_knee"        gear="1" ctrlrange="-28.0 28.0"/>
+    <motor name="RR_hip_abduct_motor" joint="RR_hip_abduct" gear="1" ctrlrange="-18.0 18.0"/>
+    <motor name="RR_hip_rotate_motor" joint="RR_hip_rotate" gear="1" ctrlrange="-18.0 18.0"/>
+    <motor name="RR_knee_motor"       joint="RR_knee"        gear="1" ctrlrange="-28.0 28.0"/>
+    <motor name="RL_hip_abduct_motor" joint="RL_hip_abduct" gear="1" ctrlrange="-18.0 18.0"/>
+    <motor name="RL_hip_rotate_motor" joint="RL_hip_rotate" gear="1" ctrlrange="-18.0 18.0"/>
+    <motor name="RL_knee_motor"       joint="RL_knee"        gear="1" ctrlrange="-28.0 28.0"/>
+  </actuator>
+
+  <sensor>
+    <framelinvel name="base_linvel" objtype="site" objname="imu_site"/>
+    <frameangvel name="base_angvel" objtype="site" objname="imu_site"/>
+    <framequat name="base_quat" objtype="site" objname="imu_site"/>
+    <accelerometer name="base_accel" site="imu_site"/>
+    <gyro name="base_gyro" site="imu_site"/>
+  </sensor>
+</mujoco>

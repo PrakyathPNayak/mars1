@@ -1,0 +1,19 @@
+{
+  "body_mass": 6.0,
+  "body_length": 0.4,
+  "body_width": 0.1,
+  "body_height": 0.05,
+  "thigh_length": 0.209,
+  "calf_length": 0.175,
+  "foot_radius": 0.02,
+  "hip_offset_lateral": 0.062,
+  "hip_offset_sagittal": 0.19,
+  "clearance_height": 0.3,
+  "hip_abduction_range": 0.523,
+  "hip_rotation_range": 1.047,
+  "knee_min": -2.697,
+  "knee_max": -0.524,
+  "actuator_kp": 80.0,
+  "actuator_kd": 1.0,
+  "max_torque": 17.0
+}

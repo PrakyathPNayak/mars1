@@ -1,0 +1,52 @@
+// =============================================================================
+// Dev Container configuration — MuJoCo Playground + GPU passthrough
+// =============================================================================
+{
+    "name": "MuJoCo Playground – Legged Locomotion",
+    // Build from the Dockerfile in this directory
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": "."
+    },
+    // Docker run arguments — GPU access and shared memory
+    "runArgs": [
+        "--gpus=all",
+        "--ipc=host",
+        "--privileged"
+    ],
+    // Container environment variables
+    "containerEnv": {
+        "DISPLAY": "${localEnv:DISPLAY}",
+        "NVIDIA_VISIBLE_DEVICES": "all",
+        "NVIDIA_DRIVER_CAPABILITIES": "compute,utility,graphics,display",
+        "MUJOCO_GL": "egl"
+    },
+    // Bind mounts — SSH keys (readonly)
+    // Note: X11 socket bind mount removed; Docker Desktop on Linux runs containers
+    // inside a VM and cannot access the host's /tmp/.X11-unix socket directory.
+    // MuJoCo rendering uses EGL (MUJOCO_GL=egl) which works without X11.
+    "mounts": [
+        "source=${localEnv:HOME}/.ssh,target=/root/.ssh,type=bind,readonly"
+    ],
+    // VS Code extensions to install inside the container
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "GitHub.copilot",
+                "GitHub.copilot-chat",
+                "ms-python.python",
+                "ms-python.vscode-pylance"
+            ],
+            "settings": {
+                "python.defaultInterpreterPath": "/usr/bin/python3.11",
+                "python.terminal.activateEnvironment": false,
+                "terminal.integrated.defaultProfile.linux": "bash"
+            }
+        }
+    },
+    // Post-create: authenticate Git via GitHub CLI
+    "postCreateCommand": "gh auth setup-git || true",
+    // Set the workspace folder inside the container
+    "workspaceFolder": "/workspace",
+    "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached"
+}
