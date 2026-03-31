@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mini Cheetah — Test & Performance Report</title>
+<style>
+  :root {
+    --bg: #0d1117; --card-bg: #161b22; --border: #30363d;
+    --text: #c9d1d9; --text-muted: #8b949e; --green: #3fb950;
+    --red: #f85149; --yellow: #d29922; --blue: #58a6ff;
+    --purple: #bc8cff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+    background: var(--bg); color: var(--text); padding: 24px;
+    max-width: 1200px; margin: 0 auto;
+  }
+  h1 { color: var(--blue); margin-bottom: 8px; }
+  h2 { color: var(--purple); margin: 24px 0 12px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  h3 { color: var(--text-muted); margin: 16px 0 8px; }
+  .meta { color: var(--text-muted); font-size: 14px; margin-bottom: 20px; }
+  .summary-cards { display: flex; gap: 16px; flex-wrap: wrap; margin: 16px 0; }
+  .card {
+    background: var(--card-bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px; min-width: 140px; flex: 1;
+  }
+  .card .label { color: var(--text-muted); font-size: 12px; text-transform: uppercase; }
+  .card .value { font-size: 28px; font-weight: bold; margin-top: 4px; }
+  .card .value.pass { color: var(--green); }
+  .card .value.fail { color: var(--red); }
+  .card .value.neutral { color: var(--blue); }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  th { color: var(--text-muted); font-size: 12px; text-transform: uppercase; background: var(--card-bg); }
+  tr:hover { background: rgba(88,166,255,0.05); }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 12px;
+    font-size: 12px; font-weight: bold;
+  }
+  .badge.pass { background: rgba(63,185,80,0.2); color: var(--green); }
+  .badge.fail { background: rgba(248,81,73,0.2); color: var(--red); }
+  .bar-container { width: 100%; height: 6px; background: var(--border); border-radius: 3px; }
+  .bar { height: 6px; border-radius: 3px; transition: width 0.3s; }
+  .bar.green { background: var(--green); }
+  .bar.red { background: var(--red); }
+  .bar.blue { background: var(--blue); }
+  pre { background: var(--card-bg); padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 13px; }
+  .chart-bar {
+    display: flex; align-items: center; margin: 4px 0;
+  }
+  .chart-bar .label { width: 160px; font-size: 13px; color: var(--text-muted); }
+  .chart-bar .bar-wrap { flex: 1; height: 20px; background: var(--border); border-radius: 4px; position: relative; }
+  .chart-bar .bar-fill { height: 100%; border-radius: 4px; }
+  .chart-bar .bar-val { position: absolute; right: 8px; top: 2px; font-size: 12px; color: var(--text); }
+</style>
+</head>
+<body>
+
+<h1>Mini Cheetah — Test & Performance Report</h1>
+<p class="meta">Generated: 2026-03-31 14:44:29 &nbsp;|&nbsp; Duration: 5.6s</p>
+
+<div class="summary-cards">
+  <div class="card">
+    <div class="label">Total Tests</div>
+    <div class="value neutral">23</div>
+  </div>
+  <div class="card">
+    <div class="label">Passed</div>
+    <div class="value pass">23</div>
+  </div>
+  <div class="card">
+    <div class="label">Failed</div>
+    <div class="value pass">0</div>
+  </div>
+  <div class="card">
+    <div class="label">Pass Rate</div>
+    <div class="value pass">100%</div>
+  </div>
+</div>
+
+<h2>Unit Tests (18/18)</h2>
+<table>
+<tr><th>Test</th><th>Status</th><th>Duration</th><th>Details</th></tr>
+<tr><td>env_creation</td><td><span class="badge pass">PASS</span></td><td>1.32s</td><td>obs_dim=48</td></tr>
+<tr><td>env_step</td><td><span class="badge pass">PASS</span></td><td>0.10s</td><td>reward=1.2803</td></tr>
+<tr><td>env_action_space</td><td><span class="badge pass">PASS</span></td><td>0.07s</td><td></td></tr>
+<tr><td>env_observation_space</td><td><span class="badge pass">PASS</span></td><td>0.06s</td><td></td></tr>
+<tr><td>env_domain_randomization</td><td><span class="badge pass">PASS</span></td><td>0.07s</td><td></td></tr>
+<tr><td>env_episode_termination</td><td><span class="badge pass">PASS</span></td><td>0.07s</td><td></td></tr>
+<tr><td>terrain_generator_all_types</td><td><span class="badge pass">PASS</span></td><td>0.11s</td><td>flat.min=0.0000, flat.max=0.0000, rough.min=-0.0218, rough.max=0.0251, slope_up.min=0.0000, slope_up.max=2.6259, slope_down.min=-2.6259, slope_down.max=-0.0000, stairs_up.min=0.0000, stairs_up.max=0.9450, stairs_down.min=0.0000, stairs_down.max=0.9450, gaps.min=-0.2500, gaps.max=0.0000, stepping_stones.min=-0.0750, stepping_stones.max=0.0478, random_blocks.min=0.0000, random_blocks.max=0.2215, mixed.min=-0.2500, mixed.max=0.9450</td></tr>
+<tr><td>terrain_env_creation</td><td><span class="badge pass">PASS</span></td><td>0.08s</td><td>obs_dim=57</td></tr>
+<tr><td>terrain_env_step</td><td><span class="badge pass">PASS</span></td><td>0.06s</td><td>reward=1.3180605, components=11</td></tr>
+<tr><td>terrain_env_skill_modes</td><td><span class="badge pass">PASS</span></td><td>0.07s</td><td>walk=1.3180605, trot=0.9327709, run=0.8559715, jump=1.946279, crouch=2.0504127, stand=2.2531667</td></tr>
+<tr><td>terrain_foot_contacts</td><td><span class="badge pass">PASS</span></td><td>0.08s</td><td>contacts=[1.0, 1.0, 1.0, 1.0]</td></tr>
+<tr><td>terrain_encoding</td><td><span class="badge pass">PASS</span></td><td>0.00s</td><td>encoding=[0.0016876913141459227, 0.006738555151969194, 0.019199898466</td></tr>
+<tr><td>curriculum_basic</td><td><span class="badge pass">PASS</span></td><td>0.00s</td><td>level=7, terrain=rough_stairs</td></tr>
+<tr><td>curriculum_advanced</td><td><span class="badge pass">PASS</span></td><td>0.00s</td><td>terrain_type=stairs_up, difficulty=0.6000, skill_mode=walk</td></tr>
+<tr><td>policy_forward</td><td><span class="badge pass">PASS</span></td><td>0.79s</td><td>n_params=346661</td></tr>
+<tr><td>policy_components</td><td><span class="badge pass">PASS</span></td><td>0.00s</td><td>phase_shape=[1, 64], terrain_feat_shape=[2, 64]</td></tr>
+<tr><td>keyboard_controller</td><td><span class="badge pass">PASS</span></td><td>0.03s</td><td></td></tr>
+<tr><td>exploration_policy</td><td><span class="badge pass">PASS</span></td><td>0.00s</td><td></td></tr>
+</table>
+
+<h2>Integration Tests (5/5)</h2>
+<table>
+<tr><th>Test</th><th>Status</th><th>Duration</th><th>Details</th></tr>
+<tr><td>sb3_base_env_training</td><td><span class="badge pass">PASS</span></td><td>1.44s</td><td>trained=True</td></tr>
+<tr><td>sb3_terrain_env_training</td><td><span class="badge pass">PASS</span></td><td>0.17s</td><td>trained=True</td></tr>
+<tr><td>sb3_transformer_policy</td><td><span class="badge pass">PASS</span></td><td>0.91s</td><td>n_params=198865</td></tr>
+<tr><td>history_wrapper</td><td><span class="badge pass">PASS</span></td><td>0.08s</td><td>obs_shape=[384]</td></tr>
+<tr><td>action_smoothing_wrapper</td><td><span class="badge pass">PASS</span></td><td>0.06s</td><td></td></tr>
+</table>
+
+<h2>Environment Info</h2>
+<pre>
+Project: Mini Cheetah Locomotion
+Base Obs Dim: 48   |  Terrain Obs Dim: 57
+Action Dim: 12     |  Control: PD (kp=80, kd=1)
+Terrain Types: flat, rough, slope_up, slope_down, stairs_up, stairs_down, gaps, stepping_stones, random_blocks, mixed
+Skill Modes: walk, trot, run, jump, crouch, stand
+</pre>
+
+<p class="meta" style="margin-top:40px; text-align:center;">
+  Generated by Mini Cheetah Test Suite
+</p>
+</body></html>

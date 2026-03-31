@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mini Cheetah — Test & Performance Report</title>
+<style>
+  :root {
+    --bg: #0d1117; --card-bg: #161b22; --border: #30363d;
+    --text: #c9d1d9; --text-muted: #8b949e; --green: #3fb950;
+    --red: #f85149; --yellow: #d29922; --blue: #58a6ff;
+    --purple: #bc8cff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+    background: var(--bg); color: var(--text); padding: 24px;
+    max-width: 1200px; margin: 0 auto;
+  }
+  h1 { color: var(--blue); margin-bottom: 8px; }
+  h2 { color: var(--purple); margin: 24px 0 12px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  h3 { color: var(--text-muted); margin: 16px 0 8px; }
+  .meta { color: var(--text-muted); font-size: 14px; margin-bottom: 20px; }
+  .summary-cards { display: flex; gap: 16px; flex-wrap: wrap; margin: 16px 0; }
+  .card {
+    background: var(--card-bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px; min-width: 140px; flex: 1;
+  }
+  .card .label { color: var(--text-muted); font-size: 12px; text-transform: uppercase; }
+  .card .value { font-size: 28px; font-weight: bold; margin-top: 4px; }
+  .card .value.pass { color: var(--green); }
+  .card .value.fail { color: var(--red); }
+  .card .value.neutral { color: var(--blue); }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  th { color: var(--text-muted); font-size: 12px; text-transform: uppercase; background: var(--card-bg); }
+  tr:hover { background: rgba(88,166,255,0.05); }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 12px;
+    font-size: 12px; font-weight: bold;
+  }
+  .badge.pass { background: rgba(63,185,80,0.2); color: var(--green); }
+  .badge.fail { background: rgba(248,81,73,0.2); color: var(--red); }
+  .bar-container { width: 100%; height: 6px; background: var(--border); border-radius: 3px; }
+  .bar { height: 6px; border-radius: 3px; transition: width 0.3s; }
+  .bar.green { background: var(--green); }
+  .bar.red { background: var(--red); }
+  .bar.blue { background: var(--blue); }
+  pre { background: var(--card-bg); padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 13px; }
+  .chart-bar {
+    display: flex; align-items: center; margin: 4px 0;
+  }
+  .chart-bar .label { width: 160px; font-size: 13px; color: var(--text-muted); }
+  .chart-bar .bar-wrap { flex: 1; height: 20px; background: var(--border); border-radius: 4px; position: relative; }
+  .chart-bar .bar-fill { height: 100%; border-radius: 4px; }
+  .chart-bar .bar-val { position: absolute; right: 8px; top: 2px; font-size: 12px; color: var(--text); }
+</style>
+</head>
+<body>
+
+<h1>Mini Cheetah — Test & Performance Report</h1>
+<p class="meta">Generated: 2026-03-31 14:44:49 &nbsp;|&nbsp; Duration: 11.6s</p>
+
+<div class="summary-cards">
+  <div class="card">
+    <div class="label">Total Tests</div>
+    <div class="value neutral">39</div>
+  </div>
+  <div class="card">
+    <div class="label">Passed</div>
+    <div class="value pass">39</div>
+  </div>
+  <div class="card">
+    <div class="label">Failed</div>
+    <div class="value pass">0</div>
+  </div>
+  <div class="card">
+    <div class="label">Pass Rate</div>
+    <div class="value pass">100%</div>
+  </div>
+</div>
+
+<h2>Unit Tests (18/18)</h2>
+<table>
+<tr><th>Test</th><th>Status</th><th>Duration</th><th>Details</th></tr>
+<tr><td>env_creation</td><td><span class="badge pass">PASS</span></td><td>1.30s</td><td>obs_dim=48</td></tr>
+<tr><td>env_step</td><td><span class="badge pass">PASS</span></td><td>0.11s</td><td>reward=1.2803</td></tr>
+<tr><td>env_action_space</td><td><span class="badge pass">PASS</span></td><td>0.07s</td><td></td></tr>
+<tr><td>env_observation_space</td><td><span class="badge pass">PASS</span></td><td>0.06s</td><td></td></tr>
+<tr><td>env_domain_randomization</td><td><span class="badge pass">PASS</span></td><td>0.07s</td><td></td></tr>
+<tr><td>env_episode_termination</td><td><span class="badge pass">PASS</span></td><td>0.07s</td><td></td></tr>
+<tr><td>terrain_generator_all_types</td><td><span class="badge pass">PASS</span></td><td>0.13s</td><td>flat.min=0.0000, flat.max=0.0000, rough.min=-0.0218, rough.max=0.0251, slope_up.min=0.0000, slope_up.max=2.6259, slope_down.min=-2.6259, slope_down.max=-0.0000, stairs_up.min=0.0000, stairs_up.max=0.9450, stairs_down.min=0.0000, stairs_down.max=0.9450, gaps.min=-0.2500, gaps.max=0.0000, stepping_stones.min=-0.0750, stepping_stones.max=0.0478, random_blocks.min=0.0000, random_blocks.max=0.2215, mixed.min=-0.2500, mixed.max=0.9450</td></tr>
+<tr><td>terrain_env_creation</td><td><span class="badge pass">PASS</span></td><td>0.08s</td><td>obs_dim=57</td></tr>
+<tr><td>terrain_env_step</td><td><span class="badge pass">PASS</span></td><td>0.06s</td><td>reward=1.3180605, components=11</td></tr>
+<tr><td>terrain_env_skill_modes</td><td><span class="badge pass">PASS</span></td><td>0.07s</td><td>walk=1.3180605, trot=0.9327709, run=0.8559715, jump=1.946279, crouch=2.0504127, stand=2.2531667</td></tr>
+<tr><td>terrain_foot_contacts</td><td><span class="badge pass">PASS</span></td><td>0.09s</td><td>contacts=[1.0, 1.0, 1.0, 1.0]</td></tr>
+<tr><td>terrain_encoding</td><td><span class="badge pass">PASS</span></td><td>0.00s</td><td>encoding=[0.0016876913141459227, 0.006738555151969194, 0.019199898466</td></tr>
+<tr><td>curriculum_basic</td><td><span class="badge pass">PASS</span></td><td>0.00s</td><td>level=7, terrain=rough_stairs</td></tr>
+<tr><td>curriculum_advanced</td><td><span class="badge pass">PASS</span></td><td>0.00s</td><td>terrain_type=stairs_up, difficulty=0.6000, skill_mode=walk</td></tr>
+<tr><td>policy_forward</td><td><span class="badge pass">PASS</span></td><td>0.78s</td><td>n_params=346661</td></tr>
+<tr><td>policy_components</td><td><span class="badge pass">PASS</span></td><td>0.00s</td><td>phase_shape=[1, 64], terrain_feat_shape=[2, 64]</td></tr>
+<tr><td>keyboard_controller</td><td><span class="badge pass">PASS</span></td><td>0.03s</td><td></td></tr>
+<tr><td>exploration_policy</td><td><span class="badge pass">PASS</span></td><td>0.00s</td><td></td></tr>
+</table>
+
+<h2>Integration Tests (5/5)</h2>
+<table>
+<tr><th>Test</th><th>Status</th><th>Duration</th><th>Details</th></tr>
+<tr><td>sb3_base_env_training</td><td><span class="badge pass">PASS</span></td><td>1.42s</td><td>trained=True</td></tr>
+<tr><td>sb3_terrain_env_training</td><td><span class="badge pass">PASS</span></td><td>0.16s</td><td>trained=True</td></tr>
+<tr><td>sb3_transformer_policy</td><td><span class="badge pass">PASS</span></td><td>0.48s</td><td>n_params=198865</td></tr>
+<tr><td>history_wrapper</td><td><span class="badge pass">PASS</span></td><td>0.07s</td><td>obs_shape=[384]</td></tr>
+<tr><td>action_smoothing_wrapper</td><td><span class="badge pass">PASS</span></td><td>0.06s</td><td></td></tr>
+</table>
+
+<h2>Performance Tests (12/12)</h2>
+<table>
+<tr><th>Test</th><th>Status</th><th>Duration</th><th>Details</th></tr>
+<tr><td>perf_base_flat</td><td><span class="badge pass">PASS</span></td><td>0.39s</td><td>scenario=flat, n_episodes=5, mean_reward=277.5589, std_reward=96.2948, mean_steps=200.0000, survival_rate=1.0000, mean_speed=0.0155, mean_height=0.3381, mean_energy=0.0081, foot_contact_ratio=0.0000</td></tr>
+<tr><td>perf_terrain_flat</td><td><span class="badge pass">PASS</span></td><td>0.51s</td><td>scenario=terrain_flat, n_episodes=5, mean_reward=203.6021, std_reward=17.5887, mean_steps=200.0000, survival_rate=1.0000, mean_speed=0.0159, mean_height=0.3381, mean_energy=0.0016, foot_contact_ratio=0.9960</td></tr>
+<tr><td>perf_terrain_rough</td><td><span class="badge pass">PASS</span></td><td>0.53s</td><td>scenario=terrain_rough, n_episodes=5, mean_reward=203.6021, std_reward=17.5887, mean_steps=200.0000, survival_rate=1.0000, mean_speed=0.0159, mean_height=0.3381, mean_energy=0.0016, foot_contact_ratio=0.9960</td></tr>
+<tr><td>perf_terrain_stairs</td><td><span class="badge pass">PASS</span></td><td>0.52s</td><td>scenario=terrain_stairs_up, n_episodes=5, mean_reward=203.6021, std_reward=17.5887, mean_steps=200.0000, survival_rate=1.0000, mean_speed=0.0159, mean_height=0.3381, mean_energy=0.0016, foot_contact_ratio=0.9960</td></tr>
+<tr><td>perf_terrain_gaps</td><td><span class="badge pass">PASS</span></td><td>0.52s</td><td>scenario=terrain_gaps, n_episodes=5, mean_reward=203.6021, std_reward=17.5887, mean_steps=200.0000, survival_rate=1.0000, mean_speed=0.0159, mean_height=0.3381, mean_energy=0.0016, foot_contact_ratio=0.9960</td></tr>
+<tr><td>perf_terrain_mixed</td><td><span class="badge pass">PASS</span></td><td>0.53s</td><td>scenario=terrain_mixed, n_episodes=5, mean_reward=203.6021, std_reward=17.5887, mean_steps=200.0000, survival_rate=1.0000, mean_speed=0.0159, mean_height=0.3381, mean_energy=0.0016, foot_contact_ratio=0.9960</td></tr>
+<tr><td>perf_skill_walk</td><td><span class="badge pass">PASS</span></td><td>0.56s</td><td>scenario=skill_walk, n_episodes=5, mean_reward=251.1960, std_reward=44.4370, mean_steps=200.0000, survival_rate=1.0000, mean_speed=0.0159, mean_height=0.3381, mean_energy=0.0025, foot_contact_ratio=0.9960</td></tr>
+<tr><td>perf_skill_trot</td><td><span class="badge pass">PASS</span></td><td>0.52s</td><td>scenario=skill_trot, n_episodes=5, mean_reward=203.6021, std_reward=17.5887, mean_steps=200.0000, survival_rate=1.0000, mean_speed=0.0159, mean_height=0.3381, mean_energy=0.0016, foot_contact_ratio=0.9960</td></tr>
+<tr><td>perf_skill_run</td><td><span class="badge pass">PASS</span></td><td>0.55s</td><td>scenario=skill_run, n_episodes=5, mean_reward=196.1972, std_reward=18.1218, mean_steps=200.0000, survival_rate=1.0000, mean_speed=0.0159, mean_height=0.3381, mean_energy=0.0008, foot_contact_ratio=0.9960</td></tr>
+<tr><td>perf_skill_jump</td><td><span class="badge pass">PASS</span></td><td>0.53s</td><td>scenario=skill_jump, n_episodes=5, mean_reward=374.7023, std_reward=53.4520, mean_steps=200.0000, survival_rate=1.0000, mean_speed=0.0159, mean_height=0.3381, mean_energy=0.0008, foot_contact_ratio=0.9960</td></tr>
+<tr><td>perf_skill_crouch</td><td><span class="badge pass">PASS</span></td><td>0.51s</td><td>scenario=skill_crouch, n_episodes=5, mean_reward=391.6660, std_reward=53.5088, mean_steps=200.0000, survival_rate=1.0000, mean_speed=0.0159, mean_height=0.3381, mean_energy=0.0025, foot_contact_ratio=0.9960</td></tr>
+<tr><td>perf_simulation_fps</td><td><span class="badge pass">PASS</span></td><td>0.40s</td><td>fps=2988.1303, time_1000_steps=0.3347</td></tr>
+</table>
+
+<h2>Regression Tests (4/4)</h2>
+<table>
+<tr><th>Test</th><th>Status</th><th>Duration</th><th>Details</th></tr>
+<tr><td>regression_standing_stability</td><td><span class="badge pass">PASS</span></td><td>0.13s</td><td>min_height=0.3210, max_height=0.3430</td></tr>
+<tr><td>regression_determinism</td><td><span class="badge pass">PASS</span></td><td>0.15s</td><td>reward_diff=0.0000</td></tr>
+<tr><td>regression_obs_bounds</td><td><span class="badge pass">PASS</span></td><td>0.12s</td><td>checked_steps=100</td></tr>
+<tr><td>regression_reward_sign</td><td><span class="badge pass">PASS</span></td><td>0.08s</td><td>mean_reward=1.0181</td></tr>
+</table>
+
+<h2>Performance Metrics</h2>
+<h3>Mean Episode Reward by Scenario</h3>
+<div class="chart-bar">
+  <div class="label">flat</div>
+  <div class="bar-wrap">
+    <div class="bar-fill" style="width:71%; background:var(--green)"></div>
+    <div class="bar-val">277.6 &plusmn; 96.3</div>
+  </div>
+</div>
+<div class="chart-bar">
+  <div class="label">terrain_flat</div>
+  <div class="bar-wrap">
+    <div class="bar-fill" style="width:52%; background:var(--green)"></div>
+    <div class="bar-val">203.6 &plusmn; 17.6</div>
+  </div>
+</div>
+<div class="chart-bar">
+  <div class="label">terrain_rough</div>
+  <div class="bar-wrap">
+    <div class="bar-fill" style="width:52%; background:var(--green)"></div>
+    <div class="bar-val">203.6 &plusmn; 17.6</div>
+  </div>
+</div>
+<div class="chart-bar">
+  <div class="label">terrain_stairs_up</div>
+  <div class="bar-wrap">
+    <div class="bar-fill" style="width:52%; background:var(--green)"></div>
+    <div class="bar-val">203.6 &plusmn; 17.6</div>
+  </div>
+</div>
+<div class="chart-bar">
+  <div class="label">terrain_gaps</div>
+  <div class="bar-wrap">
+    <div class="bar-fill" style="width:52%; background:var(--green)"></div>
+    <div class="bar-val">203.6 &plusmn; 17.6</div>
+  </div>
+</div>
+<div class="chart-bar">
+  <div class="label">terrain_mixed</div>
+  <div class="bar-wrap">
+    <div class="bar-fill" style="width:52%; background:var(--green)"></div>
+    <div class="bar-val">203.6 &plusmn; 17.6</div>
+  </div>
+</div>
+<div class="chart-bar">
+  <div class="label">skill_walk</div>
+  <div class="bar-wrap">
+    <div class="bar-fill" style="width:64%; background:var(--green)"></div>
+    <div class="bar-val">251.2 &plusmn; 44.4</div>
+  </div>
+</div>
+<div class="chart-bar">
+  <div class="label">skill_trot</div>
+  <div class="bar-wrap">
+    <div class="bar-fill" style="width:52%; background:var(--green)"></div>
+    <div class="bar-val">203.6 &plusmn; 17.6</div>
+  </div>
+</div>
+<div class="chart-bar">
+  <div class="label">skill_run</div>
+  <div class="bar-wrap">
+    <div class="bar-fill" style="width:50%; background:var(--green)"></div>
+    <div class="bar-val">196.2 &plusmn; 18.1</div>
+  </div>
+</div>
+<div class="chart-bar">
+  <div class="label">skill_jump</div>
+  <div class="bar-wrap">
+    <div class="bar-fill" style="width:96%; background:var(--green)"></div>
+    <div class="bar-val">374.7 &plusmn; 53.5</div>
+  </div>
+</div>
+<div class="chart-bar">
+  <div class="label">skill_crouch</div>
+  <div class="bar-wrap">
+    <div class="bar-fill" style="width:100%; background:var(--green)"></div>
+    <div class="bar-val">391.7 &plusmn; 53.5</div>
+  </div>
+</div>
+<h3>Survival Rate by Scenario</h3>
+<div class="chart-bar">
+  <div class="label">flat</div>
+  <div class="bar-wrap">
+    <div class="bar-fill" style="width:100%; background:var(--green)"></div>
+    <div class="bar-val">100%</div>
+  </div>
+</div>
+<div class="chart-bar">
+  <div class="label">terrain_flat</div>
+  <div class="bar-wrap">
+    <div class="bar-fill" style="width:100%; background:var(--green)"></div>
+    <div class="bar-val">100%</div>
+  </div>
+</div>
+<div class="chart-bar">
+  <div class="label">terrain_rough</div>
+  <div class="bar-wrap">
+    <div class="bar-fill" style="width:100%; background:var(--green)"></div>
+    <div class="bar-val">100%</div>
+  </div>
+</div>
+<div class="chart-bar">
+  <div class="label">terrain_stairs_up</div>
+  <div class="bar-wrap">
+    <div class="bar-fill" style="width:100%; background:var(--green)"></div>
+    <div class="bar-val">100%</div>
+  </div>
+</div>
+<div class="chart-bar">
+  <div class="label">terrain_gaps</div>
+  <div class="bar-wrap">
+    <div class="bar-fill" style="width:100%; background:var(--green)"></div>
+    <div class="bar-val">100%</div>
+  </div>
+</div>
+<div class="chart-bar">
+  <div class="label">terrain_mixed</div>
+  <div class="bar-wrap">
+    <div class="bar-fill" style="width:100%; background:var(--green)"></div>
+    <div class="bar-val">100%</div>
+  </div>
+</div>
+<div class="chart-bar">
+  <div class="label">skill_walk</div>
+  <div class="bar-wrap">
+    <div class="bar-fill" style="width:100%; background:var(--green)"></div>
+    <div class="bar-val">100%</div>
+  </div>
+</div>
+<div class="chart-bar">
+  <div class="label">skill_trot</div>
+  <div class="bar-wrap">
+    <div class="bar-fill" style="width:100%; background:var(--green)"></div>
+    <div class="bar-val">100%</div>
+  </div>
+</div>
+<div class="chart-bar">
+  <div class="label">skill_run</div>
+  <div class="bar-wrap">
+    <div class="bar-fill" style="width:100%; background:var(--green)"></div>
+    <div class="bar-val">100%</div>
+  </div>
+</div>
+<div class="chart-bar">
+  <div class="label">skill_jump</div>
+  <div class="bar-wrap">
+    <div class="bar-fill" style="width:100%; background:var(--green)"></div>
+    <div class="bar-val">100%</div>
+  </div>
+</div>
+<div class="chart-bar">
+  <div class="label">skill_crouch</div>
+  <div class="bar-wrap">
+    <div class="bar-fill" style="width:100%; background:var(--green)"></div>
+    <div class="bar-val">100%</div>
+  </div>
+</div>
+
+<h3>Detailed Performance Table</h3>
+<table>
+<tr><th>Scenario</th><th>Episodes</th><th>Mean Reward</th><th>Mean Steps</th>
+<th>Survival</th><th>Speed</th><th>Height</th><th>Energy</th><th>Contact</th></tr>
+<tr>
+<td>flat</td><td>5</td>
+<td>277.56 &plusmn; 96.29</td>
+<td>200</td>
+<td>100%</td>
+<td>0.016</td>
+<td>0.3381</td>
+<td>0.0081</td>
+<td>0.00</td>
+</tr><tr>
+<td>terrain_flat</td><td>5</td>
+<td>203.60 &plusmn; 17.59</td>
+<td>200</td>
+<td>100%</td>
+<td>0.016</td>
+<td>0.3381</td>
+<td>0.0016</td>
+<td>1.00</td>
+</tr><tr>
+<td>terrain_rough</td><td>5</td>
+<td>203.60 &plusmn; 17.59</td>
+<td>200</td>
+<td>100%</td>
+<td>0.016</td>
+<td>0.3381</td>
+<td>0.0016</td>
+<td>1.00</td>
+</tr><tr>
+<td>terrain_stairs_up</td><td>5</td>
+<td>203.60 &plusmn; 17.59</td>
+<td>200</td>
+<td>100%</td>
+<td>0.016</td>
+<td>0.3381</td>
+<td>0.0016</td>
+<td>1.00</td>
+</tr><tr>
+<td>terrain_gaps</td><td>5</td>
+<td>203.60 &plusmn; 17.59</td>
+<td>200</td>
+<td>100%</td>
+<td>0.016</td>
+<td>0.3381</td>
+<td>0.0016</td>
+<td>1.00</td>
+</tr><tr>
+<td>terrain_mixed</td><td>5</td>
+<td>203.60 &plusmn; 17.59</td>
+<td>200</td>
+<td>100%</td>
+<td>0.016</td>
+<td>0.3381</td>
+<td>0.0016</td>
+<td>1.00</td>
+</tr><tr>
+<td>skill_walk</td><td>5</td>
+<td>251.20 &plusmn; 44.44</td>
+<td>200</td>
+<td>100%</td>
+<td>0.016</td>
+<td>0.3381</td>
+<td>0.0025</td>
+<td>1.00</td>
+</tr><tr>
+<td>skill_trot</td><td>5</td>
+<td>203.60 &plusmn; 17.59</td>
+<td>200</td>
+<td>100%</td>
+<td>0.016</td>
+<td>0.3381</td>
+<td>0.0016</td>
+<td>1.00</td>
+</tr><tr>
+<td>skill_run</td><td>5</td>
+<td>196.20 &plusmn; 18.12</td>
+<td>200</td>
+<td>100%</td>
+<td>0.016</td>
+<td>0.3381</td>
+<td>0.0008</td>
+<td>1.00</td>
+</tr><tr>
+<td>skill_jump</td><td>5</td>
+<td>374.70 &plusmn; 53.45</td>
+<td>200</td>
+<td>100%</td>
+<td>0.016</td>
+<td>0.3381</td>
+<td>0.0008</td>
+<td>1.00</td>
+</tr><tr>
+<td>skill_crouch</td><td>5</td>
+<td>391.67 &plusmn; 53.51</td>
+<td>200</td>
+<td>100%</td>
+<td>0.016</td>
+<td>0.3381</td>
+<td>0.0025</td>
+<td>1.00</td>
+</tr></table>
+
+<h2>Environment Info</h2>
+<pre>
+Project: Mini Cheetah Locomotion
+Base Obs Dim: 48   |  Terrain Obs Dim: 57
+Action Dim: 12     |  Control: PD (kp=80, kd=1)
+Terrain Types: flat, rough, slope_up, slope_down, stairs_up, stairs_down, gaps, stepping_stones, random_blocks, mixed
+Skill Modes: walk, trot, run, jump, crouch, stand
+</pre>
+
+<p class="meta" style="margin-top:40px; text-align:center;">
+  Generated by Mini Cheetah Test Suite
+</p>
+</body></html>

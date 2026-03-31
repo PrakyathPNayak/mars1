@@ -9,33 +9,37 @@ exploration, and sim-to-real transfer via domain randomization.
 ```
 .
 ├── run.py                       # Main entrypoint
-├── Makefile                     # Convenience targets
+├── Makefile                     # Convenience targets (test, test-full, report)
 ├── assets/
-│   ├── mini_cheetah.xml         # MuJoCo MJCF model
+│   ├── mini_cheetah.xml         # MuJoCo MJCF model (capsule collision geometry)
 │   └── mini_cheetah_params.json # Physical parameters
 ├── src/
 │   ├── env/
-│   │   └── cheetah_env.py       # Gymnasium environment
+│   │   ├── cheetah_env.py       # Base Gymnasium environment (48-dim obs)
+│   │   └── terrain_env.py       # Advanced terrain environment (57-dim obs)
 │   ├── control/
 │   │   ├── keyboard_controller.py
 │   │   └── exploration_policy.py
 │   ├── training/
-│   │   ├── train.py             # PPO training loop
-│   │   └── curriculum.py        # Terrain curriculum
+│   │   ├── train.py             # MLP baseline training
+│   │   ├── train_advanced.py    # Transformer training on base env
+│   │   ├── advanced_policy.py   # Hierarchical Transformer + MoE + CPG + Terrain
+│   │   ├── sb3_integration.py   # SB3 wrappers for transformer policy
+│   │   └── curriculum.py        # TerrainCurriculum + AdvancedTerrainCurriculum
 │   └── visualization/
 │       ├── viewer.py            # Interactive demo
 │       └── stats_dashboard.py   # Training dashboard
-├── tests/
-│   └── test_env.py
 ├── scripts/
+│   ├── train_terrain.py         # Terrain-aware transformer training
 │   ├── generate_model.py        # MJCF model generator
 │   └── evaluate.py              # Policy evaluation
+├── tests/
+│   ├── test_env.py              # Basic environment tests
+│   ├── test_final_validation.py # Transformer validation
+│   └── test_suite.py            # Comprehensive test suite (39 tests + HTML report)
+├── reports/                     # Auto-generated test reports (HTML + JSON)
 ├── checkpoints/                 # Saved model weights
-├── logs/                        # TensorBoard + monitor logs
-└── .state/                      # Session tracking
-    ├── RESEARCH_INSIGHTS.md
-    ├── DECISIONS.md
-    └── PROGRESS.md
+└── logs/                        # TensorBoard + monitor logs
 ```
 
 ## Architectures
@@ -58,11 +62,29 @@ Paper-inspired architecture combining insights from 55+ papers:
 | Obs Normalization | Standard practice | Running mean/std normalization (Welford's algorithm) |
 | Action Smoothing | DiffuseLoco (2404.19264) | EMA filter (α=0.8) for temporal action coherence |
 | LR Warmup+Cosine | TERT, SET | 5% linear warmup then cosine decay |
+| Gait Phase Oscillator | DeepGait/CPG | Learned periodic leg phases with speed modulation |
+| Terrain Estimator | DreamWaQ++, GenTe | Conv1d proprioceptive terrain inference from IMU+joint history |
+| Contrastive Temporal Head | CPC/BYOL | Auxiliary temporal coherence loss for representation learning |
+| Privileged Encoder | TERT, DreamWaQ++ | Sim-to-real teacher-student distillation pipeline |
+| Feature Fusion | Multi-modal fusion | Combines transformer + terrain + phase features |
 
-**Parameters:** ~757K trainable (vs ~580K baseline MLP)
+**Parameters:** ~968K standalone, ~821K SB3 integrated
 **Files:** `src/training/advanced_policy.py`, `src/training/sb3_integration.py`, `src/training/train_advanced.py`
 
-## Observation Space (48 dims)
+## Environments
+
+### Base Environment: MiniCheetahEnv (cheetah_env.py)
+- Observation: 48 dimensions
+- Flat ground, velocity command tracking, domain randomization
+
+### Terrain Environment: AdvancedTerrainEnv (terrain_env.py)
+- Observation: 57 dimensions (base 48 + 8 terrain encoding + 1 phase)
+- Procedural terrain: flat, rough, slopes, stairs, gaps, stepping stones, random blocks, mixed
+- Multi-skill: walk, trot, run, jump, crouch, stand (each with tuned reward profile)
+- Foot contact detection, push perturbations, skill-dependent rewards
+- Curriculum: AdvancedTerrainCurriculum (terrain type + difficulty + skill progression)
+
+## Observation Space (48 base / 57 terrain)
 | Range   | Content                               |
 |---------|---------------------------------------|
 | [0:12]  | Joint positions (rad)                 |
@@ -72,6 +94,8 @@ Paper-inspired architecture combining insights from 55+ papers:
 | [30:33] | Gravity vector in body frame          |
 | [33:45] | Previous action                       |
 | [45:48] | Velocity command (vx, vy, wz)         |
+| [48:56] | Terrain encoding (terrain env only)   |
+| [56]    | Episode phase (terrain env only)      |
 
 ## Action Space (12 dims)
 Delta joint positions from default stance, clipped to ±0.5 rad.

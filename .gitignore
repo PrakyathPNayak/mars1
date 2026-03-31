@@ -11,7 +11,7 @@ build/
 # Virtual environments
 venv/
 .venv/
-env/
+/env/
 
 # IDE
 .vscode/
@@ -39,3 +39,4 @@ checkpoints/
 # Misc
 *.bak
 *.tmp
+key.txt

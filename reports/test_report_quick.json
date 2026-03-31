@@ -1,0 +1,297 @@
+{
+  "timestamp": "2026-03-31 14:44:29",
+  "duration": 5.567300319671631,
+  "passed": 23,
+  "failed": 0,
+  "total": 23,
+  "tests": [
+    {
+      "name": "env_creation",
+      "category": "unit",
+      "passed": true,
+      "duration": 1.317032814025879,
+      "message": "",
+      "metrics": {
+        "obs_dim": 48
+      }
+    },
+    {
+      "name": "env_step",
+      "category": "unit",
+      "passed": true,
+      "duration": 0.09694743156433105,
+      "message": "",
+      "metrics": {
+        "reward": 1.2803452083796656
+      }
+    },
+    {
+      "name": "env_action_space",
+      "category": "unit",
+      "passed": true,
+      "duration": 0.06909823417663574,
+      "message": "",
+      "metrics": {}
+    },
+    {
+      "name": "env_observation_space",
+      "category": "unit",
+      "passed": true,
+      "duration": 0.061335086822509766,
+      "message": "",
+      "metrics": {}
+    },
+    {
+      "name": "env_domain_randomization",
+      "category": "unit",
+      "passed": true,
+      "duration": 0.06885695457458496,
+      "message": "",
+      "metrics": {}
+    },
+    {
+      "name": "env_episode_termination",
+      "category": "unit",
+      "passed": true,
+      "duration": 0.06850147247314453,
+      "message": "",
+      "metrics": {}
+    },
+    {
+      "name": "terrain_generator_all_types",
+      "category": "unit",
+      "passed": true,
+      "duration": 0.1144399642944336,
+      "message": "",
+      "metrics": {
+        "flat": {
+          "min": 0.0,
+          "max": 0.0
+        },
+        "rough": {
+          "min": -0.0218006893992424,
+          "max": 0.0251152440905571
+        },
+        "slope_up": {
+          "min": 0.0,
+          "max": 2.6259021759033203
+        },
+        "slope_down": {
+          "min": -2.6259021759033203,
+          "max": -0.0
+        },
+        "stairs_up": {
+          "min": 0.0,
+          "max": 0.9449999928474426
+        },
+        "stairs_down": {
+          "min": 0.0,
+          "max": 0.9449999928474426
+        },
+        "gaps": {
+          "min": -0.25,
+          "max": 0.0
+        },
+        "stepping_stones": {
+          "min": -0.07500000298023224,
+          "max": 0.04782857745885849
+        },
+        "random_blocks": {
+          "min": 0.0,
+          "max": 0.22152870893478394
+        },
+        "mixed": {
+          "min": -0.25,
+          "max": 0.9449999928474426
+        }
+      }
+    },
+    {
+      "name": "terrain_env_creation",
+      "category": "unit",
+      "passed": true,
+      "duration": 0.07964134216308594,
+      "message": "",
+      "metrics": {
+        "obs_dim": 57
+      }
+    },
+    {
+      "name": "terrain_env_step",
+      "category": "unit",
+      "passed": true,
+      "duration": 0.061339616775512695,
+      "message": "",
+      "metrics": {
+        "reward": "1.3180605",
+        "components": 11
+      }
+    },
+    {
+      "name": "terrain_env_skill_modes",
+      "category": "unit",
+      "passed": true,
+      "duration": 0.06598496437072754,
+      "message": "",
+      "metrics": {
+        "walk": "1.3180605",
+        "trot": "0.9327709",
+        "run": "0.8559715",
+        "jump": "1.946279",
+        "crouch": "2.0504127",
+        "stand": "2.2531667"
+      }
+    },
+    {
+      "name": "terrain_foot_contacts",
+      "category": "unit",
+      "passed": true,
+      "duration": 0.08281469345092773,
+      "message": "",
+      "metrics": {
+        "contacts": [
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "terrain_encoding",
+      "category": "unit",
+      "passed": true,
+      "duration": 0.0004456043243408203,
+      "message": "",
+      "metrics": {
+        "encoding": [
+          0.0016876913141459227,
+          0.006738555151969194,
+          0.019199898466467857,
+          -0.016574101522564888,
+          -0.0018657781183719635,
+          -0.0002163019380532205,
+          0.006738555151969194,
+          0.035773999989032745
+        ]
+      }
+    },
+    {
+      "name": "curriculum_basic",
+      "category": "unit",
+      "passed": true,
+      "duration": 0.0011837482452392578,
+      "message": "",
+      "metrics": {
+        "level": 7,
+        "terrain": "rough_stairs"
+      }
+    },
+    {
+      "name": "curriculum_advanced",
+      "category": "unit",
+      "passed": true,
+      "duration": 6.246566772460938e-05,
+      "message": "",
+      "metrics": {
+        "terrain_type": "stairs_up",
+        "difficulty": 0.6000000238418579,
+        "skill_mode": "walk"
+      }
+    },
+    {
+      "name": "policy_forward",
+      "category": "unit",
+      "passed": true,
+      "duration": 0.7868137359619141,
+      "message": "",
+      "metrics": {
+        "n_params": 346661
+      }
+    },
+    {
+      "name": "policy_components",
+      "category": "unit",
+      "passed": true,
+      "duration": 0.0036344528198242188,
+      "message": "",
+      "metrics": {
+        "phase_shape": [
+          1,
+          64
+        ],
+        "terrain_feat_shape": [
+          2,
+          64
+        ]
+      }
+    },
+    {
+      "name": "keyboard_controller",
+      "category": "unit",
+      "passed": true,
+      "duration": 0.028961181640625,
+      "message": "",
+      "metrics": {}
+    },
+    {
+      "name": "exploration_policy",
+      "category": "unit",
+      "passed": true,
+      "duration": 0.00019216537475585938,
+      "message": "",
+      "metrics": {}
+    },
+    {
+      "name": "sb3_base_env_training",
+      "category": "integration",
+      "passed": true,
+      "duration": 1.4370388984680176,
+      "message": "",
+      "metrics": {
+        "trained": true
+      }
+    },
+    {
+      "name": "sb3_terrain_env_training",
+      "category": "integration",
+      "passed": true,
+      "duration": 0.1726822853088379,
+      "message": "",
+      "metrics": {
+        "trained": true
+      }
+    },
+    {
+      "name": "sb3_transformer_policy",
+      "category": "integration",
+      "passed": true,
+      "duration": 0.9120426177978516,
+      "message": "",
+      "metrics": {
+        "n_params": 198865
+      }
+    },
+    {
+      "name": "history_wrapper",
+      "category": "integration",
+      "passed": true,
+      "duration": 0.0757591724395752,
+      "message": "",
+      "metrics": {
+        "obs_shape": [
+          384
+        ]
+      }
+    },
+    {
+      "name": "action_smoothing_wrapper",
+      "category": "integration",
+      "passed": true,
+      "duration": 0.0617525577545166,
+      "message": "",
+      "metrics": {}
+    }
+  ],
+  "performance": []
+}

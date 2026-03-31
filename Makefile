@@ -18,11 +18,26 @@ train:
 train-quick:
 	python3 run.py train --steps 500000 --envs 4
 
+train-terrain:
+	python3 scripts/train_terrain.py --total-steps 5000000
+
+train-terrain-quick:
+	python3 scripts/train_terrain.py --total-steps 500000 --quick
+
 eval:
 	python3 run.py eval
 
 test:
 	python3 run.py test
+
+test-full:
+	python3 tests/test_suite.py --output reports/test_report.html
+
+test-quick:
+	python3 tests/test_suite.py --quick --output reports/test_report_quick.html
+
+report:
+	python3 tests/test_suite.py --output reports/test_report.html
 
 dashboard:
 	python3 run.py dashboard

@@ -35,6 +35,9 @@ from src.training.advanced_policy import (
     MixtureOfExperts,
     WorldModelHead,
     RunningNormalizer,
+    GaitPhaseOscillator,
+    TerrainEstimator,
+    ContrastiveTemporalHead,
     HISTORY_LEN,
     OBS_DIM,
     ACT_DIM,
@@ -145,6 +148,22 @@ class TransformerExtractor(BaseFeaturesExtractor):
             for _ in range(n_layers)
         ])
 
+        # Gait phase oscillator
+        self.phase_oscillator = GaitPhaseOscillator(d_model)
+
+        # Terrain estimator
+        self.terrain_estimator = TerrainEstimator(d_model)
+
+        # Feature fusion: transformer + terrain + phase
+        self.feature_fusion = nn.Sequential(
+            nn.Linear(d_model * 3, d_model),
+            nn.LayerNorm(d_model),
+            nn.SiLU(),
+        )
+
+        # Step counter for phase oscillator
+        self._step_counter = 0
+
         self._init_weights()
 
     def _init_weights(self):
@@ -189,7 +208,8 @@ class TransformerExtractor(BaseFeaturesExtractor):
         encoded = encoded.reshape(batch_size, self.history_len, self.d_model)
 
         # Symmetry augmentation on latest observation
-        latest_obs = flat.reshape(batch_size, self.history_len, self.obs_dim)[:, -1]
+        norm_history = flat.reshape(batch_size, self.history_len, self.obs_dim)
+        latest_obs = norm_history[:, -1]
         latest_enc = encoded[:, -1]
         sym_enc = self.symmetry_aug(latest_obs, latest_enc)
         encoded = encoded.clone()
@@ -204,8 +224,24 @@ class TransformerExtractor(BaseFeaturesExtractor):
         for layer in self.temporal_layers:
             x = layer(x, causal_mask)
 
-        # Return last token as features
-        return x[:, -1]
+        # Transformer output: last token
+        transformer_latent = x[:, -1]
+
+        # Terrain estimation from history
+        terrain_features, _ = self.terrain_estimator(norm_history)
+
+        # Gait phase
+        step_count = torch.full((batch_size,), self._step_counter, device=device)
+        self._step_counter += 1
+        command = latest_obs[..., 45:48]
+        phase_features = self.phase_oscillator(step_count, command)
+
+        # Fuse all features
+        fused = self.feature_fusion(torch.cat([
+            transformer_latent, terrain_features, phase_features
+        ], dim=-1))
+
+        return fused
 
 
 # ── MoE Policy and Value Networks ────────────────────────────────────

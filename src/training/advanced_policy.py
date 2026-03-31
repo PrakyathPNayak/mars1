@@ -445,6 +445,22 @@ class HierarchicalTransformerPolicy(nn.Module):
         # 6. World Model Head (auxiliary)
         self.world_model = WorldModelHead(d_model, action_dim, obs_dim)
 
+        # 7. Gait Phase Oscillator
+        self.phase_oscillator = GaitPhaseOscillator(d_model)
+
+        # 8. Terrain Estimator
+        self.terrain_estimator = TerrainEstimator(d_model)
+
+        # 9. Contrastive Temporal Head (auxiliary)
+        self.contrastive_head = ContrastiveTemporalHead(d_model)
+
+        # Fusion layer for phase + terrain + transformer features
+        self.feature_fusion = nn.Sequential(
+            nn.Linear(d_model * 3, d_model),
+            nn.LayerNorm(d_model),
+            nn.SiLU(),
+        )
+
         # Observation history buffer (managed externally during rollout)
         self._history_buffer = None
         self._batch_size = None
@@ -482,16 +498,18 @@ class HierarchicalTransformerPolicy(nn.Module):
         obs_history: torch.Tensor,
         return_value: bool = True,
         action_for_wm: Optional[torch.Tensor] = None,
+        step_count: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         """
         Args:
             obs_history: (batch, seq_len, obs_dim) observation history
             return_value: whether to compute value estimate
             action_for_wm: (batch, action_dim) action for world model prediction
+            step_count: (batch,) episode step count for phase oscillator
 
         Returns:
             dict with 'action_mean', 'action_log_std', 'value', 'gate_weights',
-            'next_obs_pred', 'latent'
+            'next_obs_pred', 'latent', 'terrain_latent', 'contrastive_loss'
         """
         batch_size, seq_len, _ = obs_history.shape
         device = obs_history.device
@@ -523,8 +541,23 @@ class HierarchicalTransformerPolicy(nn.Module):
         for layer in self.temporal_layers:
             x = layer(x, causal_mask)
 
-        # Use the last token as the final representation
-        latent = x[:, -1]  # (batch, d_model)
+        # Temporal output: last token as transformer features
+        transformer_latent = x[:, -1]  # (batch, d_model)
+
+        # Terrain estimation from observation history
+        norm_history = flat_obs.reshape(batch_size, seq_len, self.obs_dim)
+        terrain_features, terrain_latent = self.terrain_estimator(norm_history)
+
+        # Gait phase signal
+        if step_count is None:
+            step_count = torch.zeros(batch_size, device=device)
+        command = latest_obs[..., 45:48]  # velocity command
+        phase_features = self.phase_oscillator(step_count, command)
+
+        # Fuse transformer + terrain + phase features
+        latent = self.feature_fusion(torch.cat([
+            transformer_latent, terrain_features, phase_features
+        ], dim=-1))
 
         # Policy (MoE)
         action_mean, gate_weights = self.policy_moe(latent)
@@ -534,6 +567,7 @@ class HierarchicalTransformerPolicy(nn.Module):
             "action_log_std": self.action_log_std.expand_as(action_mean),
             "gate_weights": gate_weights,
             "latent": latent,
+            "terrain_latent": terrain_latent,
         }
 
         # Value
@@ -543,6 +577,10 @@ class HierarchicalTransformerPolicy(nn.Module):
         # World Model prediction
         if action_for_wm is not None:
             results["next_obs_pred"] = self.world_model(latent, action_for_wm)
+
+        # Contrastive temporal loss (auxiliary)
+        if self.training:
+            results["contrastive_loss"] = self.contrastive_head.compute_loss(x)
 
         return results
 
@@ -747,6 +785,198 @@ class AdaptiveCurriculum:
         parts = [f"L{i}:{c}" for i, c in enumerate(dist) if c > 0]
         return (f"Curriculum: avg_level={avg:.1f}, "
                 f"distribution=[{', '.join(parts)}]")
+
+
+# ── Gait Phase Oscillator ─────────────────────────────────────────────
+
+class GaitPhaseOscillator(nn.Module):
+    """Learned phase oscillator for periodic gait generation.
+
+    Inspired by DeepGait and central pattern generators (CPG).
+    Provides a structured phase signal that encodes gait timing,
+    reducing the policy's burden of learning periodicity from scratch.
+
+    Produces 4 phase signals (one per leg) with learned frequency and offsets.
+    """
+
+    def __init__(self, d_model: int = 128, n_legs: int = 4):
+        super().__init__()
+        self.n_legs = n_legs
+        # Learned base frequency (Hz) and phase offsets per leg
+        self.base_freq = nn.Parameter(torch.tensor(2.0))  # ~2 Hz trot
+        self.phase_offsets = nn.Parameter(
+            torch.tensor([0.0, 3.14159, 3.14159, 0.0])  # trot pattern
+        )
+        # Speed-dependent frequency modulation from command
+        self.freq_modulator = nn.Sequential(
+            nn.Linear(3, 16),
+            nn.SiLU(),
+            nn.Linear(16, 1),
+        )
+        # Project phase into d_model space
+        self.phase_encoder = nn.Sequential(
+            nn.Linear(n_legs * 2, d_model),  # sin + cos per leg
+            nn.LayerNorm(d_model),
+            nn.SiLU(),
+        )
+
+    def forward(self, step_count: torch.Tensor, command: torch.Tensor
+                ) -> torch.Tensor:
+        """
+        Args:
+            step_count: (batch,) integer step within episode
+            command: (batch, 3) velocity command [vx, vy, wz]
+        Returns:
+            phase_features: (batch, d_model) encoded phase signal
+        """
+        # Modulate frequency based on command speed
+        freq_mod = self.freq_modulator(command).squeeze(-1)  # (batch,)
+        freq = torch.abs(self.base_freq) + freq_mod  # (batch,)
+
+        # Phase per leg: 2*pi*freq*t + offset
+        t = step_count.float() * 0.02  # Convert steps to seconds (dt=0.02)
+        phase = 2 * math.pi * freq.unsqueeze(-1) * t.unsqueeze(-1) + self.phase_offsets
+        # (batch, n_legs)
+
+        # Encode as sin/cos
+        phase_signal = torch.cat([
+            torch.sin(phase), torch.cos(phase)
+        ], dim=-1)  # (batch, n_legs*2)
+
+        return self.phase_encoder(phase_signal)
+
+
+# ── Terrain Estimator ─────────────────────────────────────────────────
+
+class TerrainEstimator(nn.Module):
+    """Estimates terrain properties from proprioceptive history.
+
+    Inspired by DreamWaQ++ and DWL: infers terrain characteristics
+    (roughness, slope, compliance) from foot contact patterns and
+    IMU readings over a temporal window.
+    """
+
+    def __init__(self, d_model: int = 128, terrain_dim: int = 8):
+        super().__init__()
+        self.terrain_dim = terrain_dim
+        # Processes IMU + foot contact signals
+        # Uses gravity vector (3) + base angular velocity (3) + joint velocities (12)
+        input_dim = 3 + 3 + 12  # gravity + angvel + joint_vel
+        self.temporal_conv = nn.Sequential(
+            nn.Conv1d(input_dim, 64, kernel_size=5, padding=2),
+            nn.SiLU(),
+            nn.Conv1d(64, 32, kernel_size=3, padding=1),
+            nn.SiLU(),
+            nn.AdaptiveAvgPool1d(1),
+        )
+        self.terrain_head = nn.Sequential(
+            nn.Linear(32, terrain_dim),
+            nn.LayerNorm(terrain_dim),
+        )
+        # Project terrain features into model space
+        self.terrain_proj = nn.Sequential(
+            nn.Linear(terrain_dim, d_model),
+            nn.SiLU(),
+        )
+
+    def forward(self, obs_history: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Args:
+            obs_history: (batch, seq_len, obs_dim) observation history
+        Returns:
+            terrain_features: (batch, d_model) projected terrain features
+            terrain_latent: (batch, terrain_dim) raw terrain embedding
+        """
+        # Extract proprioceptive signals
+        gravity = obs_history[..., 30:33]    # (batch, seq, 3)
+        angvel = obs_history[..., 27:30]     # (batch, seq, 3)
+        joint_vel = obs_history[..., 12:24]  # (batch, seq, 12)
+
+        x = torch.cat([gravity, angvel, joint_vel], dim=-1)  # (batch, seq, 18)
+        x = x.transpose(1, 2)  # (batch, 18, seq) for Conv1d
+
+        x = self.temporal_conv(x).squeeze(-1)  # (batch, 32)
+        terrain_latent = self.terrain_head(x)   # (batch, terrain_dim)
+        terrain_features = self.terrain_proj(terrain_latent)  # (batch, d_model)
+
+        return terrain_features, terrain_latent
+
+
+# ── Contrastive Temporal Loss ─────────────────────────────────────────
+
+class ContrastiveTemporalHead(nn.Module):
+    """Auxiliary contrastive loss for temporal coherence.
+
+    Encourages temporally adjacent states to have similar representations
+    while distant states should differ. Inspired by CPC/BYOL applied to
+    locomotion observations.
+    """
+
+    def __init__(self, d_model: int = 128, projection_dim: int = 64):
+        super().__init__()
+        self.projector = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.SiLU(),
+            nn.Linear(d_model, projection_dim),
+        )
+        self.predictor = nn.Sequential(
+            nn.Linear(projection_dim, projection_dim),
+            nn.SiLU(),
+            nn.Linear(projection_dim, projection_dim),
+        )
+        self._last_loss = 0.0
+
+    def compute_loss(self, temporal_features: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            temporal_features: (batch, seq_len, d_model) transformer output
+        Returns:
+            contrastive_loss: scalar
+        """
+        if temporal_features.shape[1] < 2:
+            return torch.tensor(0.0, device=temporal_features.device)
+
+        # Use last two timesteps as positive pair
+        z1 = self.projector(temporal_features[:, -2])  # (batch, proj_dim)
+        z2 = self.projector(temporal_features[:, -1])  # (batch, proj_dim)
+
+        # Asymmetric: predict z2 from z1
+        p1 = self.predictor(z1)
+
+        # Cosine similarity loss (BYOL-style, no negatives needed)
+        p1_norm = F.normalize(p1, dim=-1)
+        z2_norm = F.normalize(z2.detach(), dim=-1)
+        loss = 2 - 2 * (p1_norm * z2_norm).sum(dim=-1).mean()
+
+        self._last_loss = loss.item()
+        return loss
+
+
+# ── Privileged Distillation Interface ─────────────────────────────────
+
+class PrivilegedEncoder(nn.Module):
+    """Encodes privileged information available only in simulation.
+
+    For teacher-student distillation (sim-to-real transfer):
+    Teacher has access to terrain height map, contact forces, etc.
+    Student must learn to infer this from proprioception alone.
+
+    Inspired by RMA (2107.04034) and DWL (2408.14472).
+    """
+
+    def __init__(self, privileged_dim: int = 32, d_model: int = 128):
+        super().__init__()
+        # Privileged info: terrain heightmap samples + contact forces
+        # 16 height samples + 4 contact force magnitudes + 4 contact states
+        self.encoder = nn.Sequential(
+            nn.Linear(privileged_dim, 64),
+            nn.SiLU(),
+            nn.Linear(64, d_model),
+            nn.LayerNorm(d_model),
+        )
+
+    def forward(self, privileged_obs: torch.Tensor) -> torch.Tensor:
+        return self.encoder(privileged_obs)
 
 
 # ── Utility: count parameters ────────────────────────────────────────
