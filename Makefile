@@ -13,7 +13,7 @@ demo-no-policy:
 	python3 run.py demo --no-policy
 
 train:
-	python3 run.py train --steps 5000000 --envs 1
+	python3 run.py train --steps 20000000 --envs 25
 
 train-quick:
 	python3 run.py train --steps 500000 --envs 4
