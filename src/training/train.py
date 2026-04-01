@@ -88,9 +88,9 @@ def train(args):
         activation_fn=torch.nn.Tanh,
     )
 
-    # MlpPolicy runs faster on CPU — GPU overhead dominates for small networks.
-    # The advanced transformer training script uses GPU where it's worthwhile.
-    device = "cpu"
+    # Auto-detect GPU: for 25+ parallel envs with 512/256/128 MLP,
+    # GPU batched forward passes are faster than CPU.
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"  Device: {device}")
 
     if args.resume and os.path.exists(args.resume):
@@ -101,15 +101,15 @@ def train(args):
             policy="MlpPolicy",
             env=vec_env,
             learning_rate=3e-4,
-            n_steps=2048,
-            batch_size=256,
-            n_epochs=10,
+            n_steps=4096,
+            batch_size=4096,
+            n_epochs=5,
             gamma=0.99,
             gae_lambda=0.95,
             clip_range=0.2,
             ent_coef=0.01,
             vf_coef=0.5,
-            max_grad_norm=0.5,
+            max_grad_norm=1.0,
             policy_kwargs=policy_kwargs,
             tensorboard_log=str(log_dir),
             verbose=1,
@@ -157,7 +157,11 @@ def train(args):
         "net_arch": "pi=[512,256,128], vf=[512,256,128]",
         "lr": 3e-4,
         "clip": 0.2,
-        "batch_size": 256,
+        "batch_size": 4096,
+        "n_steps": 4096,
+        "n_epochs": 5,
+        "device": str(model.device),
+        "robot": "Unitree Go1 (mujoco_menagerie)",
     }
     with open(ckpt_dir / "training_config.json", "w") as f:
         json.dump(config, f, indent=2)

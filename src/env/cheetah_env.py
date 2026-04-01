@@ -1,6 +1,7 @@
 """
-MIT Mini Cheetah Gymnasium Environment.
+Unitree Go1 Quadruped Gymnasium Environment.
 
+Robot: Unitree Go1 (from mujoco_menagerie, BSD-3-Clause)
 Observation (48 dims):
   [0:12]  joint positions (rad)
   [12:24] joint velocities (rad/s)
@@ -24,14 +25,27 @@ OBS_DIM = 48
 ACT_DIM = 12
 
 # Default standing pose: [abduct, hip, knee] × 4 legs (FR, FL, RR, RL)
-# With legs straight down (all-zero) the robot stands at ~0.37m
-# Mild crouch with hip forward, knee back gives a more natural pose
+# Unitree Go1 home keyframe from mujoco_menagerie
 DEFAULT_STANCE = np.array([
-    0.0,  0.7, -1.4,  # FR
-    0.0,  0.7, -1.4,  # FL
-    0.0,  0.7, -1.4,  # RR
-    0.0,  0.7, -1.4,  # RL
+    0.0,  0.9, -1.8,  # FR
+    0.0,  0.9, -1.8,  # FL
+    0.0,  0.9, -1.8,  # RR
+    0.0,  0.9, -1.8,  # RL
 ], dtype=np.float32)
+
+# Reward scale dictionary — signed weights (ETH/legged_gym convention)
+REWARD_SCALES = {
+    "r_linvel":      1.0,    # velocity tracking (exp kernel, positive)
+    "r_yaw":         0.5,    # yaw-rate tracking
+    "r_orientation": -0.5,   # gravity-tilt penalty
+    "r_lin_vel_z":   -2.0,   # vertical bounce penalty
+    "r_ang_vel_xy":  -0.05,  # roll/pitch rate penalty
+    "r_height":      -1.0,   # height deviation penalty
+    "r_torque":      -2e-5,  # torque squared penalty
+    "r_smooth":      -0.01,  # action rate penalty
+    "r_joint_acc":   -2.5e-7,# joint acceleration penalty
+    "r_joint_limit": -10.0,  # joint limit proximity penalty
+}
 
 
 class MiniCheetahEnv(gym.Env):
@@ -66,14 +80,17 @@ class MiniCheetahEnv(gym.Env):
 
         self.step_count = 0
         self.prev_action = np.zeros(ACT_DIM, dtype=np.float32)
+        self.prev_joint_vel = np.zeros(NUM_JOINTS, dtype=np.float32)
         self.command = np.zeros(3, dtype=np.float32)
         self.command_mode = "stand"
         self.randomize_commands = True  # randomize command on each reset for training
 
-        # PD gains
-        self.kp = 80.0
-        self.kd = 1.0
-        self.max_torque = 17.0
+        # PD gains — Go1 XML already has damping=2 on joints, so kd=0 here
+        # to avoid double-damping. The total damping matches the menagerie
+        # position actuator behavior: passive damping only.
+        self.kp = 100.0
+        self.kd = 0.0
+        self.max_torque = 33.5  # Go1: 23.7 Nm hip/thigh, 35.55 Nm knee
 
         # Domain randomization
         self._base_mass = None
@@ -85,14 +102,14 @@ class MiniCheetahEnv(gym.Env):
         # Use absolute path derived from this file's location (works in subprocesses)
         base = os.path.dirname(os.path.abspath(__file__))
         project_root = os.path.dirname(os.path.dirname(base))
-        primary = os.path.join(project_root, "assets", "mini_cheetah.xml")
+        primary = os.path.join(project_root, "assets", "go1.xml")
         if os.path.exists(primary):
             return primary
         # Fallback: try relative to cwd
-        if os.path.exists("assets/mini_cheetah.xml"):
-            return os.path.abspath("assets/mini_cheetah.xml")
+        if os.path.exists("assets/go1.xml"):
+            return os.path.abspath("assets/go1.xml")
         raise FileNotFoundError(
-            f"Cannot find mini_cheetah.xml. Looked in: {primary} and assets/mini_cheetah.xml")
+            f"Cannot find go1.xml. Looked in: {primary} and assets/go1.xml")
 
     def _init_simulator(self):
         import mujoco
@@ -118,6 +135,7 @@ class MiniCheetahEnv(gym.Env):
         super().reset(seed=seed)
         self.step_count = 0
         self.prev_action = np.zeros(ACT_DIM, dtype=np.float32)
+        self.prev_joint_vel = np.zeros(NUM_JOINTS, dtype=np.float32)
 
         mujoco = self._mj
         mujoco.mj_resetData(self.model, self.data)
@@ -125,8 +143,8 @@ class MiniCheetahEnv(gym.Env):
         # Reset masses before DR
         self.model.body_mass[:] = self._base_masses
 
-        # Set initial pose
-        self.data.qpos[2] = 0.32  # height
+        # Set initial pose — Go1 standing height ~0.27m
+        self.data.qpos[2] = 0.27  # height
         self.data.qpos[3] = 1.0   # quat w
         self.data.qpos[4:7] = 0.0
         self.data.qpos[7:7 + NUM_JOINTS] = DEFAULT_STANCE
@@ -164,6 +182,8 @@ class MiniCheetahEnv(gym.Env):
         terminated = self._check_done()
         truncated = self.step_count >= self.episode_length
 
+        # Track state for next-step penalties
+        self.prev_joint_vel = self.data.qvel[6:6 + NUM_JOINTS].copy().astype(np.float32)
         self.prev_action = action.copy()
         self.step_count += 1
 
@@ -195,9 +215,11 @@ class MiniCheetahEnv(gym.Env):
         d = self.data
         qpos = d.qpos[7:7 + NUM_JOINTS].astype(np.float32)
         qvel = d.qvel[6:6 + NUM_JOINTS].astype(np.float32)
-        base_linvel = d.qvel[:3].astype(np.float32)
-        base_angvel = d.qvel[3:6].astype(np.float32)
+
+        # Body-frame velocities (rotate world-frame qvel into body frame)
         quat = d.qpos[3:7]
+        base_linvel = self._quat_rotate_inv(quat, d.qvel[:3]).astype(np.float32)
+        base_angvel = self._quat_rotate_inv(quat, d.qvel[3:6]).astype(np.float32)
         gravity_body = self._quat_rotate_inv(quat, np.array([0.0, 0.0, -1.0]))
 
         obs = np.concatenate([
@@ -213,49 +235,51 @@ class MiniCheetahEnv(gym.Env):
     # ── Reward ──────────────────────────────────────────────────────
 
     def _compute_reward(self, action: np.ndarray) -> float:
-        base_linvel = self.data.qvel[:3]
-        base_angvel = self.data.qvel[3:6]
+        quat = self.data.qpos[3:7]
+        # Body-frame velocities — consistent with obs
+        base_linvel = self._quat_rotate_inv(quat, self.data.qvel[:3])
+        base_angvel = self._quat_rotate_inv(quat, self.data.qvel[3:6])
         tau = self.data.ctrl[:NUM_JOINTS]
+        joint_vel = self.data.qvel[6:6 + NUM_JOINTS]
 
         vx_cmd, vy_cmd, wz_cmd = self.command
 
-        # ── Tracking rewards (only positive signal — ETH/legged_gym standard) ──
+        # ── Tracking rewards (exp kernel — only positive signal) ──
         r_linvel = (
             math.exp(-((base_linvel[0] - vx_cmd) ** 2) / 0.25) +
             math.exp(-((base_linvel[1] - vy_cmd) ** 2) / 0.25)
         )
-        r_yaw = 0.5 * math.exp(-((base_angvel[2] - wz_cmd) ** 2) / 0.25)
+        r_yaw = math.exp(-((base_angvel[2] - wz_cmd) ** 2) / 0.25)
 
         # ── Orientation & stability penalties ──
-        quat = self.data.qpos[3:7]
         gravity_body = self._quat_rotate_inv(quat, np.array([0.0, 0.0, -1.0]))
+        r_orientation = float(np.sum(gravity_body[:2] ** 2))
+        r_lin_vel_z = float(base_linvel[2] ** 2)
+        r_ang_vel_xy = float(np.sum(base_angvel[:2] ** 2))
 
-        # Lateral gravity penalty: penalize tilt (g_x² + g_y²) — bounded [0, 2]
-        r_orientation = -0.5 * float(np.sum(gravity_body[:2] ** 2))
-
-        # Z-velocity penalty: prevents vertical bouncing/hopping (RMA, Isaac Gym)
-        r_lin_vel_z = -0.5 * float(base_linvel[2] ** 2)
-
-        # XY angular velocity penalty: prevents unwanted rolling/pitching
-        r_ang_vel_xy = -0.05 * float(np.sum(base_angvel[:2] ** 2))
-
-        # Height penalty: squared deviation from standing height (Isaac Gym style)
-        # Not a Gaussian reward — only tracking should provide positive signal
+        # Height penalty: squared deviation from Go1 standing height
         base_z = float(self.data.qpos[2])
-        r_height = -1.0 * (base_z - 0.32) ** 2
+        r_height = (base_z - 0.27) ** 2
 
         # ── Energy efficiency & smoothness ──
-        r_torque = -0.0002 * float(np.sum(tau ** 2))
-        r_smooth = -0.01 * float(np.sum((action - self.prev_action) ** 2))
+        r_torque = float(np.sum(tau ** 2))
+        r_smooth = float(np.sum((action - self.prev_action) ** 2))
 
-        # No survival bonus — tracking reward is the only incentive to stay alive.
-        # Papers (legged_gym, RMA, Isaac Gym) omit survival or use ≤0.1.
+        # Joint acceleration penalty: penalize high-frequency jitter
+        joint_acc = (joint_vel - self.prev_joint_vel) / self.dt
+        r_joint_acc = float(np.sum(joint_acc ** 2))
 
-        total = (r_linvel + r_yaw + r_orientation + r_lin_vel_z
-                 + r_ang_vel_xy + r_height + r_torque + r_smooth)
+        # Joint limit proximity penalty: soft penalty near limits
+        q = self.data.qpos[7:7 + NUM_JOINTS]
+        jnt_range = self.model.jnt_range[1:NUM_JOINTS + 1]  # skip freejoint
+        margin = 0.1  # rad
+        below = np.clip(jnt_range[:, 0] + margin - q, 0, None)
+        above = np.clip(q - (jnt_range[:, 1] - margin), 0, None)
+        r_joint_limit = float(np.sum(below ** 2 + above ** 2))
 
-        # Store components for logging callbacks
-        self._last_reward_components = {
+        # ── Assemble with REWARD_SCALES (positive terms stay positive, penalties
+        #    have negative scales so raw values are summed with sign from dict) ──
+        components = {
             "r_linvel": r_linvel,
             "r_yaw": r_yaw,
             "r_orientation": r_orientation,
@@ -264,8 +288,17 @@ class MiniCheetahEnv(gym.Env):
             "r_height": r_height,
             "r_torque": r_torque,
             "r_smooth": r_smooth,
-            "r_total": total,
+            "r_joint_acc": r_joint_acc,
+            "r_joint_limit": r_joint_limit,
         }
+
+        total = sum(REWARD_SCALES[k] * v for k, v in components.items())
+
+        # Store components (with scales applied) for logging callbacks
+        self._last_reward_components = {
+            k: REWARD_SCALES[k] * v for k, v in components.items()
+        }
+        self._last_reward_components["r_total"] = total
 
         return total
 
@@ -275,8 +308,8 @@ class MiniCheetahEnv(gym.Env):
         base_z = self.data.qpos[2]
         quat = self.data.qpos[3:7]
         gravity_body = self._quat_rotate_inv(quat, np.array([0.0, 0.0, -1.0]))
-        # Fallen: too low or tilted > ~60 degrees
-        return bool(base_z < 0.12 or gravity_body[2] > -0.5)
+        # Fallen: too low or tilted > ~45 degrees (cos 45° ≈ 0.707)
+        return bool(base_z < 0.13 or gravity_body[2] > -0.7)
 
     def _get_info(self) -> Dict[str, Any]:
         info = {
