@@ -33,19 +33,28 @@ DEFAULT_STANCE = np.array([
     0.0,  0.9, -1.8,  # RL
 ], dtype=np.float32)
 
-# Reward scale dictionary — signed weights (ETH/legged_gym convention)
+# Reward scale dictionary — signed weights (ETH/legged_gym convention).
+# Penalty scales reduced from legged_gym defaults to compensate for
+# 25 CPU-parallel envs (vs 4096 GPU envs).  Tracking rewards use
+# exp(-error²/σ) kernel so they are always in [0,1].
 REWARD_SCALES = {
-    "r_linvel":      1.0,    # velocity tracking (exp kernel, positive)
-    "r_yaw":         0.5,    # yaw-rate tracking
-    "r_orientation": -0.5,   # gravity-tilt penalty
-    "r_lin_vel_z":   -2.0,   # vertical bounce penalty
-    "r_ang_vel_xy":  -0.05,  # roll/pitch rate penalty
-    "r_height":      -1.0,   # height deviation penalty
-    "r_torque":      -2e-5,  # torque squared penalty
-    "r_smooth":      -0.01,  # action rate penalty
-    "r_joint_acc":   -2.5e-7,# joint acceleration penalty
-    "r_joint_limit": -10.0,  # joint limit proximity penalty
+    "r_linvel":      1.5,      # velocity tracking (exp kernel), max 3.0
+    "r_yaw":         0.75,     # yaw-rate tracking, max 0.75
+    "r_alive":       0.5,      # constant alive bonus
+    "r_orientation": -0.2,     # gravity-tilt penalty (was -0.5)
+    "r_lin_vel_z":   -1.0,     # vertical bounce penalty (was -2.0)
+    "r_ang_vel_xy":  -0.005,   # roll/pitch rate penalty (was -0.05, 10× reduction)
+    "r_height":      -0.5,     # height deviation penalty (was -1.0)
+    "r_torque":      -5e-6,    # torque squared penalty (was -2e-5, 4× reduction)
+    "r_smooth":      -0.01,    # action rate penalty
+    "r_joint_acc":   -2.5e-8,  # joint accel penalty (was -2.5e-7, 10× reduction)
+    "r_joint_limit": -5.0,     # joint limit proximity penalty (was -10.0)
 }
+
+# Clip total reward to >= 0 (legged_gym only_positive_rewards convention).
+# Prevents the early-termination death spiral where the policy learns
+# that dying quickly minimises accumulated penalties.
+ONLY_POSITIVE_REWARDS = True
 
 
 class MiniCheetahEnv(gym.Env):
@@ -277,11 +286,14 @@ class MiniCheetahEnv(gym.Env):
         above = np.clip(q - (jnt_range[:, 1] - margin), 0, None)
         r_joint_limit = float(np.sum(below ** 2 + above ** 2))
 
-        # ── Assemble with REWARD_SCALES (positive terms stay positive, penalties
-        #    have negative scales so raw values are summed with sign from dict) ──
+        # ── Alive bonus (constant positive signal for surviving) ──
+        r_alive = 1.0  # raw value; scaled by REWARD_SCALES["r_alive"]
+
+        # ── Assemble with REWARD_SCALES ──
         components = {
             "r_linvel": r_linvel,
             "r_yaw": r_yaw,
+            "r_alive": r_alive,
             "r_orientation": r_orientation,
             "r_lin_vel_z": r_lin_vel_z,
             "r_ang_vel_xy": r_ang_vel_xy,
@@ -293,6 +305,9 @@ class MiniCheetahEnv(gym.Env):
         }
 
         total = sum(REWARD_SCALES[k] * v for k, v in components.items())
+
+        if ONLY_POSITIVE_REWARDS:
+            total = max(total, 0.0)
 
         # Store components (with scales applied) for logging callbacks
         self._last_reward_components = {
