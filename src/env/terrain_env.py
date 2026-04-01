@@ -232,7 +232,7 @@ class AdvancedTerrainEnv(gym.Env):
         randomize_domain: bool = True,
         randomize_terrain: bool = True,
         randomize_skill: bool = True,
-        episode_length: int = 1000,
+        episode_length: int = 5000,
         push_interval: int = 200,
         push_magnitude: float = 0.5,
         dt: float = 0.02,
@@ -506,6 +506,10 @@ class AdvancedTerrainEnv(gym.Env):
         # -- Terrain adaptability: reward for traversing rough terrain --
         terrain_difficulty = self._terrain_encoding[1] + self._terrain_encoding[7]  # std + gap
         r_terrain = 0.2 * terrain_difficulty * float(base_linvel[0] > 0.1)
+
+        # add penalty for short episodes to encourage survival
+        if self.step_count < 500:
+            total -= self.step_count * 0.1
 
         total = (r_linvel + r_yaw + r_height + r_orientation +
                  r_lin_vel_z + r_ang_vel_xy + r_torque + r_smooth +
