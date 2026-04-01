@@ -507,13 +507,15 @@ class AdvancedTerrainEnv(gym.Env):
         terrain_difficulty = self._terrain_encoding[1] + self._terrain_encoding[7]  # std + gap
         r_terrain = 0.2 * terrain_difficulty * float(base_linvel[0] > 0.1)
 
+        # Negative reward for short episodes to encourage survival
+        if self.step_count < 500:
+            r_time = -(self.episode_length - 500)*0.1
+        else:
+            r_time = 0.0
+
         total = (r_linvel + r_yaw + r_height + r_orientation +
                  r_lin_vel_z + r_ang_vel_xy + r_torque + r_smooth +
-                 r_contact + r_terrain)
-
-        # add penalty for short episodes to encourage survival
-        if self.step_count < 500:
-            total -= (100 - self.step_count * 0.1)
+                 r_contact + r_terrain + r_time)
 
         self._last_reward_components = {
             "r_linvel": r_linvel,
