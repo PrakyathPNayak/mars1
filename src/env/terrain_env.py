@@ -378,6 +378,7 @@ class AdvancedTerrainEnv(gym.Env):
 
         # Cache foot geom ids and body (non-foot) geom ids after init
         self._foot_geom_ids = set()
+        self._foot_geom_id_to_idx = {}  # geom_id → foot index (0..3)
         self._body_geom_ids = set()
 
         self._init_simulator()
@@ -420,13 +421,15 @@ class AdvancedTerrainEnv(gym.Env):
         )
 
         # Build geom id sets for collision detection
-        foot_names = {"FR_foot_collision", "FL_foot_collision",
-                      "RR_foot_collision", "RL_foot_collision"}
+        foot_names_ordered = ["FR_foot_collision", "FL_foot_collision",
+                              "RR_foot_collision", "RL_foot_collision"]
+        foot_names = set(foot_names_ordered)
         floor_names = {"floor"}
         for i in range(self.model.ngeom):
             name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, i)
             if name in foot_names:
                 self._foot_geom_ids.add(i)
+                self._foot_geom_id_to_idx[i] = foot_names_ordered.index(name)
             elif name and name not in floor_names and "visual" not in name:
                 self._body_geom_ids.add(i)
 
@@ -644,9 +647,12 @@ class AdvancedTerrainEnv(gym.Env):
           making early-episode learning impossible. Removed entirely.
           Ref: legged_gym, RMA, Isaac Gym all omit survival/time bonuses.
         """
-        # World-frame velocities (used for reward, not observation)
-        base_linvel = self.data.qvel[:3]
-        base_angvel = self.data.qvel[3:6]
+        # Body-frame velocities (consistent with observation frame).
+        # Isaac Gym / legged_gym convention: commands are body-frame-relative,
+        # so reward tracking must also be in body frame.
+        quat = self.data.qpos[3:7]
+        base_linvel = self._quat_rotate_inv(quat, self.data.qvel[:3])
+        base_angvel = self._quat_rotate_inv(quat, self.data.qvel[3:6])
         tau = self.data.ctrl[:NUM_JOINTS]
         qd = self.data.qvel[6:6 + NUM_JOINTS]
         skill = SKILL_MODES[self.skill_mode]
@@ -656,6 +662,7 @@ class AdvancedTerrainEnv(gym.Env):
 
         # -- Velocity tracking (exp kernel, legged_gym standard) --
         # sigma²=0.25 → at 0.5 m/s error, reward ≈ 0.37; at 0 error, reward = 1.0
+        # Computed in body frame: command vx/vy are body-relative.
         r_linvel = scales["lin_vel_tracking"] * (
             math.exp(-((base_linvel[0] - vx_cmd) ** 2) / 0.25) +
             math.exp(-((base_linvel[1] - vy_cmd) ** 2) / 0.25)
@@ -670,7 +677,6 @@ class AdvancedTerrainEnv(gym.Env):
         r_height = scales["height"] * (base_z - target_h) ** 2
 
         # -- Orientation: penalise body tilt (projected gravity xy components) --
-        quat = self.data.qpos[3:7]
         gravity_body = self._quat_rotate_inv(quat, np.array([0.0, 0.0, -1.0]))
         r_orientation = scales["orientation"] * float(np.sum(gravity_body[:2] ** 2))
 
@@ -720,7 +726,7 @@ class AdvancedTerrainEnv(gym.Env):
             r_contact = 0.0
 
         # -- Terrain adaptability: reward forward progress on difficult terrain --
-        # Uses continuous velocity instead of binary threshold for gradient signal
+        # Uses continuous body-frame forward velocity (consistent with tracking reward)
         terrain_difficulty = self._terrain_encoding[1] + self._terrain_encoding[7]
         fwd_vel = float(np.clip(base_linvel[0], 0.0, 3.0))
         r_terrain = scales["terrain"] * terrain_difficulty * fwd_vel
@@ -775,19 +781,16 @@ class AdvancedTerrainEnv(gym.Env):
         return bool(base_z < 0.15 or gravity_body[2] > -0.7)
 
     def _update_foot_contacts(self):
-        """Detect foot-ground contacts using geom id lookup (avoids string comparison)."""
-        mujoco = self._mj
-        foot_geom_names = ["FR_foot_collision", "FL_foot_collision",
-                           "RR_foot_collision", "RL_foot_collision"]
+        """Detect foot-ground contacts using cached geom id lookup (no string comparison)."""
         self._foot_contacts = np.zeros(4, dtype=np.float32)
 
         for i in range(self.data.ncon):
             contact = self.data.contact[i]
-            geom1 = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, contact.geom1)
-            geom2 = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, contact.geom2)
-            for j, fname in enumerate(foot_geom_names):
-                if geom1 == fname or geom2 == fname:
-                    self._foot_contacts[j] = 1.0
+            g1, g2 = contact.geom1, contact.geom2
+            if g1 in self._foot_geom_id_to_idx:
+                self._foot_contacts[self._foot_geom_id_to_idx[g1]] = 1.0
+            if g2 in self._foot_geom_id_to_idx:
+                self._foot_contacts[self._foot_geom_id_to_idx[g2]] = 1.0
 
     def _update_collision_info(self):
         """Detect body (non-foot) collisions with ground and foot stumbles.
