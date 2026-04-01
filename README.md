@@ -79,6 +79,52 @@ Design choices synthesized from:
 
 See [.state/RESEARCH_INSIGHTS.md](.state/RESEARCH_INSIGHTS.md) for full synthesis.
 
+## Reward Design
+
+The `AdvancedTerrainEnv` uses a 14-term weighted reward function, designed following
+legged_gym (Rudin et al. 2022), DreamWaQ, and CHRL conventions. All velocity-based
+terms are computed in **body frame** for sim-to-real consistency.
+
+| Term | Weight | Description |
+|------|--------|-------------|
+| `lin_vel_tracking` | +1.0 | Exponential kernel tracking of body-frame vx/vy vs command |
+| `ang_vel_tracking` | +0.5 | Exponential kernel tracking of yaw rate vs command |
+| `height` | -1.0 | Squared deviation from skill-dependent height target |
+| `orientation` | -1.0 | Projected gravity xy² (penalises tilt) |
+| `lin_vel_z` | -2.0 | Vertical velocity² (suppresses bouncing) |
+| `ang_vel_xy` | -0.05 | Body-frame roll/pitch rate² |
+| `torque` | -2e-5 | Torque² × skill energy weight |
+| `action_rate` | -0.02 | Action delta² (smoothness) |
+| `joint_acc` | -2.5e-7 | Joint acceleration² (suppresses jitter) |
+| `joint_limit` | -1.0 | Proximity to joint limits (0.1 rad margin) |
+| `contact` | -0.2 | Gait-dependent foot contact pattern penalty |
+| `terrain` | +0.2 | Forward velocity × terrain difficulty |
+| `collision` | -0.5 | Trunk/thigh touching ground |
+| `stumble` | -0.5 | Foot lateral hit on non-floor obstacle |
+
+Net reward at convergence (trot, 1.5 m/s, flat): ~1.5–2.0 per step.
+
+## Training Configuration
+
+Hardware-tuned config in [`training_config.json`](training_config.json):
+
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| Parallel envs | 64 | Saturates 24 CPU cores via SubprocVecEnv |
+| Batch size | 8192 | 2× n_steps for stable gradient estimates |
+| n_steps | 4096 | ~82s rollout per env (2048 steps × 0.02s × 2) |
+| Learning rate | 3e-4 → 1e-5 | Cosine decay schedule |
+| Entropy coef | 0.01 → 0.001 | Linear decay for exploration → exploitation |
+| Episode length | 2000 steps | 40s at 50 Hz control rate |
+| Push magnitude | 50 N | ~5.2 m/s² for 9.57 kg robot (CHRL: up to 80 N) |
+| PD gains | kp=80, kd=2.0 | Kim et al. 2019; kd raised from 1.0 to suppress oscillation |
+| Max torque | 17 Nm | Mini Cheetah hardware limit |
+
+Domain randomization ranges:
+- Body mass ±15%, floor friction 0.3–1.5, foot friction 0.8–2.0
+- Joint damping ±20%, armature ±20%, PD gains ±15%, motor strength ±10%
+- Observation noise σ=0.02
+
 ## Documentation
 
 - [Architecture](docs/architecture.md) — detailed system design
