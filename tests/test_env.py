@@ -1,4 +1,4 @@
-"""Unit and integration tests for the Mini Cheetah environment."""
+"""Unit and integration tests for the Unitree Go1 environment."""
 import sys
 import math
 import numpy as np
@@ -155,7 +155,7 @@ def run_all_tests():
         test_observation_space,
     ]
     passed = failed = 0
-    print("\n=== MIT Mini Cheetah Test Suite ===\n")
+    print("\n=== Unitree Go1 Test Suite ===\n")
     for t in tests:
         try:
             t()

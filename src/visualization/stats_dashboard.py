@@ -33,7 +33,7 @@ class TrainingDashboard:
     def generate_plot(self, output_path: str = "logs/training_dashboard.png"):
         rewards, lengths = self.read_monitor_csv()
         fig, axes = plt.subplots(2, 2, figsize=(12, 8))
-        fig.suptitle("MIT Mini Cheetah — Training Dashboard", fontsize=14)
+        fig.suptitle("Unitree Go1 — Training Dashboard", fontsize=14)
 
         if len(rewards) > 0:
             ax = axes[0, 0]

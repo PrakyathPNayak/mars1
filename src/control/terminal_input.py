@@ -175,7 +175,7 @@ class TerminalKeyController:
 def print_terminal_bindings():
     print("""
 ╔══════════════════════════════════════════════════╗
-║  MIT Mini Cheetah — Terminal Controls            ║
+║  Unitree Go1 — Terminal Controls                ║
 ╠══════════════════════════════════════════════════╣
 ║  W / ↑        : Forward  (exclusive)            ║
 ║  S / ↓        : Backward (exclusive)            ║

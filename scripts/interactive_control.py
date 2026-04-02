@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Interactive visualization and keyboard control for the trained Mini Cheetah policy.
+Interactive visualization and keyboard control for the trained Unitree Go1 policy.
 
 Keyboard input is read from the TERMINAL (not the MuJoCo viewer window).
 This means you can type commands in the terminal that launched this script
@@ -33,33 +33,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.env.cheetah_env import MiniCheetahEnv
 from src.control.terminal_input import TerminalKeyController, print_terminal_bindings
-
-
-def load_policy(checkpoint_path):
-    """Try to load a trained PPO policy."""
-    try:
-        from stable_baselines3 import PPO
-    except ImportError:
-        print("[WARN] stable-baselines3 not installed. Using PD controller.")
-        return None
-
-    candidates = [checkpoint_path] if checkpoint_path else []
-    candidates += [
-        "checkpoints/best/best_model.zip",
-        "checkpoints/cheetah_final.zip",
-    ]
-    for ckpt in candidates:
-        if ckpt and os.path.exists(ckpt):
-            policy = PPO.load(ckpt, device="cpu")
-            print(f"[OK] Loaded policy: {ckpt}")
-            return policy
-    print("[WARN] No checkpoint found. Using PD standing controller.")
-    return None
+from src.utils.policy_loader import load_policy_for_inference
 
 
 def run(checkpoint_path=None, use_policy=True):
     """Main interactive control loop with terminal-based input."""
-    policy = load_policy(checkpoint_path) if use_policy else None
+    if use_policy:
+        policy, normalize_fn = load_policy_for_inference(checkpoint_path)
+    else:
+        policy, normalize_fn = None, lambda obs: obs
 
     # Create env with render_mode="none" — we manage the viewer ourselves
     env = MiniCheetahEnv(
@@ -99,7 +81,7 @@ def run(checkpoint_path=None, use_policy=True):
 
             # Choose action
             if policy is not None:
-                action, _ = policy.predict(obs, deterministic=True)
+                action, _ = policy.predict(normalize_fn(obs), deterministic=True)
             else:
                 q_offset = obs[:12]
                 action = -q_offset * 0.15
@@ -155,7 +137,7 @@ def run(checkpoint_path=None, use_policy=True):
 if __name__ == "__main__":
     os.chdir(Path(__file__).resolve().parent.parent)
 
-    parser = argparse.ArgumentParser(description="Interactive Mini Cheetah control")
+    parser = argparse.ArgumentParser(description="Interactive Unitree Go1 control")
     parser.add_argument("--checkpoint", type=str, default=None, help="Path to policy checkpoint")
     parser.add_argument("--no-policy", action="store_true", help="Use PD controller only (no learned policy)")
     args = parser.parse_args()

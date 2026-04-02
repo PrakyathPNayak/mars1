@@ -1,5 +1,5 @@
 """
-Main entrypoint for MIT Mini Cheetah RL Environment.
+Main entrypoint for Unitree Go1 RL Locomotion.
 
 Usage:
   python3 run.py demo         # Interactive keyboard demo
@@ -16,7 +16,7 @@ import argparse
 
 def main():
     parser = argparse.ArgumentParser(
-        description="MIT Mini Cheetah RL Locomotion",
+        description="Unitree Go1 RL Locomotion",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )

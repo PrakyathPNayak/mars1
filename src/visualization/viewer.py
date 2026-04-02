@@ -1,5 +1,5 @@
 """
-Interactive demo viewer and video recording for Mini Cheetah.
+Interactive demo viewer and video recording for Unitree Go1.
 """
 import time
 import sys
@@ -24,6 +24,7 @@ def run_interactive_demo(
     """
     from src.env.cheetah_env import MiniCheetahEnv
     from src.control.exploration_policy import ExplorationPolicy
+    from src.utils.policy_loader import load_policy_for_inference
 
     if use_terminal_input:
         from src.control.terminal_input import TerminalKeyController, print_terminal_bindings
@@ -31,24 +32,9 @@ def run_interactive_demo(
         from src.control.keyboard_controller import KeyboardController
 
     policy = None
+    normalize_fn = lambda obs: obs
     if use_trained:
-        try:
-            from stable_baselines3 import PPO
-            candidates = [
-                "checkpoints/best/best_model.zip",
-                "checkpoints/cheetah_final.zip",
-            ]
-            if model_path:
-                candidates.insert(0, model_path)
-            for ckpt in candidates:
-                if os.path.exists(ckpt):
-                    policy = PPO.load(ckpt)
-                    print(f"[Demo] Loaded policy: {ckpt}")
-                    break
-            if policy is None:
-                print("[Demo] No checkpoint found. Using PD standing controller.")
-        except ImportError:
-            print("[Demo] SB3 not available. Using PD controller.")
+        policy, normalize_fn = load_policy_for_inference(model_path)
 
     env = MiniCheetahEnv(
         render_mode=render_mode,
@@ -84,7 +70,7 @@ def run_interactive_demo(
             env.set_command(vx, vy, wz, mode)
 
             if policy is not None:
-                action, _ = policy.predict(obs, deterministic=True)
+                action, _ = policy.predict(normalize_fn(obs), deterministic=True)
             else:
                 q_current = obs[:12]
                 action = -q_current * 0.1  # simple PD to default stance
@@ -115,25 +101,18 @@ def run_interactive_demo(
 def record_rollout(output_path: str = "logs/rollout.mp4", n_steps: int = 500):
     """Record a rollout to video file."""
     from src.env.cheetah_env import MiniCheetahEnv
+    from src.utils.policy_loader import load_policy_for_inference
     import imageio
 
     env = MiniCheetahEnv(render_mode="rgb_array", randomize_domain=False)
     obs, _ = env.reset()
     frames = []
 
-    policy = None
-    try:
-        from stable_baselines3 import PPO
-        for ckpt in ["checkpoints/best/best_model.zip", "checkpoints/cheetah_final.zip"]:
-            if os.path.exists(ckpt):
-                policy = PPO.load(ckpt)
-                break
-    except Exception:
-        pass
+    policy, normalize_fn = load_policy_for_inference()
 
     for _ in range(n_steps):
         if policy:
-            action, _ = policy.predict(obs, deterministic=True)
+            action, _ = policy.predict(normalize_fn(obs), deterministic=True)
         else:
             action = np.zeros(12)
         obs, _, done, truncated, _ = env.step(action)

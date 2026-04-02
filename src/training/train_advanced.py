@@ -241,7 +241,7 @@ def train(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Train Mini Cheetah with Hierarchical Transformer + MoE"
+        description="Train Unitree Go1 with Hierarchical Transformer + MoE"
     )
     parser.add_argument("--total-steps", type=int, default=5_000_000)
     parser.add_argument("--n-envs", type=int, default=8)

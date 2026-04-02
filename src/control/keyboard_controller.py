@@ -1,5 +1,5 @@
 """
-Keyboard controller for MIT Mini Cheetah.
+Keyboard controller for Unitree Go1 quadruped.
 
 Key bindings:
   W/↑: Forward  S/↓: Backward  A/←: Strafe left  D/→: Strafe right
@@ -133,7 +133,7 @@ class KeyboardController:
     def print_bindings(self):
         print("""
 ╔══════════════════════════════════════════════════╗
-║  MIT Mini Cheetah Keyboard Controls              ║
+║  Unitree Go1 Keyboard Controls                ║
 ╠══════════════════════════════════════════════════╣
 ║  W / ↑        : Forward                         ║
 ║  S / ↓        : Backward                        ║

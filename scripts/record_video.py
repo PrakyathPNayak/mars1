@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 def record(checkpoint_path, output_path="logs/rollout.mp4", n_episodes=1, fps=50):
     from src.env.cheetah_env import MiniCheetahEnv
-    from stable_baselines3 import PPO
+    from src.utils.policy_loader import load_policy_for_inference
     import imageio
 
     env = MiniCheetahEnv(
@@ -20,7 +20,7 @@ def record(checkpoint_path, output_path="logs/rollout.mp4", n_episodes=1, fps=50
         randomize_domain=False,
         episode_length=1000,
     )
-    policy = PPO.load(checkpoint_path)
+    policy, normalize_fn = load_policy_for_inference(checkpoint_path)
 
     frames = []
     for ep in range(n_episodes):
@@ -28,7 +28,7 @@ def record(checkpoint_path, output_path="logs/rollout.mp4", n_episodes=1, fps=50
         total_r = 0.0
         steps = 0
         while True:
-            action, _ = policy.predict(obs, deterministic=True)
+            action, _ = policy.predict(normalize_fn(obs), deterministic=True)
             obs, reward, done, truncated, info = env.step(action)
             frame = env.render()
             if frame is not None:
