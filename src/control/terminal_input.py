@@ -8,6 +8,7 @@ without requiring viewer window focus.
 Key bindings (held-key style):
   W/↑: Forward   S/↓: Backward   A/←: Strafe left   D/→: Strafe right
   Q: Turn left    E: Turn right    SPACE: Stop all    1/2/3: Walk/Trot/Run
+  J: Jump          C: Toggle crouch
   ESC: Quit
 """
 import sys
@@ -35,6 +36,9 @@ class TerminalKeyController:
         self._turn_r = False
         self.speed = SPEEDS["trot"]
         self.mode = "stand"
+        self.crouching = False
+        self.jumping = False
+        self._jump_counter = 0  # jump persists for N get_command reads
         self.quit = False
         self._lock = threading.Lock()
         self._thread = None
@@ -131,6 +135,15 @@ class TerminalKeyController:
                 self.speed = SPEEDS["trot"]; self.mode = "trot"
             elif c == "3":
                 self.speed = SPEEDS["run"]; self.mode = "run"
+            elif c == "j":
+                self.jumping = True
+                self._jump_counter = 25  # ~0.5s at 50Hz
+                self.crouching = False
+                self.mode = "jump"
+            elif c == "c":
+                self.crouching = not self.crouching
+                self.jumping = False
+                self.mode = "crouch" if self.crouching else "trot"
             elif ch == "\x1b":  # ESC
                 self.quit = True
 
@@ -159,6 +172,16 @@ class TerminalKeyController:
             vy = STRAFE_SPEED if self._left else (-STRAFE_SPEED if self._right else 0.0)
             wz = TURN_SPEED if self._turn_l else (-TURN_SPEED if self._turn_r else 0.0)
             mode = self.mode
+            # Crouching reduces speed
+            if self.crouching:
+                vx *= 0.3
+                vy *= 0.3
+            # Jump persists for _jump_counter reads then reverts
+            if self.jumping:
+                self._jump_counter -= 1
+                if self._jump_counter <= 0:
+                    self.jumping = False
+                    self.mode = "trot"
             if (vx != 0 or vy != 0 or wz != 0) and mode == "stand":
                 mode = "trot"
             return vx, vy, wz, mode
@@ -170,6 +193,8 @@ class TerminalKeyController:
             self._left = self._right = False
             self._turn_l = self._turn_r = False
             self.mode = "stand"
+            self.crouching = False
+            self.jumping = False
 
 
 def print_terminal_bindings():
@@ -183,6 +208,8 @@ def print_terminal_bindings():
 ║  D / →        : Strafe right (exclusive)        ║
 ║  Q            : Turn left (exclusive)           ║
 ║  E            : Turn right (exclusive)          ║
+║  J            : Jump                            ║
+║  C            : Toggle crouch                   ║
 ║  1 / 2 / 3    : Walk / Trot / Run speed         ║
 ║  SPACE        : Stop all motion                 ║
 ║  ESC          : Quit                            ║

@@ -1,4 +1,4 @@
-.PHONY: install demo train eval test dashboard clean explore record model
+PHONY: install demo train eval test dashboard clean explore record model
 
 install:
 	pip install gymnasium stable-baselines3[extra] tensorboard mujoco pynput imageio scipy matplotlib

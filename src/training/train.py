@@ -1,7 +1,7 @@
 """
 PPO training pipeline for Unitree Go1 quadruped locomotion.
 
-Architecture: Actor/Critic MLP [512, 256, 128] with ELU activation
+Architecture: Actor/Critic MLP [1024, 512, 256] with ELU activation
 Algorithm: PPO (clip=0.2, lr=3e-4→0 linear, 4096 steps/rollout)
 
 Key design choices (from legged_gym / Isaac Gym conventions):
@@ -120,7 +120,7 @@ def train(args):
 
     # ── Policy architecture ─────────────────────────────────────────
     policy_kwargs = dict(
-        net_arch=dict(pi=[512, 256, 128], vf=[512, 256, 128]),
+        net_arch=dict(pi=[1024, 512, 256], vf=[1024, 512, 256]),
         activation_fn=torch.nn.ELU,    # better gradient flow than Tanh for locomotion
         ortho_init=True,               # orthogonal weight init (PPO standard)
         log_std_init=-0.5,             # initial std ≈ 0.6 (matches ±0.5 action range)
@@ -194,7 +194,7 @@ def train(args):
         "total_steps": args.total_steps,
         "n_envs": args.n_envs,
         "algorithm": "PPO",
-        "net_arch": "pi=[512,256,128], vf=[512,256,128]",
+        "net_arch": "pi=[1024,512,256], vf=[1024,512,256]",
         "activation_fn": "ELU",
         "lr": "3e-4 linear decay",
         "clip": 0.2,

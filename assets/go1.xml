@@ -17,7 +17,7 @@
 
   <visual>
     <headlight ambient="0.5 0.5 0.5" diffuse="0.8 0.8 0.8" specular="0.1 0.1 0.1"/>
-    <map force="0.1" zfar="30"/>
+    <map force="0.1" zfar="200"/>
     <quality shadowsize="2048"/>
   </visual>
 
@@ -102,7 +102,7 @@
            diffuse="0.8 0.8 0.8" specular="0.2 0.2 0.2"/>
     <light name="front" pos="2 -2 2" dir="-1 1 -1" diffuse="0.3 0.3 0.3"/>
     <light name="spotlight" mode="targetbodycom" target="trunk" pos="0 -1 2"/>
-    <geom name="floor" type="plane" size="50 50 0.1" material="floor_mat"
+    <geom name="floor" type="plane" size="200 200 0.1" material="floor_mat"
           condim="6" friction="1.0 0.005 0.0001"/>
 
     <body name="trunk" pos="0 0 0.27" childclass="go1">

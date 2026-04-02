@@ -15,6 +15,7 @@ Controls (toggle on/off, Space to stop all):
     W / ↑        : Forward          S / ↓       : Backward
     A / ←        : Strafe left      D / →       : Strafe right
     Q            : Turn left        E           : Turn right
+    J            : Jump             C           : Toggle crouch
     1 / 2 / 3    : Walk / Trot / Run speed
     Space        : Stop all motion
     ESC          : Quit

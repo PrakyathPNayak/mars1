@@ -2,14 +2,14 @@
 Unitree Go1 Quadruped Gymnasium Environment.
 
 Robot: Unitree Go1 (from mujoco_menagerie, BSD-3-Clause)
-Observation (48 dims):
+Observation (49 dims):
   [0:12]  joint positions (rad)
   [12:24] joint velocities (rad/s)
   [24:27] base linear velocity (m/s, body frame)
   [27:30] base angular velocity (rad/s, body frame)
   [30:33] projected gravity vector (body frame)
   [33:45] previous action (rad)
-  [45:48] velocity command (vx, vy, wz)
+  [45:49] command (vx, vy, wz, target_height)
 
 Action (12 dims): delta joint position targets, clipped ±0.5 rad
 
@@ -23,13 +23,14 @@ Reward design (based on ETH Zurich legged_gym):
 """
 import os
 import math
+import collections
 import numpy as np
 from typing import Dict, Any, Optional
 import gymnasium as gym
 from gymnasium import spaces
 
 NUM_JOINTS = 12
-OBS_DIM = 48
+OBS_DIM = 49  # 48 + 1 target_height appended to command
 ACT_DIM = 12
 
 # Default standing pose: [abduct, hip, knee] × 4 legs (FR, FL, RR, RL)
@@ -47,19 +48,39 @@ DEFAULT_STANCE = np.array([
 #   New design: standing≈2.9/step vs walking≈4.5 (gradient≈1.6 — 8× stronger)
 # Key changes: removed alive bonus, added cmd penalty & feet_air_time,
 # tighter tracking sigma, combined exp kernel (legged_gym style).
+# Height targets for different command modes
+HEIGHT_TARGETS = {
+    "stand": 0.27, "walk": 0.27, "trot": 0.27, "run": 0.27, "explore": 0.27,
+    "crouch": 0.18,
+    "jump": 0.35,
+}
+
+# Anti-crouch: rolling window to detect sustained unwanted crouching
+CROUCH_DETECT_WINDOW = 10       # steps (~0.2s at 50 Hz)
+CROUCH_HEIGHT_THRESHOLD = 0.22  # below this counts as "crouching"
+
+# Go1 approximate total mass (kg) — for cost-of-transport scaling
+ROBOT_MASS = 12.74
+
 REWARD_SCALES = {
-    "r_linvel":        2.0,      # exp tracking for xy vel (combined kernel, max 1.0)
-    "r_yaw":           1.0,      # exp tracking for yaw rate (max 1.0)
-    "r_feet_air_time": 1.5,      # gait reward: incentivises leg swing (legged_gym)
-    "r_cmd_vel_error": -2.0,     # squared velocity error — penalises NOT tracking cmd
-    "r_orientation":   -0.2,     # gravity-tilt penalty
-    "r_lin_vel_z":     -1.0,     # vertical bounce penalty
-    "r_ang_vel_xy":    -0.005,   # roll/pitch rate penalty
-    "r_height":        -0.5,     # height deviation penalty
-    "r_torque":        -5e-6,    # torque squared penalty
-    "r_smooth":        -0.01,    # action rate penalty
-    "r_joint_acc":     -2.5e-8,  # joint accel penalty
-    "r_joint_limit":   -5.0,     # joint limit proximity penalty
+    "r_linvel":          2.0,      # exp tracking for xy vel (combined kernel, max 1.0)
+    "r_yaw":             1.0,      # exp tracking for yaw rate (max 1.0)
+    "r_feet_air_time":   1.5,      # gait reward: incentivises leg swing (legged_gym)
+    "r_cmd_vel_error":  -2.0,      # squared velocity error — penalises NOT tracking cmd
+    "r_orientation":    -0.2,      # gravity-tilt penalty
+    "r_lin_vel_z":      -1.0,      # vertical bounce penalty
+    "r_ang_vel_xy":     -0.005,    # roll/pitch rate penalty
+    "r_height":         -0.5,      # height deviation from mode-dependent target
+    "r_torque":         -5e-6,     # torque squared penalty
+    "r_smooth":         -0.01,     # action rate penalty
+    "r_joint_acc":      -2.5e-8,   # joint accel penalty
+    "r_joint_limit":    -5.0,      # joint limit proximity penalty
+    # ── New rewards (steps 1-4) ──
+    "r_crouch_penalty": -1.0,      # anti-crouch: penalize sustained low height when not in crouch mode
+    "r_power":          -1e-5,     # mechanical power |tau·qvel|: energy efficiency
+    "r_stand_still":    -0.5,      # penalize joint deviation from default at zero command
+    "r_gait_phase":      0.5,      # trot diagonal contact symmetry reward
+    "r_foot_clearance":  0.3,      # swing-foot height reward
 }
 
 # Tracking σ for exp kernel: tighter than legged_gym default (0.25).
@@ -117,6 +138,10 @@ class MiniCheetahEnv(gym.Env):
         self._feet_air_time = np.zeros(4, dtype=np.float32)
         self._last_contacts = np.zeros(4, dtype=bool)
 
+        # Height history for anti-crouch time-series detection
+        self._height_history = collections.deque(maxlen=CROUCH_DETECT_WINDOW)
+        self.target_height = HEIGHT_TARGETS.get(self.command_mode, 0.27)
+
         # PD gains — Go1 XML already has damping=2 on joints, so kd=0 here
         # to avoid double-damping. The total damping matches the menagerie
         # position actuator behavior: passive damping only.
@@ -168,6 +193,13 @@ class MiniCheetahEnv(gym.Env):
             for n in _FOOT_GEOM_NAMES
         ], dtype=np.int32)
 
+        # Cache foot site IDs for clearance reward
+        _FOOT_SITE_NAMES = ["FR_foot_site", "FL_foot_site", "RR_foot_site", "RL_foot_site"]
+        self._foot_site_ids = np.array([
+            mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, n)
+            for n in _FOOT_SITE_NAMES
+        ], dtype=np.int32)
+
     # ── Gymnasium API ──────────────────────────────────────────────
 
     def reset(self, seed=None, options=None):
@@ -177,6 +209,8 @@ class MiniCheetahEnv(gym.Env):
         self.prev_joint_vel = np.zeros(NUM_JOINTS, dtype=np.float32)
         self._feet_air_time = np.zeros(4, dtype=np.float32)
         self._last_contacts = np.zeros(4, dtype=bool)
+        self._height_history.clear()
+        self.target_height = HEIGHT_TARGETS.get(self.command_mode, 0.27)
 
         mujoco = self._mj
         mujoco.mj_resetData(self.model, self.data)
@@ -265,7 +299,8 @@ class MiniCheetahEnv(gym.Env):
 
         obs = np.concatenate([
             qpos, qvel, base_linvel, base_angvel,
-            gravity_body, self.prev_action, self.command
+            gravity_body, self.prev_action,
+            np.append(self.command, self.target_height),
         ]).astype(np.float32)
 
         if self.randomize_domain:
@@ -286,18 +321,16 @@ class MiniCheetahEnv(gym.Env):
         vx_cmd, vy_cmd, wz_cmd = self.command
 
         # ── Tracking rewards (exp kernel, combined error — legged_gym style) ──
-        # Single exp of combined squared error: exp(-||v_xy - cmd_xy||² / σ)
         lin_vel_error = (base_linvel[0] - vx_cmd) ** 2 + (base_linvel[1] - vy_cmd) ** 2
-        r_linvel = math.exp(-lin_vel_error / TRACKING_SIGMA)  # max 1.0
+        r_linvel = math.exp(-lin_vel_error / TRACKING_SIGMA)
 
         ang_vel_error = (base_angvel[2] - wz_cmd) ** 2
-        r_yaw = math.exp(-ang_vel_error / TRACKING_SIGMA)  # max 1.0
+        r_yaw = math.exp(-ang_vel_error / TRACKING_SIGMA)
 
-        # ── Command velocity error penalty (squared — penalises NOT tracking) ──
+        # ── Command velocity error penalty (squared) ──
         r_cmd_vel_error = float(lin_vel_error)
 
         # ── Feet air-time reward (legged_gym formulation) ──
-        # Detect foot contacts via MuJoCo contact buffer
         foot_contacts = np.zeros(4, dtype=bool)
         for i in range(self.data.ncon):
             c = self.data.contact[i]
@@ -305,24 +338,35 @@ class MiniCheetahEnv(gym.Env):
                 if c.geom1 == fid or c.geom2 == fid:
                     foot_contacts[j] = True
 
-        # Filter contacts (OR with last step for PhysX-style reliability)
         contact_filt = np.logical_or(foot_contacts, self._last_contacts)
         self._last_contacts = foot_contacts.copy()
-
-        # first_contact: foot was in air (air_time > 0) and now touching
         first_contact = (self._feet_air_time > 0.0) & contact_filt
-
-        # Increment air time for all feet, then reset for feet in contact
         self._feet_air_time += self.dt
         r_feet_air_time = float(np.sum(
             (self._feet_air_time - FEET_AIR_TIME_THRESHOLD) * first_contact
         ))
-        # Gate: no gait reward when standing is commanded
         cmd_speed = math.sqrt(vx_cmd ** 2 + vy_cmd ** 2)
         if cmd_speed < 0.1:
             r_feet_air_time = 0.0
-        # Reset air time for feet in contact
         self._feet_air_time[contact_filt] = 0.0
+
+        # ── Gait phase reward: trot diagonal symmetry (legged_gym inspired) ──
+        # Trot: diagonal pairs (FR+RL) and (FL+RR) should alternate.
+        # Reward = |diag1_contact - diag2_contact| when moving.
+        diag1 = float(contact_filt[0] + contact_filt[3])  # FR + RL
+        diag2 = float(contact_filt[1] + contact_filt[2])  # FL + RR
+        r_gait_phase = abs(diag1 - diag2) / 2.0  # max 1.0
+        if cmd_speed < 0.1:
+            r_gait_phase = 0.0  # no gait reward when standing
+
+        # ── Foot clearance reward: swing feet should lift above ground ──
+        foot_heights = self.data.site_xpos[self._foot_site_ids, 2]
+        swing_mask = ~contact_filt  # feet NOT in contact = swing phase
+        clearance_target = 0.05  # 5 cm target clearance
+        r_foot_clearance = 0.0
+        if np.any(swing_mask) and cmd_speed > 0.1:
+            swing_heights = foot_heights[swing_mask]
+            r_foot_clearance = float(np.mean(np.clip(swing_heights, 0, clearance_target) / clearance_target))
 
         # ── Orientation & stability penalties ──
         gravity_body = self._quat_rotate_inv(quat, np.array([0.0, 0.0, -1.0]))
@@ -330,25 +374,43 @@ class MiniCheetahEnv(gym.Env):
         r_lin_vel_z = float(base_linvel[2] ** 2)
         r_ang_vel_xy = float(np.sum(base_angvel[:2] ** 2))
 
-        # Height penalty: squared deviation from Go1 standing height
+        # ── Height penalty: squared deviation from mode-dependent target ──
         base_z = float(self.data.qpos[2])
-        r_height = (base_z - 0.27) ** 2
+        r_height = (base_z - self.target_height) ** 2
+
+        # ── Anti-crouch penalty (time-series check) ──
+        self._height_history.append(base_z)
+        r_crouch_penalty = 0.0
+        if len(self._height_history) == CROUCH_DETECT_WINDOW:
+            mean_height = sum(self._height_history) / CROUCH_DETECT_WINDOW
+            if mean_height < CROUCH_HEIGHT_THRESHOLD and self.command_mode != "crouch":
+                r_crouch_penalty = (CROUCH_HEIGHT_THRESHOLD - mean_height) ** 2
 
         # ── Energy efficiency & smoothness ──
         r_torque = float(np.sum(tau ** 2))
         r_smooth = float(np.sum((action - self.prev_action) ** 2))
 
-        # Joint acceleration penalty: penalize high-frequency jitter
+        # Mechanical power: |tau · joint_vel| — true energy cost
+        r_power = float(np.sum(np.abs(tau * joint_vel)))
+
+        # Joint acceleration penalty
         joint_acc = (joint_vel - self.prev_joint_vel) / self.dt
         r_joint_acc = float(np.sum(joint_acc ** 2))
 
-        # Joint limit proximity penalty: soft penalty near limits
+        # Joint limit proximity penalty
         q = self.data.qpos[7:7 + NUM_JOINTS]
-        jnt_range = self.model.jnt_range[1:NUM_JOINTS + 1]  # skip freejoint
-        margin = 0.1  # rad
+        jnt_range = self.model.jnt_range[1:NUM_JOINTS + 1]
+        margin = 0.1
         below = np.clip(jnt_range[:, 0] + margin - q, 0, None)
         above = np.clip(q - (jnt_range[:, 1] - margin), 0, None)
         r_joint_limit = float(np.sum(below ** 2 + above ** 2))
+
+        # ── Stand-still penalty: penalize joint motion at zero command (legged_gym) ──
+        r_stand_still = 0.0
+        if cmd_speed < 0.1 and abs(wz_cmd) < 0.1:
+            r_stand_still = float(np.sum(np.abs(
+                self.data.qpos[7:7 + NUM_JOINTS] - DEFAULT_STANCE
+            )))
 
         # ── Assemble with REWARD_SCALES ──
         components = {
@@ -364,6 +426,11 @@ class MiniCheetahEnv(gym.Env):
             "r_smooth": r_smooth,
             "r_joint_acc": r_joint_acc,
             "r_joint_limit": r_joint_limit,
+            "r_crouch_penalty": r_crouch_penalty,
+            "r_power": r_power,
+            "r_stand_still": r_stand_still,
+            "r_gait_phase": r_gait_phase,
+            "r_foot_clearance": r_foot_clearance,
         }
 
         total = sum(REWARD_SCALES[k] * v for k, v in components.items())
@@ -371,7 +438,6 @@ class MiniCheetahEnv(gym.Env):
         if ONLY_POSITIVE_REWARDS:
             total = max(total, 0.0)
 
-        # Store components (with scales applied) for logging callbacks
         self._last_reward_components = {
             k: REWARD_SCALES[k] * v for k, v in components.items()
         }
@@ -385,8 +451,10 @@ class MiniCheetahEnv(gym.Env):
         base_z = self.data.qpos[2]
         quat = self.data.qpos[3:7]
         gravity_body = self._quat_rotate_inv(quat, np.array([0.0, 0.0, -1.0]))
+        # Adaptive min-height: lower threshold when crouching
+        min_height = 0.08 if self.command_mode == "crouch" else 0.13
         # Fallen: too low or tilted > ~45 degrees (cos 45° ≈ 0.707)
-        return bool(base_z < 0.13 or gravity_body[2] > -0.7)
+        return bool(base_z < min_height or gravity_body[2] > -0.7)
 
     def _get_info(self) -> Dict[str, Any]:
         info = {
@@ -405,6 +473,7 @@ class MiniCheetahEnv(gym.Env):
     def set_command(self, vx: float, vy: float, wz: float, mode: str = "trot"):
         self.command = np.array([vx, vy, wz], dtype=np.float32)
         self.command_mode = mode
+        self.target_height = HEIGHT_TARGETS.get(mode, 0.27)
 
     def set_exploration_heading(self, heading_rad: float, speed: float = 1.5):
         vx = speed * math.cos(heading_rad)
