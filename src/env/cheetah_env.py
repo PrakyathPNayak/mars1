@@ -12,6 +12,14 @@ Observation (48 dims):
   [45:48] velocity command (vx, vy, wz)
 
 Action (12 dims): delta joint position targets, clipped ±0.5 rad
+
+Reward design (based on ETH Zurich legged_gym):
+  + exp tracking for xy velocity (combined kernel, σ=0.15)
+  + exp tracking for yaw rate
+  + feet air-time gait reward (incentivises stepping, gated by cmd)
+  - squared velocity command error (penalises ignoring commands)
+  - orientation/stability penalties
+  - energy smoothness penalties
 """
 import os
 import math
@@ -34,22 +42,33 @@ DEFAULT_STANCE = np.array([
 ], dtype=np.float32)
 
 # Reward scale dictionary — signed weights (ETH/legged_gym convention).
-# Penalty scales reduced from legged_gym defaults to compensate for
-# 25 CPU-parallel envs (vs 4096 GPU envs).  Tracking rewards use
-# exp(-error²/σ) kernel so they are always in [0,1].
+# Redesigned to create strong gradient between standing still and walking:
+#   Old design: standing≈3.3/step vs walking≈3.5 (gradient=0.2 — too weak)
+#   New design: standing≈2.9/step vs walking≈4.5 (gradient≈1.6 — 8× stronger)
+# Key changes: removed alive bonus, added cmd penalty & feet_air_time,
+# tighter tracking sigma, combined exp kernel (legged_gym style).
 REWARD_SCALES = {
-    "r_linvel":      1.5,      # velocity tracking (exp kernel), max 3.0
-    "r_yaw":         0.75,     # yaw-rate tracking, max 0.75
-    "r_alive":       0.5,      # constant alive bonus
-    "r_orientation": -0.2,     # gravity-tilt penalty (was -0.5)
-    "r_lin_vel_z":   -1.0,     # vertical bounce penalty (was -2.0)
-    "r_ang_vel_xy":  -0.005,   # roll/pitch rate penalty (was -0.05, 10× reduction)
-    "r_height":      -0.5,     # height deviation penalty (was -1.0)
-    "r_torque":      -5e-6,    # torque squared penalty (was -2e-5, 4× reduction)
-    "r_smooth":      -0.01,    # action rate penalty
-    "r_joint_acc":   -2.5e-8,  # joint accel penalty (was -2.5e-7, 10× reduction)
-    "r_joint_limit": -5.0,     # joint limit proximity penalty (was -10.0)
+    "r_linvel":        2.0,      # exp tracking for xy vel (combined kernel, max 1.0)
+    "r_yaw":           1.0,      # exp tracking for yaw rate (max 1.0)
+    "r_feet_air_time": 1.5,      # gait reward: incentivises leg swing (legged_gym)
+    "r_cmd_vel_error": -2.0,     # squared velocity error — penalises NOT tracking cmd
+    "r_orientation":   -0.2,     # gravity-tilt penalty
+    "r_lin_vel_z":     -1.0,     # vertical bounce penalty
+    "r_ang_vel_xy":    -0.005,   # roll/pitch rate penalty
+    "r_height":        -0.5,     # height deviation penalty
+    "r_torque":        -5e-6,    # torque squared penalty
+    "r_smooth":        -0.01,    # action rate penalty
+    "r_joint_acc":     -2.5e-8,  # joint accel penalty
+    "r_joint_limit":   -5.0,     # joint limit proximity penalty
 }
+
+# Tracking σ for exp kernel: tighter than legged_gym default (0.25).
+# At σ=0.15, standing with cmd=0.5 m/s → exp≈0.19 (vs 0.37 at σ=0.25).
+TRACKING_SIGMA = 0.15
+
+# Feet air-time threshold (seconds).  First-contact reward = (air_time - threshold).
+# Positive for steps longer than threshold (natural gait), negative for chattering.
+FEET_AIR_TIME_THRESHOLD = 0.15
 
 # Clip total reward to >= 0 (legged_gym only_positive_rewards convention).
 # Prevents the early-termination death spiral where the policy learns
@@ -93,6 +112,10 @@ class MiniCheetahEnv(gym.Env):
         self.command = np.zeros(3, dtype=np.float32)
         self.command_mode = "stand"
         self.randomize_commands = True  # randomize command on each reset for training
+
+        # Feet-air-time tracking for gait reward (legged_gym formulation)
+        self._feet_air_time = np.zeros(4, dtype=np.float32)
+        self._last_contacts = np.zeros(4, dtype=bool)
 
         # PD gains — Go1 XML already has damping=2 on joints, so kd=0 here
         # to avoid double-damping. The total damping matches the menagerie
@@ -138,6 +161,13 @@ class MiniCheetahEnv(gym.Env):
         if self.render_mode == "rgb_array":
             self.renderer = mujoco.Renderer(self.model, height=480, width=640)
 
+        # Cache foot geom IDs for contact detection (feet_air_time reward)
+        _FOOT_GEOM_NAMES = ["FR", "FL", "RR", "RL"]
+        self._foot_geom_ids = np.array([
+            mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, n)
+            for n in _FOOT_GEOM_NAMES
+        ], dtype=np.int32)
+
     # ── Gymnasium API ──────────────────────────────────────────────
 
     def reset(self, seed=None, options=None):
@@ -145,6 +175,8 @@ class MiniCheetahEnv(gym.Env):
         self.step_count = 0
         self.prev_action = np.zeros(ACT_DIM, dtype=np.float32)
         self.prev_joint_vel = np.zeros(NUM_JOINTS, dtype=np.float32)
+        self._feet_air_time = np.zeros(4, dtype=np.float32)
+        self._last_contacts = np.zeros(4, dtype=bool)
 
         mujoco = self._mj
         mujoco.mj_resetData(self.model, self.data)
@@ -253,12 +285,44 @@ class MiniCheetahEnv(gym.Env):
 
         vx_cmd, vy_cmd, wz_cmd = self.command
 
-        # ── Tracking rewards (exp kernel — only positive signal) ──
-        r_linvel = (
-            math.exp(-((base_linvel[0] - vx_cmd) ** 2) / 0.25) +
-            math.exp(-((base_linvel[1] - vy_cmd) ** 2) / 0.25)
-        )
-        r_yaw = math.exp(-((base_angvel[2] - wz_cmd) ** 2) / 0.25)
+        # ── Tracking rewards (exp kernel, combined error — legged_gym style) ──
+        # Single exp of combined squared error: exp(-||v_xy - cmd_xy||² / σ)
+        lin_vel_error = (base_linvel[0] - vx_cmd) ** 2 + (base_linvel[1] - vy_cmd) ** 2
+        r_linvel = math.exp(-lin_vel_error / TRACKING_SIGMA)  # max 1.0
+
+        ang_vel_error = (base_angvel[2] - wz_cmd) ** 2
+        r_yaw = math.exp(-ang_vel_error / TRACKING_SIGMA)  # max 1.0
+
+        # ── Command velocity error penalty (squared — penalises NOT tracking) ──
+        r_cmd_vel_error = float(lin_vel_error)
+
+        # ── Feet air-time reward (legged_gym formulation) ──
+        # Detect foot contacts via MuJoCo contact buffer
+        foot_contacts = np.zeros(4, dtype=bool)
+        for i in range(self.data.ncon):
+            c = self.data.contact[i]
+            for j, fid in enumerate(self._foot_geom_ids):
+                if c.geom1 == fid or c.geom2 == fid:
+                    foot_contacts[j] = True
+
+        # Filter contacts (OR with last step for PhysX-style reliability)
+        contact_filt = np.logical_or(foot_contacts, self._last_contacts)
+        self._last_contacts = foot_contacts.copy()
+
+        # first_contact: foot was in air (air_time > 0) and now touching
+        first_contact = (self._feet_air_time > 0.0) & contact_filt
+
+        # Increment air time for all feet, then reset for feet in contact
+        self._feet_air_time += self.dt
+        r_feet_air_time = float(np.sum(
+            (self._feet_air_time - FEET_AIR_TIME_THRESHOLD) * first_contact
+        ))
+        # Gate: no gait reward when standing is commanded
+        cmd_speed = math.sqrt(vx_cmd ** 2 + vy_cmd ** 2)
+        if cmd_speed < 0.1:
+            r_feet_air_time = 0.0
+        # Reset air time for feet in contact
+        self._feet_air_time[contact_filt] = 0.0
 
         # ── Orientation & stability penalties ──
         gravity_body = self._quat_rotate_inv(quat, np.array([0.0, 0.0, -1.0]))
@@ -286,14 +350,12 @@ class MiniCheetahEnv(gym.Env):
         above = np.clip(q - (jnt_range[:, 1] - margin), 0, None)
         r_joint_limit = float(np.sum(below ** 2 + above ** 2))
 
-        # ── Alive bonus (constant positive signal for surviving) ──
-        r_alive = 1.0  # raw value; scaled by REWARD_SCALES["r_alive"]
-
         # ── Assemble with REWARD_SCALES ──
         components = {
             "r_linvel": r_linvel,
             "r_yaw": r_yaw,
-            "r_alive": r_alive,
+            "r_feet_air_time": r_feet_air_time,
+            "r_cmd_vel_error": r_cmd_vel_error,
             "r_orientation": r_orientation,
             "r_lin_vel_z": r_lin_vel_z,
             "r_ang_vel_xy": r_ang_vel_xy,
