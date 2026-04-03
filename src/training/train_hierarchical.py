@@ -377,7 +377,7 @@ def train_ppo_hierarchical(args, bc_extractor_state: dict):
         learning_rate=lambda p: 3e-4 * lr_schedule(p),
         n_steps=2048,
         batch_size=256,
-        n_epochs=getattr(args, "n_epochs", 20),
+        n_epochs=getattr(args, "n_epochs", 5),
         gamma=0.99,
         gae_lambda=0.95,
         clip_range=0.2,
@@ -611,7 +611,7 @@ def main():
     # PPO phase
     parser.add_argument("--total-steps", type=int, default=15_000_000)
     parser.add_argument("--n-envs", type=int, default=8)
-    parser.add_argument("--n-epochs", type=int, default=20,
+    parser.add_argument("--n-epochs", type=int, default=5,
                         help="PPO gradient update epochs per rollout (default: 15)")
     # Architecture
     parser.add_argument("--d-model", type=int, default=256)

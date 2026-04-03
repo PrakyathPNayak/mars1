@@ -170,17 +170,19 @@ def train(args):
         print(f"Resuming from: {args.resume}")
         model = PPO.load(args.resume, env=vec_env, device=device)
     else:
-        n_epochs = getattr(args, "n_epochs", 20)
+        n_epochs = getattr(args, "n_epochs", 5)
         # n_steps=4096: long rollouts improve GAE advantage estimates for locomotion.
-        # batch_size=512: 32768 samples / 512 = 64 minibatches per epoch.
-        # n_epochs=20: 64 × 20 = 1,280 gradient steps per rollout update.
-        # At 10 M env steps → ~305 rollouts → ~390,000 total gradient steps.
+        # batch_size=4096: 32768 samples / 4096 = 8 minibatches per epoch.
+        # n_epochs=5: 8 × 5 = 40 gradient steps per rollout update.
+        # Matches legged_gym convention: moderate updates per rollout to
+        # avoid policy overshoot (high clip_fraction / KL divergence).
+        # At 10M env steps → ~305 rollouts → ~12,200 total gradient steps.
         model = PPO(
             policy="MlpPolicy",
             env=vec_env,
             learning_rate=linear_schedule(3e-4),
             n_steps=4096,
-            batch_size=512,
+            batch_size=4096,
             n_epochs=n_epochs,
             gamma=0.99,
             gae_lambda=0.95,
@@ -253,9 +255,9 @@ def train(args):
         "activation_fn": "ELU",
         "lr": "3e-4 linear decay",
         "clip": 0.2,
-        "batch_size": 512,
+        "batch_size": 4096,
         "n_steps": 4096,
-        "n_epochs": getattr(args, "n_epochs", 20),
+        "n_epochs": getattr(args, "n_epochs", 5),
         "ent_coef": 0.01,
         "log_std_init": -0.5,
         "ortho_init": True,
@@ -275,8 +277,8 @@ def main():
     parser = argparse.ArgumentParser(description="Train Unitree Go1 PPO")
     parser.add_argument("--total-steps", type=int, default=10_000_000)
     parser.add_argument("--n-envs", type=int, default=8)
-    parser.add_argument("--n-epochs", type=int, default=20,
-                        help="PPO gradient update epochs per rollout (default: 10)")
+    parser.add_argument("--n-epochs", type=int, default=5,
+                        help="PPO gradient update epochs per rollout (default: 5; legged_gym convention)")
     parser.add_argument("--resume", type=str, default=None)
     parser.add_argument("--device", type=str, default="cpu",
                         help="Device: cpu, cuda, or auto (auto uses GPU if available)")

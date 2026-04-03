@@ -283,7 +283,7 @@ def main():
         help="Total env steps for MLP PPO stage (reward v3 converges faster)",
     )
     parser.add_argument(
-        "--mlp-epochs", type=int, default=20,
+        "--mlp-epochs", type=int, default=5,
         help="PPO n_epochs for MLP stage (gradient steps per rollout)",
     )
     parser.add_argument(
@@ -305,7 +305,7 @@ def main():
         help="Total env steps for hierarchical PPO stage",
     )
     parser.add_argument(
-        "--hier-epochs", type=int, default=20,
+        "--hier-epochs", type=int, default=5,
         help="PPO n_epochs for hierarchical Transformer stage",
     )
     parser.add_argument("--n-expert-episodes", type=int, default=200)

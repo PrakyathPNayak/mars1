@@ -1,7 +1,7 @@
 {
   "robot": "Unitree Go1 (mujoco_menagerie)",
   "model_xml": "assets/go1.xml",
-  "reward_version": "v3",
+  "reward_version": "v4.1",
   "total_steps": 20000000,
   "n_envs": 8,
   "algorithm": "PPO",
@@ -10,10 +10,10 @@
   "activation_fn": "ELU",
   "lr": "3e-4 linear decay → 0",
   "clip_range": 0.2,
-  "batch_size": 512,
+  "batch_size": 4096,
   "n_steps": 4096,
-  "n_epochs": 20,
-  "n_epochs_hierarchical": 20,
+  "n_epochs": 5,
+  "n_epochs_hierarchical": 5,
   "gamma": 0.99,
   "gae_lambda": 0.95,
   "ent_coef": 0.01,
@@ -49,16 +49,16 @@
     ]
   },
   "gradient_budget_mlp": {
-    "note": "8 envs × 4096 n_steps = 32768 samples/rollout; 32768/512 = 64 minibatches × 20 epochs = 1280 grad steps/rollout; at 10M steps → ~305 rollouts → ~390K total grad steps"
+    "note": "8 envs × 4096 n_steps = 32768 samples/rollout; 32768/4096 = 8 minibatches × 5 epochs = 40 grad steps/rollout; at 10M steps → ~305 rollouts → ~12K total grad steps (legged_gym convention: moderate per-rollout updates)"
   },
   "gradient_budget_hierarchical": {
-    "note": "8 envs × 2048 n_steps = 16384 samples/rollout; 16384/256 = 64 minibatches × 20 epochs = 1280 grad steps/rollout; at 15M steps → ~916 rollouts → ~1.17M total grad steps"
+    "note": "8 envs × 2048 n_steps = 16384 samples/rollout; 16384/256 = 64 minibatches × 5 epochs = 320 grad steps/rollout; at 15M steps → ~916 rollouts → ~293K total grad steps"
   },
   "training_methods": {
-    "standard": "src/training/train.py — MLP PPO [2048,1024,512], default 10M steps, batch=512, n_epochs=20",
+    "standard": "src/training/train.py — MLP PPO [2048,1024,512], default 10M steps, batch=4096, n_epochs=5",
     "advanced": "src/training/train_advanced.py — Transformer+MoE PPO (d_model=256)",
     "imitation": "src/training/train_with_imitation.py — BC + MLP PPO",
-    "hierarchical": "src/training/train_hierarchical.py — BC(100 epochs) + Transformer+MoE PPO(15M, n_epochs=20)"
+    "hierarchical": "src/training/train_hierarchical.py — BC(100 epochs) + Transformer+MoE PPO(15M, n_epochs=5)"
   },
   "pd_controller": {
     "kp": 100.0,
@@ -77,17 +77,15 @@
     ],
     "obs_noise_std": 0.02
   },
-  "reward_scales_v3": {
+  "reward_scales_v4.1": {
     "note": "See REWARD_SCALES in src/env/cheetah_env.py for authoritative values",
-    "key_changes_from_v2": [
-      "Added r_dof_vel=-0.1 (joint velocity penalty, key anti-shake)",
-      "r_smooth: -0.05→-0.3 (6x stronger)",
-      "r_stand_still: -0.5→-3.0 (gated by mode!=crouch/jump)",
-      "r_body_acc: -0.0005→-0.005 (10x stronger)",
-      "r_action_jerk: -0.005→-0.02 (4x stronger)",
-      "r_posture: 0.3→-1.5 (flipped to penalty, squared error not exp kernel)",
-      "r_body_height: exp→exp-1 (centered at 0, negative at wrong height)",
-      "BODY_HEIGHT_SIGMA: 0.005→0.02 (wider gradient for crouch)"
+    "key_changes_from_v4": [
+      "All penalty scales uniformly divided by 3",
+      "r_alive: 0.2 → 0.5 (stronger survival baseline)",
+      "v4 had penalties=-7.5/step vs positives=+2.1/step with random policy → 98% clamped to 0",
+      "v4.1 has penalties=-2.6/step vs positives=+3.2/step → 43% positive, mean r_total=+0.63",
+      "Standing reward unchanged at +6.4/step",
+      "PPO hyperparams: n_epochs=5, batch_size=4096 (carried from v4)"
     ]
   }
 }

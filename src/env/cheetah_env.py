@@ -66,7 +66,10 @@ DEFAULT_STANCE = np.array([
 # v3 fixes: add r_dof_vel, center body_height at 0, flip posture to
 #   negative penalty, gate stand_still by mode, randomize command_mode,
 #   strengthen anti-shake penalties.
-# Design: tracking rewards still dominate, but penalties are meaningful.
+# v4 fixes: recalibrate ALL penalty scales so total penalty ≈ total positive
+#   at init.  Previous r_dof_vel=-0.1 created -200/step penalty (raw sum(qvel²)
+#   ≈2000), drowning positives (+3.3) and clamping everything to 0 via
+#   ONLY_POSITIVE_REWARDS.  Aligned scales with legged_gym references.
 #
 # Height targets for different command modes
 HEIGHT_TARGETS = {
@@ -84,7 +87,7 @@ ROBOT_MASS = 12.74
 
 REWARD_SCALES = {
     # ── Positive rewards (tracking should dominate: ~6-8/step at convergence) ──
-    "r_alive":           0.2,      # minimal survival tie-breaker (legged_gym uses 0)
+    "r_alive":           0.5,      # survival baseline (stronger than v4's 0.2)
     "r_linvel":          4.0,      # exp kernel xy-vel tracking (main signal)
     "r_yaw":             2.0,      # exp kernel yaw-rate tracking
     "r_feet_air_time":   2.0,      # gait: leg-swing reward gated by cmd speed
@@ -92,26 +95,31 @@ REWARD_SCALES = {
     "r_foot_clearance":  0.5,      # swing-foot height reward
     "r_body_height":     2.0,      # exp-kernel body height (centered at 0: exp-1)
     "r_jump_phase":      1.0,      # jump FSM phase-specific rewards
-    # ── Penalties (v3: strengthened anti-shake, fixed crouch) ──
-    "r_cmd_vel_error":  -1.0,      # squared velocity error
-    "r_orientation":    -2.0,      # gravity-tilt penalty (anti-flip)
-    "r_lin_vel_z":      -2.0,      # vertical bounce penalty
-    "r_ang_vel_xy":     -0.01,     # roll/pitch rate penalty
-    "r_height":         -5.0,      # height deviation squared
-    "r_torque":         -5e-6,     # torque squared
-    "r_smooth":         -0.3,      # action rate penalty (was -0.05; 6× for anti-shake)
-    "r_joint_acc":      -5e-8,     # joint accel penalty
-    "r_joint_limit":    -5.0,      # joint limit proximity penalty
-    "r_crouch_penalty": -5.0,      # anti-crouch: sustained low height
-    "r_power":          -1e-5,     # mechanical power |tau·qvel|
-    "r_stand_still":    -3.0,      # joint deviation at zero cmd (was -0.5; gated by mode)
-    "r_foot_strike_vel":-0.005,    # foot velocity at contact
-    "r_body_acc":       -0.005,    # body linear accel (was -0.0005; 10× anti-shake)
-    "r_action_jerk":    -0.02,     # second-order smoothness (was -0.005; 4× stronger)
-    "r_abduction":      -2.0,      # penalize leg splay (abd joints 0,3,6,9 from 0)
-    "r_hip_excess":     -3.0,      # penalize excessive hip flexion (anti-belly-sit)
-    "r_posture":        -1.5,      # v3: negative penalty for joint deviation from target
-    "r_dof_vel":        -0.1,      # v3 NEW: joint velocity penalty (legged_gym key anti-shake)
+    # ── Penalties ──
+    # v4.1: all penalties ÷3 from v4.  v4 fixed the r_dof_vel=-200/step catastrophe
+    #       but total penalties (-7.5/step) still swamped positives (+2.1/step) with
+    #       a random policy, so ONLY_POSITIVE_REWARDS clamped 98% of steps to 0.
+    #       Dividing by 3 brings negatives to ≈-2.5 vs positives ≈+2.4, giving
+    #       ~35-40% positive-reward steps at init — enough gradient for PPO.
+    "r_cmd_vel_error":  -0.15,     # squared velocity error
+    "r_orientation":    -0.7,      # gravity-tilt penalty
+    "r_lin_vel_z":      -0.7,      # vertical bounce penalty
+    "r_ang_vel_xy":     -0.002,    # roll/pitch rate penalty
+    "r_height":         -1.5,      # height deviation squared
+    "r_torque":         -3e-6,     # torque squared
+    "r_smooth":         -0.03,     # action rate penalty
+    "r_joint_acc":      -8e-8,     # joint accel penalty
+    "r_joint_limit":    -1.5,      # joint limit proximity penalty
+    "r_crouch_penalty": -1.5,      # anti-crouch: sustained low height
+    "r_power":          -3e-6,     # mechanical power |tau·qvel|
+    "r_stand_still":    -0.3,      # joint deviation at zero cmd
+    "r_foot_strike_vel":-0.002,    # foot velocity at contact
+    "r_body_acc":       -7e-4,     # body linear accel
+    "r_action_jerk":    -0.003,    # second-order smoothness
+    "r_abduction":      -0.15,     # penalize leg splay
+    "r_hip_excess":     -1.0,      # penalize excessive hip flexion
+    "r_posture":        -0.15,     # joint deviation from target
+    "r_dof_vel":        -1.5e-4,   # joint velocity penalty
 }
 
 # Tracking σ for exp kernel: legged_gym default is 0.25.
