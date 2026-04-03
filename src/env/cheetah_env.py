@@ -44,13 +44,24 @@ DEFAULT_STANCE = np.array([
 
 # Reward scale dictionary — signed weights (ETH/legged_gym convention).
 #
-# CALIBRATION (from 20M-step training log analysis):
-#   Raw penalty magnitudes at typical behavior:
-#     body_acc²≈320, joint_acc²≈8M, smooth²≈4.4, ang_vel_xy²≈70,
-#     cmd_vel_error≈1.5, lin_vel_z²≈0.19, torque²≈~10000
-#   Scales are set so each penalty contributes at most ~0.2-0.5/step.
-#   Positive rewards (tracking + alive) should sum to ~4.0-5.0/step.
-#   Ref: legged_gym (Rudin et al. 2022), Walk These Ways (Margolis et al. 2023)
+# CALIBRATION v2 — informed by paper research:
+#   legged_gym (Rudin 2022): alive=0, tracking is main positive signal
+#   Walk These Ways (Margolis 2023): no alive bonus, tracking dominant
+#   RMA (Kumar 2021): task reward = velocity tracking only
+#   Humanoid-Gym (Gu 2024): body height as exp-kernel reward, feet distance
+#   Chi 2025: base height, contact timing, orientation penalty
+#   Adaptive energy reg. (2024): velocity-scaled energy penalty
+#   Speed-adaptive gait (2024): contact-pattern reward varies with speed
+#
+# Previous issues (v1):
+#   1. r_alive=2.0 dominated — policy preferred crouching alive over tracking
+#   2. No abduction (splay) penalty — hip abduction joints 0,3,6,9 unconstrained
+#   3. Height penalty too weak — -(deviation²) ≈ -0.0001
+#   4. Yaw tracking too weak — model couldn't distinguish ±wz commands
+#   5. Gait rewards negligible — r_gait_phase mean=0.005
+#
+# Design: tracking rewards dominate (+6-8/step at convergence);
+#         penalties each ≤0.5/step; alive is minimal tie-breaker only.
 #
 # Height targets for different command modes
 HEIGHT_TARGETS = {
@@ -67,31 +78,34 @@ CROUCH_HEIGHT_THRESHOLD = 0.22  # below this counts as "crouching"
 ROBOT_MASS = 12.74
 
 REWARD_SCALES = {
-    # ── Positive rewards (should sum to ~4-5/step for good behavior) ──
-    "r_alive":           2.0,      # survival bonus (legged_gym standard, prevents death spiral)
-    "r_linvel":          2.0,      # exp tracking for xy vel (combined kernel, max 1.0)
-    "r_yaw":             1.0,      # exp tracking for yaw rate (max 1.0)
-    "r_feet_air_time":   1.5,      # gait reward: incentivises leg swing (legged_gym)
-    "r_gait_phase":      0.5,      # trot diagonal contact symmetry reward
-    "r_foot_clearance":  0.3,      # swing-foot height reward
-    "r_posture":         0.5,      # hip-knee angle target per mode (exp kernel)
+    # ── Positive rewards (tracking should dominate: ~6-8/step at convergence) ──
+    "r_alive":           0.2,      # minimal survival tie-breaker (was 2.0; legged_gym uses 0)
+    "r_linvel":          4.0,      # exp kernel xy-vel tracking (was 2.0; now main signal)
+    "r_yaw":             2.0,      # exp kernel yaw-rate tracking (was 1.0; fixes E/Q confusion)
+    "r_feet_air_time":   2.0,      # gait: leg-swing reward gated by cmd speed (was 1.5)
+    "r_gait_phase":      1.5,      # trot diagonal contact symmetry (was 0.5; nearly invisible)
+    "r_foot_clearance":  0.5,      # swing-foot height reward (was 0.3)
+    "r_posture":         0.3,      # hip-knee angle targets per mode (was 0.5; was overrewarding stillness)
+    "r_body_height":     2.0,      # NEW: exp-kernel body height tracking (Humanoid-Gym, Chi 2025)
     "r_jump_phase":      1.0,      # jump FSM phase-specific rewards
-    # ── Penalties (each should contribute at most ~0.2-0.5/step) ──
-    "r_cmd_vel_error":  -0.5,      # squared velocity error (was -2.0, raw≈1.5 → -0.75)
-    "r_orientation":    -0.5,      # gravity-tilt penalty (raw≈0.17 → -0.085)
-    "r_lin_vel_z":      -2.0,      # vertical bounce penalty (raw≈0.19 → -0.38)
-    "r_ang_vel_xy":     -0.005,    # roll/pitch rate penalty (raw≈70 → -0.35)
-    "r_height":         -1.0,      # height deviation from mode-dependent target
-    "r_torque":         -5e-6,     # torque squared penalty (raw≈10k → -0.05)
-    "r_smooth":         -0.05,     # action rate penalty (raw≈4.4 → -0.22)
-    "r_joint_acc":      -5e-8,     # joint accel penalty (raw≈8M → -0.40)
-    "r_joint_limit":    -5.0,      # joint limit proximity penalty (raw≈0.002 → -0.01)
-    "r_crouch_penalty": -1.0,      # anti-crouch: penalize sustained low height
-    "r_power":          -1e-5,     # mechanical power |tau·qvel| (raw≈4000 → -0.04)
-    "r_stand_still":    -0.5,      # penalize joint deviation at zero command
-    "r_foot_strike_vel":-0.005,    # foot velocity at contact (raw≈1.8 → -0.009)
-    "r_body_acc":       -0.0005,   # body linear accel penalty (raw≈320 → -0.16)
-    "r_action_jerk":    -0.005,    # second-order action smoothness (raw≈12 → -0.06)
+    # ── Penalties (each ≤ 0.5/step at typical behavior) ──
+    "r_cmd_vel_error":  -1.0,      # squared velocity error (was -0.5; must punish ignoring cmds)
+    "r_orientation":    -2.0,      # gravity-tilt penalty (was -0.5; stronger anti-flip)
+    "r_lin_vel_z":      -2.0,      # vertical bounce penalty
+    "r_ang_vel_xy":     -0.01,     # roll/pitch rate penalty (was -0.005)
+    "r_height":         -5.0,      # height deviation squared (was -1.0; much stronger now)
+    "r_torque":         -5e-6,     # torque squared
+    "r_smooth":         -0.05,     # action rate penalty
+    "r_joint_acc":      -5e-8,     # joint accel penalty
+    "r_joint_limit":    -5.0,      # joint limit proximity penalty
+    "r_crouch_penalty": -5.0,      # anti-crouch: sustained low height (was -1.0)
+    "r_power":          -1e-5,     # mechanical power |tau·qvel|
+    "r_stand_still":    -0.5,      # joint deviation at zero command
+    "r_foot_strike_vel":-0.005,    # foot velocity at contact
+    "r_body_acc":       -0.0005,   # body linear accel (anti-shake)
+    "r_action_jerk":    -0.005,    # second-order action smoothness
+    "r_abduction":      -2.0,      # NEW: penalize leg splay (abd joints 0,3,6,9 from 0)
+    "r_hip_excess":     -3.0,      # NEW: penalize excessive hip flexion (anti-belly-sit)
 }
 
 # Tracking σ for exp kernel: legged_gym default is 0.25.
@@ -126,9 +140,20 @@ COMMAND_RESAMPLE_INTERVAL = 200  # 4 seconds at 50 Hz
 
 # ── Joint-angle posture targets (hip, knee) per mode ──────────────
 # Based on ETH/RMA legged_gym conventions for Unitree Go1.
+# Abduction joints (indices 0,3,6,9): default 0.0 — keep legs under body.
 # Hip joint = rotation joint (indices 1,4,7,10), Knee joint (indices 2,5,8,11).
-HIP_JOINT_INDICES = np.array([1, 4, 7, 10], dtype=np.int32)
+ABD_JOINT_INDICES  = np.array([0, 3, 6, 9],  dtype=np.int32)
+HIP_JOINT_INDICES  = np.array([1, 4, 7, 10], dtype=np.int32)
 KNEE_JOINT_INDICES = np.array([2, 5, 8, 11], dtype=np.int32)
+
+# Body-height exp-kernel sigma (Humanoid-Gym, Chi 2025).
+# At ±5 cm off target: exp(-0.0025/0.005) = exp(-0.5) ≈ 0.61
+# At ±10 cm off: exp(-0.01/0.005) = exp(-2.0) ≈ 0.14  — strong gradient.
+BODY_HEIGHT_SIGMA = 0.005
+
+# Hip flexion limit for non-crouch modes (rad).  Go1 default stance = 0.9.
+# Beyond this threshold, the robot is sitting on its belly.
+HIP_EXCESS_THRESHOLD = 1.3
 POSTURE_TARGETS = {
     "stand":   {"hip": 0.9,  "knee": -1.8},
     "walk":    {"hip": 0.9,  "knee": -1.8},
@@ -448,13 +473,21 @@ class MiniCheetahEnv(gym.Env):
         base_z = float(self.data.qpos[2])
         r_height = (base_z - self.target_height) ** 2
 
-        # ── Anti-crouch penalty (time-series check) ──
+        # ── Anti-crouch penalty (time-series + joint-angle check) ──
+        # The old v1 check only looked at height.  The robot exploited this by
+        # splaying abduction joints outward while keeping hip/knee near target.
+        # v2: also fires when abduction or hip angles indicate belly-sitting.
         self._height_history.append(base_z)
         r_crouch_penalty = 0.0
-        if len(self._height_history) == CROUCH_DETECT_WINDOW:
-            mean_height = sum(self._height_history) / CROUCH_DETECT_WINDOW
-            if mean_height < CROUCH_HEIGHT_THRESHOLD and self.command_mode != "crouch":
-                r_crouch_penalty = (CROUCH_HEIGHT_THRESHOLD - mean_height) ** 2
+        if self.command_mode != "crouch":
+            if len(self._height_history) == CROUCH_DETECT_WINDOW:
+                mean_height = sum(self._height_history) / CROUCH_DETECT_WINDOW
+                if mean_height < CROUCH_HEIGHT_THRESHOLD:
+                    r_crouch_penalty = (CROUCH_HEIGHT_THRESHOLD - mean_height) ** 2
+            # Instantaneous check: if body very low right now, penalize immediately
+            if base_z < CROUCH_HEIGHT_THRESHOLD:
+                instant_penalty = (CROUCH_HEIGHT_THRESHOLD - base_z) ** 2
+                r_crouch_penalty = max(r_crouch_penalty, instant_penalty)
 
         # ── Energy efficiency & smoothness ──
         r_torque = float(np.sum(tau ** 2))
@@ -512,9 +545,28 @@ class MiniCheetahEnv(gym.Env):
         # ── Jump FSM phase reward ──
         r_jump_phase = self._advance_jump_fsm(base_z, base_linvel, foot_contacts)
 
+        # ── NEW: Body height tracking (exp kernel, Humanoid-Gym / Chi 2025) ──
+        # Positive reward: robot gets up to 1.0 for being at target height.
+        # Much stronger gradient than squared penalty alone.
+        r_body_height = math.exp(-(base_z - self.target_height) ** 2 / BODY_HEIGHT_SIGMA)
+
+        # ── NEW: Abduction joint penalty (anti-splay) ──
+        # Default stance has abuction=0.  Penalize deviation to prevent the
+        # robot from splaying legs outward to lower its body.
+        abd_q = q[ABD_JOINT_INDICES]
+        r_abduction = float(np.sum(abd_q ** 2))
+
+        # ── NEW: Excessive hip flexion penalty (anti-belly-sit) ──
+        # If hip (thigh) joints flex beyond HIP_EXCESS_THRESHOLD (1.3 rad) in
+        # non-crouch modes, the robot is folding its legs underneath → belly sit.
+        r_hip_excess = 0.0
+        if self.command_mode != "crouch":
+            hip_over = np.clip(hip_q - HIP_EXCESS_THRESHOLD, 0, None)
+            r_hip_excess = float(np.sum(hip_over ** 2))
+
         # ── Assemble with REWARD_SCALES ──
         components = {
-            "r_alive": 1.0,          # constant survival bonus (legged_gym convention)
+            "r_alive": 1.0,
             "r_linvel": r_linvel,
             "r_yaw": r_yaw,
             "r_feet_air_time": r_feet_air_time,
@@ -537,6 +589,9 @@ class MiniCheetahEnv(gym.Env):
             "r_body_acc": r_body_acc,
             "r_action_jerk": r_action_jerk,
             "r_jump_phase": r_jump_phase,
+            "r_body_height": r_body_height,
+            "r_abduction": r_abduction,
+            "r_hip_excess": r_hip_excess,
         }
 
         total = sum(REWARD_SCALES[k] * v for k, v in components.items())
@@ -558,7 +613,7 @@ class MiniCheetahEnv(gym.Env):
         quat = self.data.qpos[3:7]
         gravity_body = self._quat_rotate_inv(quat, np.array([0.0, 0.0, -1.0]))
         # Adaptive min-height: lower threshold when crouching
-        min_height = 0.08 if self.command_mode == "crouch" else 0.13
+        min_height = 0.08 if self.command_mode == "crouch" else 0.18
         # Fallen: too low or tilted > ~45 degrees (cos 45° ≈ 0.707)
         return bool(base_z < min_height or gravity_body[2] > -0.7)
 
