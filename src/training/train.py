@@ -137,13 +137,14 @@ def train(args):
         print(f"Resuming from: {args.resume}")
         model = PPO.load(args.resume, env=vec_env, device=device)
     else:
+        n_epochs = getattr(args, "n_epochs", 10)
         model = PPO(
             policy="MlpPolicy",
             env=vec_env,
             learning_rate=linear_schedule(3e-4),
             n_steps=4096,
             batch_size=4096,
-            n_epochs=5,
+            n_epochs=n_epochs,
             gamma=0.99,
             gae_lambda=0.95,
             clip_range=0.2,
@@ -202,7 +203,7 @@ def train(args):
         "clip": 0.2,
         "batch_size": 4096,
         "n_steps": 4096,
-        "n_epochs": 5,
+        "n_epochs": getattr(args, "n_epochs", 10),
         "ent_coef": 0.01,
         "log_std_init": -0.5,
         "ortho_init": True,
@@ -222,6 +223,8 @@ def main():
     parser = argparse.ArgumentParser(description="Train Unitree Go1 PPO")
     parser.add_argument("--total-steps", type=int, default=3_000_000)
     parser.add_argument("--n-envs", type=int, default=8)
+    parser.add_argument("--n-epochs", type=int, default=10,
+                        help="PPO gradient update epochs per rollout (default: 10)")
     parser.add_argument("--resume", type=str, default=None)
     parser.add_argument("--device", type=str, default="cpu",
                         help="Device: cpu, cuda, or auto (auto uses GPU if available)")

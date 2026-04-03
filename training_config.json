@@ -12,7 +12,8 @@
   "clip_range": 0.2,
   "batch_size": 4096,
   "n_steps": 4096,
-  "n_epochs": 5,
+  "n_epochs": 10,
+  "n_epochs_hierarchical": 15,
   "gamma": 0.99,
   "gae_lambda": 0.95,
   "ent_coef": 0.01,
@@ -30,8 +31,22 @@
   "only_positive_rewards": true,
   "command_resample_interval": 200,
   "command_mode_randomization": {
-    "modes": ["stand", "walk", "trot", "run", "explore", "crouch"],
-    "weights": [0.15, 0.15, 0.25, 0.15, 0.10, 0.20]
+    "modes": [
+      "stand",
+      "walk",
+      "trot",
+      "run",
+      "explore",
+      "crouch"
+    ],
+    "weights": [
+      0.15,
+      0.15,
+      0.25,
+      0.15,
+      0.10,
+      0.20
+    ]
   },
   "training_methods": {
     "standard": "src/training/train.py — MLP PPO [2048,1024,512], default 3M steps",
@@ -46,8 +61,14 @@
     "reference": "Go1 specs: 23.7 Nm hip/thigh, 35.55 Nm knee"
   },
   "domain_randomization": {
-    "mass_range": [0.85, 1.15],
-    "friction_range": [0.8, 2.0],
+    "mass_range": [
+      0.85,
+      1.15
+    ],
+    "friction_range": [
+      0.8,
+      2.0
+    ],
     "obs_noise_std": 0.02
   },
   "reward_scales_v3": {

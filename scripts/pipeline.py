@@ -1,7 +1,7 @@
 """Unified training pipeline: Standard MLP PPO → Hierarchical Transformer+MoE.
 
-Stage 1: Train a standard MLP PPO policy from scratch.
-Stage 2: Use the Stage 1 best model as an expert for hierarchical BC→Transformer+MoE training.
+Stage 1: Train a standard MLP PPO policy from scratch (Unitree Go1, reward v3).
+Stage 2: Use the Stage 1 best model as an expert for hierarchical BC→Transformer+MoE.
 
 All outputs are consolidated into a single timestamped run folder:
 
@@ -15,9 +15,13 @@ All outputs are consolidated into a single timestamped run folder:
 
 Usage:
     python3 scripts/pipeline.py
-    python3 scripts/pipeline.py --mlp-steps 5000000 --hier-steps 10000000
+    python3 scripts/pipeline.py --mlp-steps 3000000 --hier-steps 10000000
+    python3 scripts/pipeline.py --mlp-epochs 10 --hier-epochs 15
     python3 scripts/pipeline.py --run-id my_experiment --device cuda
     python3 scripts/pipeline.py --skip-mlp --expert checkpoints/best/best_model.zip
+
+    # Quick smoke-test run
+    python3 scripts/pipeline.py --mlp-steps 200000 --hier-steps 500000 --bc-epochs 5 --run-id smoke
 """
 import argparse
 import json
@@ -55,6 +59,7 @@ def _build_mlp_args(args, run_dir: Path) -> types.SimpleNamespace:
     return types.SimpleNamespace(
         total_steps=args.mlp_steps,
         n_envs=args.n_envs,
+        n_epochs=args.mlp_epochs,
         device=args.device,
         resume=None,
         ckpt_dir=str(run_dir / "mlp_training"),
@@ -72,6 +77,7 @@ def _build_hier_args(
         bc_lr=args.bc_lr,
         bc_batch=args.bc_batch,
         total_steps=args.hier_steps,
+        n_epochs=args.hier_epochs,
         n_envs=args.n_envs,
         d_model=args.d_model,
         n_layers=args.n_layers,
@@ -273,8 +279,12 @@ def main():
 
     # ── Stage 1: MLP PPO ──
     parser.add_argument(
-        "--mlp-steps", type=int, default=5_000_000,
-        help="Total env steps for MLP PPO stage",
+        "--mlp-steps", type=int, default=3_000_000,
+        help="Total env steps for MLP PPO stage (reward v3 converges faster)",
+    )
+    parser.add_argument(
+        "--mlp-epochs", type=int, default=10,
+        help="PPO n_epochs for MLP stage (gradient steps per rollout)",
     )
     parser.add_argument(
         "--skip-mlp", action="store_true",
@@ -294,8 +304,12 @@ def main():
         "--hier-steps", type=int, default=10_000_000,
         help="Total env steps for hierarchical PPO stage",
     )
+    parser.add_argument(
+        "--hier-epochs", type=int, default=15,
+        help="PPO n_epochs for hierarchical Transformer stage",
+    )
     parser.add_argument("--n-expert-episodes", type=int, default=200)
-    parser.add_argument("--bc-epochs", type=int, default=50)
+    parser.add_argument("--bc-epochs", type=int, default=100)
     parser.add_argument("--bc-lr", type=float, default=5e-4)
     parser.add_argument("--bc-batch", type=int, default=256)
 

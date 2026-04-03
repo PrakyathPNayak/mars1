@@ -1,45 +1,129 @@
-# MIT Mini Cheetah RL Locomotion Environment
+# Unitree Go1 RL Locomotion Environment
 
-Complete deep reinforcement learning environment for the MIT Mini Cheetah quadruped robot.
-Train locomotion policies with PPO, control via keyboard, and deploy autonomous exploration.
+Deep reinforcement learning environment for the **Unitree Go1** quadruped (MuJoCo Menagerie).
+Trains locomotion policies with PPO via a two-stage hierarchical pipeline:
+MLP expert → Transformer+MoE fine-tuning.
 
 ## Quick Start
 
 ```bash
 # Install dependencies
-make install
+just install        # or: pip install -r requirements.txt
 
-# Generate robot model (MuJoCo MJCF)
-make model
+# Run tests (10 core tests, ~8s)
+just test
 
-# Run tests
-make test
+# Smoke-test the full pipeline (~5 min CPU)
+just train-quick
 
-# Interactive keyboard-controlled demo
-make demo
+# Full training pipeline (MLP 3M steps → Hierarchical 10M steps)
+just train
 
-# Train a PPO policy (5M steps, ~8 parallel envs)
-make train
+# Evaluate best checkpoint (20 episodes)
+just eval
 
-# Quick training run (500K steps)
-make train-quick
-
-# Evaluate best checkpoint
-make eval
-
-# Generate training dashboard plot
-make dashboard
+# Interactive keyboard demo
+just demo
 ```
 
-## Features
+> **Prerequisite:** [just](https://just.systems) — `cargo install just` (or see install docs).
+> Python 3.10+ and `pip install gymnasium stable-baselines3[extra] mujoco` are required.
 
-- **MuJoCo physics** with accurate Mini Cheetah model (12 DoF, PD control at 500 Hz)
-- **Keyboard control**: walk, trot, run, jump, crouch, turn, strafe
-- **Autonomous exploration**: heading-based and waypoint navigation
-- **PPO training pipeline** with domain randomization and curriculum learning
-- **Visualization**: MuJoCo viewer, video recording, training dashboard
+## Training Pipeline
 
-## Keyboard Controls
+Training runs in two stages:
+
+```
+Stage 1 — MLP PPO expert
+    src/training/train.py
+    Network: MLP [2048, 1024, 512], ELU, n_epochs=10
+    Duration: 3M env steps (8 parallel envs)
+    Output: checkpoints/mlp_best.zip, vec_normalize.pkl
+
+Stage 2 — Hierarchical BC → Transformer+MoE PPO
+    src/training/train_hierarchical.py
+    Phase 1: Collect expert rollouts (SubprocVecEnv, 4 workers)
+    Phase 2: Behavioural cloning on Transformer encoder (100 epochs, GPU)
+    Phase 3: PPO fine-tuning (n_epochs=15, 10M steps)
+    Output: checkpoints/hierarchical_best.zip
+
+Pipeline orchestrator: scripts/pipeline.py
+    — Runs Stage 1 then Stage 2 automatically
+    — All artifacts saved to runs/{run_id}/
+```
+
+### Just Recipes
+
+```bash
+just train                   # Full pipeline (3M + 10M steps)
+just train-gpu               # Same, on GPU
+just train-quick             # Smoke test (200K + 500K steps, ~5 min)
+just train-mlp               # Stage 1 only — MLP PPO
+just train-hier              # Stage 2 only — needs --expert path
+just train-hier-only expert=path/to/expert.zip   # Skip Stage 1
+
+# Custom step counts
+just train-steps mlp_steps=5000000 hier_steps=15000000
+
+# Advanced CLI
+python3 scripts/pipeline.py --mlp-steps 3000000 --mlp-epochs 10 \
+    --hier-steps 10000000 --hier-epochs 15 --bc-epochs 100 --device auto
+```
+
+All pipeline outputs go to `runs/{run_id}/`:
+```
+runs/20260403_120000/
+├── mlp_final.zip
+├── mlp_best.zip
+├── mlp_vec_normalize.pkl
+├── hierarchical_final.zip
+├── hierarchical_best.zip
+└── training_summary.json
+```
+
+### Direct Training Scripts
+
+```bash
+# MLP PPO
+python3 src/training/train.py --total-steps 3000000 --n-envs 8 --n-epochs 10
+
+# Hierarchical
+python3 src/training/train_hierarchical.py \
+    --expert checkpoints/best/best_model.zip \
+    --bc-epochs 100 \
+    --total-steps 10000000 \
+    --n-epochs 15
+
+# Advanced single-env Transformer
+python3 src/training/train_advanced.py --total-steps 5000000
+```
+
+## Evaluation & Visualization
+
+```bash
+# Evaluate a checkpoint (20 episodes, prints mean reward + survival)
+just eval
+just eval checkpoint=runs/20260403_120000/hierarchical_best.zip
+
+# Interactive demo — MuJoCo viewer + keyboard control
+just demo
+just demo checkpoint=runs/20260403_120000/hierarchical_best.zip
+
+# Demo without policy (keyboard → pure physics)
+just demo-no-policy
+
+# Record video
+just record output=logs/rollout.mp4
+
+# Reward component diagnostic (prints per-term breakdown, 200 steps)
+just diagnose mode=stand
+just diagnose mode=crouch
+
+# TensorBoard
+just tensorboard logdir=runs/20260403_120000/logs_mlp
+```
+
+## Keyboard Controls (demo mode)
 
 | Key | Action |
 |-----|--------|
@@ -51,102 +135,107 @@ make dashboard
 | SHIFT + dir | Run speed |
 | CTRL | Toggle crouch |
 | J | Jump |
-| SPACE | Stop |
+| SPACE | Stop / stand |
 | 1 / 2 / 3 | Walk / Trot / Run mode |
 | X | Toggle exploration mode |
 
-## Exploration Mode
+## Reward Design (v3)
 
-```python
-from src.control.exploration_policy import ExplorationPolicy
-import math
+26-term reward function for the Go1 (see `src/env/cheetah_env.py`).
+Designed from legged_gym (Rudin 2022) + Humanoid-Gym (Gu 2024) references,
+with diagnostic-driven fixes for stand stability and crouch accuracy.
 
-policy = ExplorationPolicy()
-policy.set_target_heading(math.pi / 4)   # Navigate 45° NE
-vx, vy, wz = policy.get_command(current_yaw)
+**Key positive terms (dominate at convergence ~6/step):**
+- `r_linvel` × 4.0 — exp-kernel xy velocity tracking (σ=0.25)
+- `r_yaw` × 2.0 — yaw rate tracking
+- `r_feet_air_time` × 2.0 — gait frequency via leg-swing timing
+- `r_body_height` × 2.0 — `exp(-Δh²/0.02) − 1.0` (zero at target, negative elsewhere)
 
-# Or waypoint-based:
-policy.set_target_waypoint(5.0, 3.0, current_x=0.0, current_y=0.0)
-```
+**Key penalty terms (v3 strengthened):**
+- `r_dof_vel` × −0.1 — Σ joint_vel² — key anti-shake (new in v3)
+- `r_stand_still` × −3.0 — gated by mode ≠ crouch/jump
+- `r_smooth` × −0.3 — action rate (6× from v2)
+- `r_posture` × −1.5 — squared joint error from mode target (replaces narrow exp kernel)
 
-## Research Foundation
+**Command mode randomization:** stand (15%), walk (15%), trot (25%), run (15%), explore (10%), crouch (20%).
+Each mode uses appropriate velocity ranges. Re-sampled every 200 steps mid-episode.
 
-Design choices synthesized from:
-- **DreamWaQ** (2023) — proprioceptive blind locomotion
-- **RMA** (Kumar et al. 2021) — rapid motor adaptation
-- **Hwangbo et al. 2019** — ANYmal sim-to-real transfer
-- **Kim et al. 2019** — MIT Cheetah 3 hardware and control
+See [docs/architecture.md](docs/architecture.md) for full reward tables and diagnostics.
 
-See [.state/RESEARCH_INSIGHTS.md](.state/RESEARCH_INSIGHTS.md) for full synthesis.
+## Robot: Unitree Go1
 
-## Reward Design
-
-The `AdvancedTerrainEnv` uses a 14-term weighted reward function, designed following
-legged_gym (Rudin et al. 2022), DreamWaQ, and CHRL conventions. All velocity-based
-terms are computed in **body frame** for sim-to-real consistency.
-
-| Term | Weight | Description |
-|------|--------|-------------|
-| `lin_vel_tracking` | +1.0 | Exponential kernel tracking of body-frame vx/vy vs command |
-| `ang_vel_tracking` | +0.5 | Exponential kernel tracking of yaw rate vs command |
-| `height` | -1.0 | Squared deviation from skill-dependent height target |
-| `orientation` | -1.0 | Projected gravity xy² (penalises tilt) |
-| `lin_vel_z` | -2.0 | Vertical velocity² (suppresses bouncing) |
-| `ang_vel_xy` | -0.05 | Body-frame roll/pitch rate² |
-| `torque` | -2e-5 | Torque² × skill energy weight |
-| `action_rate` | -0.02 | Action delta² (smoothness) |
-| `joint_acc` | -2.5e-7 | Joint acceleration² (suppresses jitter) |
-| `joint_limit` | -1.0 | Proximity to joint limits (0.1 rad margin) |
-| `contact` | -0.2 | Gait-dependent foot contact pattern penalty |
-| `terrain` | +0.2 | Forward velocity × terrain difficulty |
-| `collision` | -0.5 | Trunk/thigh touching ground |
-| `stumble` | -0.5 | Foot lateral hit on non-floor obstacle |
-
-Net reward at convergence (trot, 1.5 m/s, flat): ~1.5–2.0 per step.
+| Parameter | Value |
+|-----------|-------|
+| XML model | `assets/go1.xml` (mujoco_menagerie) |
+| Total mass | ~12.9 kg (trunk 5.2 kg) |
+| Standing height | 0.27 m |
+| Abduction range | ±0.863 rad |
+| Hip range | −0.686 to 4.501 rad |
+| Knee range | −2.818 to −0.888 rad |
+| Max torque | 33.5 Nm |
+| Control rate | 50 Hz (PD: kp=100, kd=0, joint damping=2) |
 
 ## Training Configuration
 
-Hardware-tuned config in [`training_config.json`](training_config.json):
+Full config in [`training_config.json`](training_config.json).
 
-| Parameter | Value | Rationale |
-|-----------|-------|-----------|
-| Parallel envs | 64 | Saturates 24 CPU cores via SubprocVecEnv |
-| Batch size | 8192 | 2× n_steps for stable gradient estimates |
-| n_steps | 4096 | ~82s rollout per env (2048 steps × 0.02s × 2) |
-| Learning rate | 3e-4 → 1e-5 | Cosine decay schedule |
-| Entropy coef | 0.01 → 0.001 | Linear decay for exploration → exploitation |
-| Episode length | 2000 steps | 40s at 50 Hz control rate |
-| Push magnitude | 50 N | ~5.2 m/s² for 9.57 kg robot (CHRL: up to 80 N) |
-| PD gains | kp=80, kd=2.0 | Kim et al. 2019; kd raised from 1.0 to suppress oscillation |
-| Max torque | 17 Nm | Mini Cheetah hardware limit |
+| Parameter | MLP Stage | Hierarchical Stage |
+|-----------|-----------|-------------------|
+| Total steps | 3M | 10M |
+| n_envs | 8 | 8 |
+| n_epochs | 10 | 15 |
+| batch_size | 4096 | 256 |
+| n_steps | 4096 | 2048 |
+| BC epochs | — | 100 |
+| Network | MLP [2048,1024,512] | Transformer d=256, 3L, 4-expert MoE |
+| Observation | 49-dim | 49-dim × 16-step history |
 
-Domain randomization ranges:
-- Body mass ±15%, floor friction 0.3–1.5, foot friction 0.8–2.0
-- Joint damping ±20%, armature ±20%, PD gains ±15%, motor strength ±10%
-- Observation noise σ=0.02
+## Project Structure
+
+```
+src/
+├── env/
+│   ├── cheetah_env.py       # Go1 Gymnasium environment (49-dim obs, reward v3)
+│   └── terrain_env.py       # Terrain variant
+├── training/
+│   ├── train.py             # Stage 1: MLP PPO
+│   ├── train_hierarchical.py# Stage 2: BC → Transformer+MoE PPO
+│   ├── train_advanced.py    # Standalone Transformer training
+│   ├── advanced_policy.py   # Transformer + MoE + CPG + World Model
+│   └── sb3_integration.py   # SB3 policy wrappers
+├── control/
+│   ├── keyboard_controller.py
+│   └── exploration_policy.py
+scripts/
+├── pipeline.py              # Full 2-stage training pipeline
+├── diagnose_reward.py       # Reward component diagnostic
+├── evaluate.py              # Policy evaluation
+├── record_video.py          # Video rollout recording
+└── interactive_control.py   # Keyboard → velocity commands
+assets/
+└── go1.xml                  # Unitree Go1 MuJoCo model
+docs/
+└── architecture.md          # Architecture + reward design detail
+justfile                     # Task runner (replaces Makefile)
+training_config.json         # Reference hyperparameters
+```
 
 ## Documentation
 
-- [Architecture](docs/architecture.md) — detailed system design
-- [Design Decisions](.state/DECISIONS.md) — rationale for all choices
-- [Research Insights](.state/RESEARCH_INSIGHTS.md) — paper synthesis
+- [docs/architecture.md](docs/architecture.md) — detailed reward design, meta-learning assessment, Go1 parameters
+- [training_config.json](training_config.json) — hyperparameter reference
 
-## Training Results
-
-Trained with PPO for 1M timesteps (8 parallel envs, ~17 min on CPU):
-
-| Model | Mean Reward | Std | Survival Rate | Mean Ep Length |
-|-------|------------|-----|---------------|----------------|
-| **Best checkpoint** (200K steps) | **3112** | 455 | **100%** | 1001 |
-| Final model (1M steps) | 2168 | 585 | 90% | 930 |
-
-Best checkpoint evaluated over 20 episodes with `randomize_domain=False`.
-Video recording available at `logs/best_model_rollout.mp4`.
+## Development
 
 ```bash
-# Evaluate a checkpoint
-python3 scripts/evaluate.py --checkpoint checkpoints/best/best_model.zip --episodes 20
+# Run tests
+just test
 
-# Record a video
-python3 scripts/record_video.py --checkpoint checkpoints/best/best_model.zip --output logs/rollout.mp4
+# Run full test suite with HTML report
+just test-full           # → reports/test_report.html
+
+# Clean up
+just clean               # Remove __pycache__ / .pytest_cache
+just clean-all           # Remove runs/, logs/ (preserves checkpoints/best/)
 ```
+
