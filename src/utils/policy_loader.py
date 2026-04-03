@@ -65,9 +65,24 @@ def load_policy_for_inference(
             clip_obs = vec_norm.clip_obs
             epsilon = vec_norm.epsilon
 
+            # Handle obs-dim mismatch: stats saved with old dim (e.g. 48) but
+            # env now produces larger obs (e.g. 49 after adding target_height).
+            # Pad mean with 0 and var with 1 for the extra dimensions so the
+            # new features pass through un-normalized until new stats are saved.
+            saved_dim = obs_rms.mean.shape[0]
+
             def normalize_fn(obs: np.ndarray) -> np.ndarray:
                 """Apply the saved running mean/var normalization."""
-                normalized = (obs - obs_rms.mean) / np.sqrt(obs_rms.var + epsilon)
+                obs_dim = obs.shape[0]
+                if obs_dim != saved_dim:
+                    mean = np.zeros(obs_dim, dtype=np.float64)
+                    var  = np.ones(obs_dim,  dtype=np.float64)
+                    mean[:saved_dim] = obs_rms.mean
+                    var[:saved_dim]  = obs_rms.var
+                else:
+                    mean = obs_rms.mean
+                    var  = obs_rms.var
+                normalized = (obs - mean) / np.sqrt(var + epsilon)
                 return np.clip(normalized, -clip_obs, clip_obs).astype(np.float32)
 
             print(f"[OK] Loaded VecNormalize stats: {norm_path}")

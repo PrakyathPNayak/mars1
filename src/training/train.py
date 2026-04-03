@@ -126,9 +126,10 @@ def train(args):
         log_std_init=-0.5,             # initial std ≈ 0.6 (matches ±0.5 action range)
     )
 
-    # SB3 MLP PPO is faster on CPU: GPU memory-transfer overhead dominates
-    # the tiny MLP forward pass. See SB3 docs warning for MlpPolicy + GPU.
-    device = "cpu"
+    # SB3 MLP PPO: CPU is typically faster for smaller networks due to
+    # CPU↔GPU transfer overhead. With [1024,512,256] and batch_size=4096,
+    # GPU can help during the learning step. Use --device cuda to try GPU.
+    device = args.device
     print(f"  Device: {device}")
 
     if args.resume and os.path.exists(args.resume):
@@ -221,6 +222,8 @@ def main():
     parser.add_argument("--total-steps", type=int, default=5_000_000)
     parser.add_argument("--n-envs", type=int, default=8)
     parser.add_argument("--resume", type=str, default=None)
+    parser.add_argument("--device", type=str, default="cpu",
+                        help="Device: cpu, cuda, or auto (auto uses GPU if available)")
     args = parser.parse_args()
     train(args)
 

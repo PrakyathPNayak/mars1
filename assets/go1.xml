@@ -13,7 +13,7 @@
 <mujoco model="go1">
   <compiler angle="radian" meshdir="go1" autolimits="true"/>
   <option timestep="0.002" gravity="0 0 -9.81" iterations="50" solver="Newton"
-          cone="elliptic" impratio="100"/>
+          cone="elliptic" impratio="10"/>
 
   <visual>
     <headlight ambient="0.5 0.5 0.5" diffuse="0.8 0.8 0.8" specular="0.1 0.1 0.1"/>
@@ -39,7 +39,7 @@
 
   <default>
     <default class="go1">
-      <geom friction="0.6" margin="0.001" condim="1"/>
+      <geom friction="1.0 0.01 0.005" margin="0.001" condim="3"/>
       <joint axis="0 1 0" damping="2" armature="0.01" frictionloss="0.2"/>
       <default class="abduction">
         <joint axis="1 0 0" damping="1" range="-0.863 0.863"/>
@@ -90,7 +90,7 @@
         </default>
         <default class="foot">
           <geom type="sphere" size="0.023" pos="0 0 -0.213" priority="1"
-                solimp="0.015 1 0.023" condim="6" friction="0.8 0.02 0.01"/>
+                solimp="0.015 1 0.023" condim="6" friction="1.0 0.02 0.01"/>
         </default>
       </default>
     </default>
@@ -103,7 +103,7 @@
     <light name="front" pos="2 -2 2" dir="-1 1 -1" diffuse="0.3 0.3 0.3"/>
     <light name="spotlight" mode="targetbodycom" target="trunk" pos="0 -1 2"/>
     <geom name="floor" type="plane" size="200 200 0.1" material="floor_mat"
-          condim="6" friction="1.0 0.005 0.0001"/>
+          condim="6" friction="1.5 0.02 0.01"/>
 
     <body name="trunk" pos="0 0 0.27" childclass="go1">
       <camera name="tracking" mode="trackcom" pos="0 -1 0.8" xyaxes="1 0 0 0 1 1"/>

@@ -39,6 +39,7 @@ class TerminalKeyController:
         self.crouching = False
         self.jumping = False
         self._jump_counter = 0  # jump persists for N get_command reads
+        self._pre_jump_mode = "stand"  # mode to restore when jump ends
         self.quit = False
         self._lock = threading.Lock()
         self._thread = None
@@ -129,6 +130,8 @@ class TerminalKeyController:
             elif c == " ":
                 self._clear_directions()
                 self.mode = "stand"
+                self.crouching = False
+                self.jumping = False
             elif c == "1":
                 self.speed = SPEEDS["walk"]; self.mode = "walk"
             elif c == "2":
@@ -136,8 +139,9 @@ class TerminalKeyController:
             elif c == "3":
                 self.speed = SPEEDS["run"]; self.mode = "run"
             elif c == "j":
+                self._pre_jump_mode = self.mode if self.mode != "jump" else self._pre_jump_mode
                 self.jumping = True
-                self._jump_counter = 25  # ~0.5s at 50Hz
+                self._jump_counter = 75  # ~1.5s at 50Hz for full jump cycle
                 self.crouching = False
                 self.mode = "jump"
             elif c == "c":
@@ -181,7 +185,7 @@ class TerminalKeyController:
                 self._jump_counter -= 1
                 if self._jump_counter <= 0:
                     self.jumping = False
-                    self.mode = "trot"
+                    self.mode = self._pre_jump_mode
             if (vx != 0 or vy != 0 or wz != 0) and mode == "stand":
                 mode = "trot"
             return vx, vy, wz, mode

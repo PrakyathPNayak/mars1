@@ -72,15 +72,20 @@ REWARD_SCALES = {
     "r_ang_vel_xy":     -0.005,    # roll/pitch rate penalty
     "r_height":         -0.5,      # height deviation from mode-dependent target
     "r_torque":         -5e-6,     # torque squared penalty
-    "r_smooth":         -0.01,     # action rate penalty
-    "r_joint_acc":      -2.5e-8,   # joint accel penalty
+    "r_smooth":         -0.1,      # action rate penalty (10× stronger for anti-shake)
+    "r_joint_acc":      -5e-7,     # joint accel penalty (20× stronger for smoothness)
     "r_joint_limit":    -5.0,      # joint limit proximity penalty
-    # ── New rewards (steps 1-4) ──
     "r_crouch_penalty": -1.0,      # anti-crouch: penalize sustained low height when not in crouch mode
     "r_power":          -1e-5,     # mechanical power |tau·qvel|: energy efficiency
     "r_stand_still":    -0.5,      # penalize joint deviation from default at zero command
     "r_gait_phase":      0.5,      # trot diagonal contact symmetry reward
     "r_foot_clearance":  0.3,      # swing-foot height reward
+    # ── Joint-angle posture & gait smoothness rewards ──
+    "r_posture":         0.5,      # hip-knee angle target per mode (exp kernel)
+    "r_foot_strike_vel":-0.05,     # foot velocity at ground contact (anti-stomp)
+    "r_body_acc":       -0.02,     # body linear acceleration penalty (anti-shake)
+    "r_action_jerk":    -0.005,    # second-order action smoothness (d²a/dt²)
+    "r_jump_phase":      1.0,      # jump FSM phase-specific rewards
 }
 
 # Tracking σ for exp kernel: tighter than legged_gym default (0.25).
@@ -95,6 +100,32 @@ FEET_AIR_TIME_THRESHOLD = 0.15
 # Prevents the early-termination death spiral where the policy learns
 # that dying quickly minimises accumulated penalties.
 ONLY_POSITIVE_REWARDS = True
+
+# ── Jump finite state machine ──────────────────────────────────────
+JUMP_PHASE_IDLE = 0
+JUMP_PHASE_CROUCH = 1     # lower body before launch
+JUMP_PHASE_LAUNCH = 2     # push upward
+JUMP_PHASE_AIRBORNE = 3   # in the air
+JUMP_PHASE_LANDING = 4    # stabilize after touchdown
+JUMP_CROUCH_STEPS = 10    # 0.2s at 50 Hz
+JUMP_LAUNCH_STEPS = 8     # 0.16s
+JUMP_LANDING_STEPS = 15   # 0.3s
+JUMP_AIRBORNE_MAX = 50    # 1s max airborne before forced landing
+
+# ── Joint-angle posture targets (hip, knee) per mode ──────────────
+# Based on ETH/RMA legged_gym conventions for Unitree Go1.
+# Hip joint = rotation joint (indices 1,4,7,10), Knee joint (indices 2,5,8,11).
+HIP_JOINT_INDICES = np.array([1, 4, 7, 10], dtype=np.int32)
+KNEE_JOINT_INDICES = np.array([2, 5, 8, 11], dtype=np.int32)
+POSTURE_TARGETS = {
+    "stand":   {"hip": 0.9,  "knee": -1.8},
+    "walk":    {"hip": 0.9,  "knee": -1.8},
+    "trot":    {"hip": 0.9,  "knee": -1.8},
+    "run":     {"hip": 0.8,  "knee": -1.6},
+    "explore": {"hip": 0.9,  "knee": -1.8},
+    "crouch":  {"hip": 1.5,  "knee": -2.5},
+    "jump":    {"hip": 0.9,  "knee": -1.8},
+}
 
 
 class MiniCheetahEnv(gym.Env):
@@ -141,6 +172,16 @@ class MiniCheetahEnv(gym.Env):
         # Height history for anti-crouch time-series detection
         self._height_history = collections.deque(maxlen=CROUCH_DETECT_WINDOW)
         self.target_height = HEIGHT_TARGETS.get(self.command_mode, 0.27)
+
+        # Jump FSM state
+        self._jump_phase = JUMP_PHASE_IDLE
+        self._jump_step_counter = 0
+        self._jump_max_height = 0.0
+
+        # Tracking for smoothness rewards
+        self.prev_prev_action = np.zeros(ACT_DIM, dtype=np.float32)
+        self._prev_base_linvel = np.zeros(3, dtype=np.float32)
+        self._prev_foot_heights = np.zeros(4, dtype=np.float32)
 
         # PD gains — Go1 XML already has damping=2 on joints, so kd=0 here
         # to avoid double-damping. The total damping matches the menagerie
@@ -211,6 +252,12 @@ class MiniCheetahEnv(gym.Env):
         self._last_contacts = np.zeros(4, dtype=bool)
         self._height_history.clear()
         self.target_height = HEIGHT_TARGETS.get(self.command_mode, 0.27)
+        self._jump_phase = JUMP_PHASE_IDLE
+        self._jump_step_counter = 0
+        self._jump_max_height = 0.0
+        self.prev_prev_action = np.zeros(ACT_DIM, dtype=np.float32)
+        self._prev_base_linvel = np.zeros(3, dtype=np.float32)
+        self._prev_foot_heights = np.zeros(4, dtype=np.float32)
 
         mujoco = self._mj
         mujoco.mj_resetData(self.model, self.data)
@@ -259,6 +306,7 @@ class MiniCheetahEnv(gym.Env):
 
         # Track state for next-step penalties
         self.prev_joint_vel = self.data.qvel[6:6 + NUM_JOINTS].copy().astype(np.float32)
+        self.prev_prev_action = self.prev_action.copy()
         self.prev_action = action.copy()
         self.step_count += 1
 
@@ -331,12 +379,13 @@ class MiniCheetahEnv(gym.Env):
         r_cmd_vel_error = float(lin_vel_error)
 
         # ── Feet air-time reward (legged_gym formulation) ──
+        # Vectorized contact detection (replaces O(ncon×4) Python loop)
         foot_contacts = np.zeros(4, dtype=bool)
-        for i in range(self.data.ncon):
-            c = self.data.contact[i]
+        if self.data.ncon > 0:
+            geom1 = self.data.contact.geom1[:self.data.ncon]
+            geom2 = self.data.contact.geom2[:self.data.ncon]
             for j, fid in enumerate(self._foot_geom_ids):
-                if c.geom1 == fid or c.geom2 == fid:
-                    foot_contacts[j] = True
+                foot_contacts[j] = np.any((geom1 == fid) | (geom2 == fid))
 
         contact_filt = np.logical_or(foot_contacts, self._last_contacts)
         self._last_contacts = foot_contacts.copy()
@@ -412,6 +461,36 @@ class MiniCheetahEnv(gym.Env):
                 self.data.qpos[7:7 + NUM_JOINTS] - DEFAULT_STANCE
             )))
 
+        # ── Joint-angle posture reward (hip-knee angle targets per mode) ──
+        # Ref: ETH legged_gym / RMA target joint configurations
+        hip_q = q[HIP_JOINT_INDICES]
+        knee_q = q[KNEE_JOINT_INDICES]
+        posture_key = self.command_mode if self.command_mode in POSTURE_TARGETS else "stand"
+        p_target = POSTURE_TARGETS[posture_key]
+        hip_err = float(np.sum((hip_q - p_target["hip"]) ** 2))
+        knee_err = float(np.sum((knee_q - p_target["knee"]) ** 2))
+        r_posture = math.exp(-(hip_err + knee_err) / 0.5)
+
+        # ── Foot-strike velocity penalty (penalize fast downward impact at touchdown) ──
+        foot_heights_now = self.data.site_xpos[self._foot_site_ids, 2]
+        r_foot_strike_vel = 0.0
+        if np.any(first_contact):
+            foot_z_vel = (foot_heights_now - self._prev_foot_heights) / self.dt
+            r_foot_strike_vel = float(np.sum(foot_z_vel[first_contact] ** 2))
+        self._prev_foot_heights = foot_heights_now.copy()
+
+        # ── Body linear acceleration penalty (anti-shake) ──
+        body_acc = (base_linvel - self._prev_base_linvel) / self.dt
+        r_body_acc = float(np.sum(body_acc ** 2))
+        self._prev_base_linvel = base_linvel.copy()
+
+        # ── Second-order action smoothness (jerk penalty) ──
+        action_jerk = action - 2.0 * self.prev_action + self.prev_prev_action
+        r_action_jerk = float(np.sum(action_jerk ** 2))
+
+        # ── Jump FSM phase reward ──
+        r_jump_phase = self._advance_jump_fsm(base_z, base_linvel, foot_contacts)
+
         # ── Assemble with REWARD_SCALES ──
         components = {
             "r_linvel": r_linvel,
@@ -431,6 +510,11 @@ class MiniCheetahEnv(gym.Env):
             "r_stand_still": r_stand_still,
             "r_gait_phase": r_gait_phase,
             "r_foot_clearance": r_foot_clearance,
+            "r_posture": r_posture,
+            "r_foot_strike_vel": r_foot_strike_vel,
+            "r_body_acc": r_body_acc,
+            "r_action_jerk": r_action_jerk,
+            "r_jump_phase": r_jump_phase,
         }
 
         total = sum(REWARD_SCALES[k] * v for k, v in components.items())
@@ -468,6 +552,78 @@ class MiniCheetahEnv(gym.Env):
             info["reward_components"] = self._last_reward_components
         return info
 
+    # ── Jump finite state machine ──────────────────────────────────
+
+    def _advance_jump_fsm(self, base_z, base_linvel, foot_contacts):
+        """Advance jump FSM through crouch→launch→airborne→land phases.
+
+        Returns a phase-specific reward scalar. The FSM dynamically
+        adjusts self.target_height so the policy sees the current phase
+        target in its observation.
+        """
+        # Reset FSM if not in jump mode
+        if self.command_mode != "jump":
+            if self._jump_phase != JUMP_PHASE_IDLE:
+                self._jump_phase = JUMP_PHASE_IDLE
+                self._jump_step_counter = 0
+            return 0.0
+
+        r = 0.0
+
+        if self._jump_phase == JUMP_PHASE_IDLE:
+            # Enter crouch preparation
+            self._jump_phase = JUMP_PHASE_CROUCH
+            self._jump_step_counter = 0
+            self._jump_max_height = base_z
+            self.target_height = 0.18
+
+        elif self._jump_phase == JUMP_PHASE_CROUCH:
+            self.target_height = 0.18
+            self._jump_step_counter += 1
+            # Reward lowering body toward crouch height
+            r = max(0.0, 0.27 - base_z) * 2.0
+            if self._jump_step_counter >= JUMP_CROUCH_STEPS:
+                self._jump_phase = JUMP_PHASE_LAUNCH
+                self._jump_step_counter = 0
+
+        elif self._jump_phase == JUMP_PHASE_LAUNCH:
+            self.target_height = 0.40
+            self._jump_step_counter += 1
+            # Reward upward velocity
+            r = max(0.0, float(base_linvel[2])) * 3.0
+            if self._jump_step_counter >= JUMP_LAUNCH_STEPS:
+                self._jump_phase = JUMP_PHASE_AIRBORNE
+                self._jump_step_counter = 0
+
+        elif self._jump_phase == JUMP_PHASE_AIRBORNE:
+            self.target_height = 0.40
+            self._jump_step_counter += 1
+            self._jump_max_height = max(self._jump_max_height, base_z)
+            # Reward height achieved above standing
+            r = max(0.0, base_z - 0.27) * 2.0
+            # Transition to landing: descending + feet touching, or timeout
+            n_contacts = int(np.sum(foot_contacts))
+            descending = float(base_linvel[2]) < -0.1
+            if (descending and n_contacts >= 2) or self._jump_step_counter > JUMP_AIRBORNE_MAX:
+                self._jump_phase = JUMP_PHASE_LANDING
+                self._jump_step_counter = 0
+
+        elif self._jump_phase == JUMP_PHASE_LANDING:
+            self.target_height = 0.27
+            self._jump_step_counter += 1
+            # Reward stability: height near normal + low velocity
+            height_err = (base_z - 0.27) ** 2
+            vel_err = float(np.sum(base_linvel ** 2))
+            r = math.exp(-(height_err + 0.1 * vel_err) / 0.2)
+            if self._jump_step_counter >= JUMP_LANDING_STEPS:
+                # Bonus for maximum height achieved
+                r += max(0.0, self._jump_max_height - 0.30) * 5.0
+                self._jump_phase = JUMP_PHASE_IDLE
+                self._jump_step_counter = 0
+                self.target_height = HEIGHT_TARGETS.get("stand", 0.27)
+
+        return float(r)
+
     # ── Command interface ───────────────────────────────────────────
 
     def set_command(self, vx: float, vy: float, wz: float, mode: str = "trot"):
@@ -495,7 +651,7 @@ class MiniCheetahEnv(gym.Env):
         for i in range(self.model.ngeom):
             name = self._mj.mj_id2name(self.model, self._mj.mjtObj.mjOBJ_GEOM, i)
             if name and "floor" in name:
-                self.model.geom_friction[i][0] = 1.0 * friction_scale
+                self.model.geom_friction[i][0] = 1.5 * friction_scale
 
     # ── Quaternion math ─────────────────────────────────────────────
 
