@@ -1,6 +1,7 @@
 {
   "robot": "Unitree Go1 (mujoco_menagerie)",
   "model_xml": "assets/go1.xml",
+  "reward_version": "v3",
   "total_steps": 20000000,
   "n_envs": 8,
   "algorithm": "PPO",
@@ -25,13 +26,18 @@
   "obs_dim": 49,
   "act_dim": 12,
   "tracking_sigma": 0.25,
+  "body_height_sigma": 0.02,
   "only_positive_rewards": true,
   "command_resample_interval": 200,
+  "command_mode_randomization": {
+    "modes": ["stand", "walk", "trot", "run", "explore", "crouch"],
+    "weights": [0.15, 0.15, 0.25, 0.15, 0.10, 0.20]
+  },
   "training_methods": {
-    "standard": "src/training/train.py — MLP PPO [2048,1024,512]",
+    "standard": "src/training/train.py — MLP PPO [2048,1024,512], default 3M steps",
     "advanced": "src/training/train_advanced.py — Transformer+MoE PPO (d_model=256)",
     "imitation": "src/training/train_with_imitation.py — BC + MLP PPO",
-    "hierarchical": "src/training/train_hierarchical.py — BC + Transformer+MoE PPO"
+    "hierarchical": "src/training/train_hierarchical.py — BC(100 epochs) + Transformer+MoE PPO(10M)"
   },
   "pd_controller": {
     "kp": 100.0,
@@ -40,16 +46,21 @@
     "reference": "Go1 specs: 23.7 Nm hip/thigh, 35.55 Nm knee"
   },
   "domain_randomization": {
-    "mass_range": [
-      0.85,
-      1.15
-    ],
-    "friction_range": [
-      0.8,
-      2.0
-    ],
+    "mass_range": [0.85, 1.15],
+    "friction_range": [0.8, 2.0],
     "obs_noise_std": 0.02
+  },
+  "reward_scales_v3": {
+    "note": "See REWARD_SCALES in src/env/cheetah_env.py for authoritative values",
+    "key_changes_from_v2": [
+      "Added r_dof_vel=-0.1 (joint velocity penalty, key anti-shake)",
+      "r_smooth: -0.05→-0.3 (6x stronger)",
+      "r_stand_still: -0.5→-3.0 (gated by mode!=crouch/jump)",
+      "r_body_acc: -0.0005→-0.005 (10x stronger)",
+      "r_action_jerk: -0.005→-0.02 (4x stronger)",
+      "r_posture: 0.3→-1.5 (flipped to penalty, squared error not exp kernel)",
+      "r_body_height: exp→exp-1 (centered at 0, negative at wrong height)",
+      "BODY_HEIGHT_SIGMA: 0.005→0.02 (wider gradient for crouch)"
+    ]
   }
-}
-}
 }

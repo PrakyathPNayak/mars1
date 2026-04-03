@@ -220,7 +220,7 @@ def train(args):
 
 def main():
     parser = argparse.ArgumentParser(description="Train Unitree Go1 PPO")
-    parser.add_argument("--total-steps", type=int, default=5_000_000)
+    parser.add_argument("--total-steps", type=int, default=3_000_000)
     parser.add_argument("--n-envs", type=int, default=8)
     parser.add_argument("--resume", type=str, default=None)
     parser.add_argument("--device", type=str, default="cpu",

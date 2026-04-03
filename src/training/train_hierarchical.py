@@ -200,7 +200,7 @@ def behavioral_cloning_transformer(
     history_len: int = 16,
     obs_dim: int = 49,
     act_dim: int = 12,
-    bc_epochs: int = 50,
+    bc_epochs: int = 100,
     bc_lr: float = 5e-4,
     bc_batch: int = 256,
     device: str = "auto",
@@ -561,7 +561,7 @@ def main():
                         help="Path to expert policy checkpoint (.zip)")
     parser.add_argument("--n-expert-episodes", type=int, default=200)
     # BC phase
-    parser.add_argument("--bc-epochs", type=int, default=50)
+    parser.add_argument("--bc-epochs", type=int, default=100)
     parser.add_argument("--bc-lr", type=float, default=5e-4)
     parser.add_argument("--bc-batch", type=int, default=256)
     # PPO phase

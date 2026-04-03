@@ -99,24 +99,104 @@ Paper-inspired architecture combining insights from 55+ papers:
 
 ## Action Space (12 dims)
 Delta joint positions from default stance, clipped to ±0.5 rad.
-Applied via PD controller (kp=80, kd=1) at 500 Hz physics simulation.
+Applied via PD controller (kp=100, kd=0; MuJoCo joint damping=2)
+at 500 Hz physics (n_substeps=10 at 50 Hz control).
 
-## Reward Function
-- **Velocity tracking**: `exp(-||v_err||² / 0.25)` for x and y
-- **Yaw tracking**: `exp(-||w_err||² / 0.25)`
-- **Torque penalty**: `−0.0001 × ||τ||²`
-- **Smoothness**: `−0.01 × ||Δa||²`
-- **Upright bonus**: `dot(gravity_body_z, -1)`
-- **Survival**: `+1.0 per step`
+## Reward Function (v3)
+
+Reward design informed by legged_gym (Rudin 2022), Humanoid-Gym (Gu 2024),
+and diagnostic analysis of stand/crouch failure modes.
+
+### Key v3 Changes from v2
+| Issue | Root Cause | Fix |
+|-------|-----------|-----|
+| Shaking on stand | No joint velocity penalty | Added `r_dof_vel` (sum of joint_vel²) |
+| Reward increased while shaking | Penalties too weak vs tracking reward | 6× `r_smooth`, 10× `r_body_acc`, 4× `r_action_jerk` |
+| Crouch not working | r_body_height always positive (exp kernel) | Centered at 0: `exp(-err²/σ) - 1.0` |
+| No crouch gradient | r_posture exp kernel too narrow (σ=0.5) | Flipped to negative squared-error penalty |
+| Crouch conflicts | r_stand_still penalized joint deviation in crouch mode | Gated by `mode not in (crouch, jump)` |
+| Model never sees crouch | command_mode always "stand" during training | Randomized mode every reset + resample |
+
+### Positive Rewards (~6/step at convergence)
+| Component | Scale | Formula | Purpose |
+|-----------|-------|---------|---------|
+| r_linvel | 4.0 | exp(-‖v_xy_err‖²/0.25) | Velocity tracking (combined xy) |
+| r_yaw | 2.0 | exp(-w_z_err²/0.25) | Yaw rate tracking |
+| r_feet_air_time | 2.0 | Σ(air_time − 0.15) @ first contact | Gait frequency |
+| r_gait_phase | 1.5 | |diag1 − diag2| / 2 | Trot symmetry |
+| r_foot_clearance | 0.5 | mean(swing_height / 0.05) | Foot lift |
+| r_body_height | 2.0 | exp(-Δh²/0.02) − 1.0 | Height tracking (0 at target) |
+| r_jump_phase | 1.0 | FSM phase reward | Jump behavior |
+| r_alive | 0.2 | constant | Survival tie-breaker |
+
+### Penalties
+| Component | Scale | Formula | Purpose |
+|-----------|-------|---------|---------|
+| r_posture | −1.5 | Σ(hip_err² + knee_err²) | Joint angle targets per mode |
+| r_dof_vel | −0.1 | Σ(joint_vel²) | **Anti-shake** (key addition) |
+| r_stand_still | −3.0 | Σ|q − default| if standing, mode ≠ crouch | Stand stability |
+| r_height | −5.0 | (base_z − target)² | Height penalty |
+| r_orientation | −2.0 | Σ(gravity_body_xy²) | Anti-tilt |
+| r_lin_vel_z | −2.0 | vz² | Anti-bounce |
+| r_smooth | −0.3 | Σ(Δaction²) | Action rate (6× from v2) |
+| r_body_acc | −0.005 | Σ(body_acc²) | Anti-shake (10× from v2) |
+| r_action_jerk | −0.02 | Σ(action_jerk²) | 2nd-order smoothness (4× from v2) |
+| r_cmd_vel_error | −1.0 | lin_vel_error | Velocity error |
+| r_crouch_penalty | −5.0 | Height window detection | Anti-unwanted-crouch |
+| r_joint_limit | −5.0 | Proximity squared | Joint limits |
+| r_abduction | −2.0 | Σ(abd_q²) | Anti-splay |
+| r_hip_excess | −3.0 | Σ(clip(hip − 1.3, 0)²) | Anti-belly-sit |
+| r_torque | −5e-6 | Σ(tau²) | Energy |
+| r_power | −1e-5 | Σ|tau·qvel| | Mechanical power |
+| r_ang_vel_xy | −0.01 | Σ(wx² + wy²) | Roll/pitch rate |
+| r_joint_acc | −5e-8 | Σ(joint_acc²) | Joint acceleration |
+| r_foot_strike_vel | −0.005 | Σ(foot_z_vel²) @ contact | Impact |
+
+### Command Mode Randomization (v3)
+During training, `command_mode` is randomly sampled at each reset and
+every 200 steps (4s at 50 Hz) with mode-appropriate velocity ranges:
+- stand (15%): 50% zero velocity, 50% low velocity
+- walk (15%), trot (25%), explore (10%): full range
+- run (15%): high velocity only (0.5–2.0 m/s)
+- crouch (20%): low velocity only (−0.1–0.3 m/s)
+
+### Diagnostic Validation
+With zero action (200 steps):
+- Stand mode: +5.30/step (r_stand_still now 16% of total, was 1.7%)
+- Crouch mode: +0.83/step at wrong posture → +5.58/step at correct posture
+- Oscillation (±0.2): 0.0/step (clipped; r_dof_vel = −98/step dominates)
+- Walking: r_dof_vel = −0.06/step (1600× less than oscillation)
 
 ## Training (PPO)
-- Network: Actor/Critic MLP [512, 256, 128] with tanh activation
-- PPO: clip=0.2, lr=3e-4, batch=256, epochs=10, gamma=0.99
-- 8 parallel environments, 2048 steps per rollout
-- Domain randomization: mass ±20%, friction 0.5-1.5x, obs noise 2%
+- Network: Actor/Critic MLP [2048, 1024, 512] with ELU activation
+- PPO: clip=0.2, lr=3e-4 (linear decay), batch=4096, epochs=5, gamma=0.99
+- 8 parallel environments, 4096 steps per rollout
+- Domain randomization: mass ±15%, friction 0.5–1.5×, obs noise 2%
+- MLP expert: 3M steps default
+- Hierarchical (BC + Transformer PPO): 100 BC epochs + 10M PPO steps
 
-## Physical Parameters (MIT Mini Cheetah)
-- Total mass: ~9 kg, Body: 0.40 × 0.10 × 0.05 m
-- Upper leg: 0.209 m, Lower leg: 0.175 m
-- 12 actuated DoF: 3 per leg (abduction, hip flex, knee)
-- Max joint torque: 17 Nm
+## Meta-Learning Assessment
+
+Meta-learning approaches (MAML, RMA) were evaluated for applicability:
+
+| Approach | Applicability | Status |
+|----------|-------------|--------|
+| MAML (Finn 2017) | Not suited — task distribution too narrow (single robot) | Not implemented |
+| RMA (Kumar 2021) | Adaptation module useful but Transformer temporal context provides similar functionality via history encoding | Partially covered by existing architecture |
+| Learned reward shaping | Automatic reward scale tuning could help but adds complexity | Future work — hyperparameter sweep preferred |
+| Domain randomization | Already implemented; serves as implicit meta-training across dynamics variations | ✅ Implemented |
+
+The current architecture already provides meta-learning benefits: the Transformer's
+16-step temporal context acts as an implicit adaptation module (similar to RMA's
+adaptation head), and domain randomization during training ensures robustness to
+parameter variation. Full MAML or learned-objective approaches would add complexity
+without clear benefit given the single-robot, single-terrain setup.
+
+## Physical Parameters (Unitree Go1)
+- Total mass: ~12.9 kg (trunk: 5.204 kg, 4 legs: ~7.7 kg)
+- Trunk: 0.3762 × 0.0935 × 0.114 m
+- Thigh: 0.213 m, Calf+foot: 0.213 m (total leg: ~0.426 m)
+- Standing height: 0.27 m (from go1.xml worldbody position)
+- 12 actuated DoF: 3 per leg (abduction ±0.863 rad, hip −0.686–4.501, knee −2.818–−0.888)
+- Max motor torque: 33.5 Nm (ctrlrange)
+- Joint damping: 2 Ns/m, armature: 0.01, frictionloss: 0.2
