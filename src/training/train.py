@@ -71,20 +71,53 @@ def train(args):
     (ckpt_dir / "best").mkdir(parents=True, exist_ok=True)
 
     class ProgressLogger(BaseCallback):
-        def __init__(self):
-            super().__init__(verbose=0)
-            self._last_log = 0
+        """Prints a one-line training summary to console every `log_every` timesteps.
 
-        def _on_step(self):
-            if self.n_calls - self._last_log >= 10000:
-                self._last_log = self.n_calls
-                try:
-                    ep_rew = self.locals.get('rollout_buffer')
-                    with open(".state/PROGRESS.md", "a") as f:
-                        f.write(f"[{time.strftime('%H:%M:%S')}] Step {self.n_calls:>8,d} | "
-                                f"timesteps={self.num_timesteps:,}\n")
-                except Exception:
-                    pass
+        Tracks completed episodes (detected via VecMonitor's info["episode"] key)
+        and reports mean/max episode reward and mean episode length so progress
+        is visible even when SB3's built-in table scrolls past.
+        """
+
+        def __init__(self, total_steps: int, rollout_size: int, log_every: int = 20_000):
+            super().__init__(verbose=0)
+            self._total_steps = total_steps
+            self._rollout_size = max(rollout_size, 1)
+            self._log_every = log_every
+            self._ep_rewards: list[float] = []
+            self._ep_lengths: list[int] = []
+            self._last_log_ts: int = 0
+
+        def _on_step(self) -> bool:
+            # VecMonitor adds info["episode"] = {"r": float, "l": int} on done
+            for info in self.locals.get("infos", []):
+                ep = info.get("episode")
+                if ep is not None:
+                    self._ep_rewards.append(float(ep["r"]))
+                    self._ep_lengths.append(int(ep["l"]))
+
+            if self.num_timesteps - self._last_log_ts >= self._log_every:
+                self._last_log_ts = self.num_timesteps
+                pct = 100.0 * self.num_timesteps / self._total_steps
+                rollout_n = self.num_timesteps // self._rollout_size
+
+                if self._ep_rewards:
+                    recent_rew = self._ep_rewards[-100:]
+                    recent_len = self._ep_lengths[-100:]
+                    mean_rew = sum(recent_rew) / len(recent_rew)
+                    max_rew  = max(recent_rew)
+                    mean_len = sum(recent_len) / len(recent_len)
+                    ep_str = (
+                        f"ep_rew={mean_rew:+7.2f} (max={max_rew:+7.2f})  "
+                        f"ep_len={mean_len:.0f}  n_ep={len(self._ep_rewards)}"
+                    )
+                else:
+                    ep_str = "ep_rew=n/a (no completed episodes yet)"
+
+                print(
+                    f"[{time.strftime('%H:%M:%S')}]  "
+                    f"step {self.num_timesteps:>10,d}/{self._total_steps:,}  "
+                    f"({pct:5.1f}%)  rollout #{rollout_n:,}  |  {ep_str}"
+                )
             return True
 
     # ── Build vectorized environments ────────────────────────────────
@@ -128,8 +161,8 @@ def train(args):
     )
 
     # SB3 MLP PPO: CPU is typically faster for smaller networks due to
-    # CPU↔GPU transfer overhead. With [1024,512,256] and batch_size=4096,
-    # GPU can help during the learning step. Use --device cuda to try GPU.
+    # CPU↔GPU transfer overhead. With batch_size=512 and n_envs=8,
+    # GPU can help further. Use --device cuda to try GPU.
     device = args.device
     print(f"  Device: {device}")
 
@@ -137,18 +170,22 @@ def train(args):
         print(f"Resuming from: {args.resume}")
         model = PPO.load(args.resume, env=vec_env, device=device)
     else:
-        n_epochs = getattr(args, "n_epochs", 10)
+        n_epochs = getattr(args, "n_epochs", 20)
+        # n_steps=4096: long rollouts improve GAE advantage estimates for locomotion.
+        # batch_size=512: 32768 samples / 512 = 64 minibatches per epoch.
+        # n_epochs=20: 64 × 20 = 1,280 gradient steps per rollout update.
+        # At 10 M env steps → ~305 rollouts → ~390,000 total gradient steps.
         model = PPO(
             policy="MlpPolicy",
             env=vec_env,
             learning_rate=linear_schedule(3e-4),
             n_steps=4096,
-            batch_size=4096,
+            batch_size=512,
             n_epochs=n_epochs,
             gamma=0.99,
             gae_lambda=0.95,
             clip_range=0.2,
-            ent_coef=0.01,      # legged_gym convention; critical with 25 envs (less diversity than 4096)
+            ent_coef=0.01,
             vf_coef=0.5,
             max_grad_norm=1.0,
             policy_kwargs=policy_kwargs,
@@ -156,6 +193,12 @@ def train(args):
             verbose=1,
             device=device,
         )
+
+    rollout_size = model.n_steps * args.n_envs
+    minibatches_per_epoch = rollout_size // model.batch_size
+    grad_steps_per_rollout = minibatches_per_epoch * model.n_epochs
+    total_rollouts = args.total_steps // rollout_size
+    total_grad_steps = total_rollouts * grad_steps_per_rollout
 
     callbacks = [
         CheckpointCallback(
@@ -172,7 +215,10 @@ def train(args):
             n_eval_episodes=5,
             verbose=1,
         ),
-        ProgressLogger(),
+        ProgressLogger(
+            total_steps=args.total_steps,
+            rollout_size=rollout_size,
+        ),
         RewardComponentCallback(log_dir=str(log_dir), verbose=1),
     ]
 
@@ -180,6 +226,12 @@ def train(args):
     print(f"  Envs: {args.n_envs}, Device: {model.device}")
     print(f"  Logging: {log_dir}")
     print(f"  Checkpoints: {ckpt_dir}")
+    print(f"\n  Gradient update budget:")
+    print(f"    rollout size      = {args.n_envs} envs × {model.n_steps} steps = {rollout_size:,} samples")
+    print(f"    minibatches/epoch = {rollout_size:,} / {model.batch_size} = {minibatches_per_epoch}")
+    print(f"    grad steps/update = {minibatches_per_epoch} × {model.n_epochs} epochs = {grad_steps_per_rollout:,}")
+    print(f"    total rollouts    = {total_rollouts:,}")
+    print(f"    total grad steps  = {total_grad_steps:,}")
 
     model.learn(
         total_timesteps=args.total_steps,
@@ -201,9 +253,9 @@ def train(args):
         "activation_fn": "ELU",
         "lr": "3e-4 linear decay",
         "clip": 0.2,
-        "batch_size": 4096,
+        "batch_size": 512,
         "n_steps": 4096,
-        "n_epochs": getattr(args, "n_epochs", 10),
+        "n_epochs": getattr(args, "n_epochs", 20),
         "ent_coef": 0.01,
         "log_std_init": -0.5,
         "ortho_init": True,
@@ -221,9 +273,9 @@ def train(args):
 
 def main():
     parser = argparse.ArgumentParser(description="Train Unitree Go1 PPO")
-    parser.add_argument("--total-steps", type=int, default=3_000_000)
+    parser.add_argument("--total-steps", type=int, default=10_000_000)
     parser.add_argument("--n-envs", type=int, default=8)
-    parser.add_argument("--n-epochs", type=int, default=10,
+    parser.add_argument("--n-epochs", type=int, default=20,
                         help="PPO gradient update epochs per rollout (default: 10)")
     parser.add_argument("--resume", type=str, default=None)
     parser.add_argument("--device", type=str, default="cpu",

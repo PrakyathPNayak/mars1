@@ -279,11 +279,11 @@ def main():
 
     # ── Stage 1: MLP PPO ──
     parser.add_argument(
-        "--mlp-steps", type=int, default=3_000_000,
+        "--mlp-steps", type=int, default=10_000_000,
         help="Total env steps for MLP PPO stage (reward v3 converges faster)",
     )
     parser.add_argument(
-        "--mlp-epochs", type=int, default=10,
+        "--mlp-epochs", type=int, default=20,
         help="PPO n_epochs for MLP stage (gradient steps per rollout)",
     )
     parser.add_argument(
@@ -301,11 +301,11 @@ def main():
 
     # ── Stage 2: Hierarchical PPO ──
     parser.add_argument(
-        "--hier-steps", type=int, default=10_000_000,
+        "--hier-steps", type=int, default=15_000_000,
         help="Total env steps for hierarchical PPO stage",
     )
     parser.add_argument(
-        "--hier-epochs", type=int, default=15,
+        "--hier-epochs", type=int, default=20,
         help="PPO n_epochs for hierarchical Transformer stage",
     )
     parser.add_argument("--n-expert-episodes", type=int, default=200)

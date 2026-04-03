@@ -16,44 +16,51 @@ from stable_baselines3.common.callbacks import BaseCallback
 
 
 class RewardComponentCallback(BaseCallback):
-    """Log per-component reward breakdown every `log_freq` steps.
+    """Log per-component reward breakdown every `log_freq` timesteps.
 
-    Fieldnames are auto-detected from the first batch of data so this
-    callback stays in sync even when reward components change.
+    Averages across ALL parallel envs at each step, and keeps a rolling
+    window of the most recent samples so logged values are smooth but
+    up-to-date.  Fieldnames are auto-detected from the first batch so
+    this callback stays in sync when reward components change.
     """
 
-    def __init__(self, log_dir="logs/training", log_freq=2048, verbose=0):
+    def __init__(self, log_dir="logs/training", log_freq=10_000, verbose=0):
         super().__init__(verbose)
         self.log_dir = Path(log_dir)
         self.log_freq = log_freq
         self._csv_path = self.log_dir / "reward_components.csv"
         self._csv_file = None
         self._csv_writer = None
-        self._step_buf = deque(maxlen=2048)
-        self._fields = None  # determined on first flush
+        # Rolling window — NOT cleared on each log so values stay smooth
+        self._step_buf: deque = deque(maxlen=500)
+        self._fields = None
+        self._last_log_ts: int = 0
 
-    def _on_training_start(self):
+    def _on_training_start(self) -> None:
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        # CSV file and writer are opened lazily once we know the field names
 
-    def _on_step(self):
-        # Sample from the first env in the vectorized set
-        try:
-            envs = self.training_env
-            # Access the underlying env to compute reward components
-            # We read the info dict which we'll add component data to
-            infos = self.locals.get("infos", [])
-            if infos and "reward_components" in infos[0]:
-                comp = infos[0]["reward_components"]
-                self._step_buf.append(comp)
-        except Exception:
-            pass
+    def _on_step(self) -> bool:
+        infos = self.locals.get("infos", [])
+        if infos:
+            # Average reward components across ALL active envs this step
+            comp_acc: dict[str, list[float]] = {}
+            for info in infos:
+                for k, v in info.get("reward_components", {}).items():
+                    comp_acc.setdefault(k, []).append(float(v))
+            if comp_acc:
+                self._step_buf.append(
+                    {k: sum(v) / len(v) for k, v in comp_acc.items()}
+                )
 
-        if self.n_calls % self.log_freq == 0 and self._step_buf:
-            # Average over buffer
-            avg = {}
-            keys = self._step_buf[0].keys()
-            for k in keys:
+        if (
+            self.num_timesteps - self._last_log_ts >= self.log_freq
+            and self._step_buf
+        ):
+            self._last_log_ts = self.num_timesteps
+
+            # Average over the rolling window
+            avg: dict[str, float] = {}
+            for k in self._step_buf[0]:
                 vals = [d[k] for d in self._step_buf if k in d]
                 avg[k] = sum(vals) / len(vals) if vals else 0.0
 
@@ -70,19 +77,26 @@ class RewardComponentCallback(BaseCallback):
                 )
                 self._csv_writer.writeheader()
 
-            row = {"step": self.num_timesteps}
+            row: dict = {"step": self.num_timesteps}
             row.update(avg)
             self._csv_writer.writerow(row)
             self._csv_file.flush()
 
             if self.verbose >= 1:
-                parts = " | ".join(f"{k}={v:+.3f}" for k, v in avg.items())
-                print(f"  [RewardLog] step={self.num_timesteps}: {parts}")
-
-            self._step_buf.clear()
+                total = avg.get("r_total", 0.0)
+                # Show top 8 components by absolute magnitude (skip r_total)
+                sorted_comps = sorted(
+                    ((k, v) for k, v in avg.items() if k != "r_total"),
+                    key=lambda x: -abs(x[1]),
+                )[:8]
+                parts = "  ".join(f"{k}={v:+.4f}" for k, v in sorted_comps)
+                print(
+                    f"  [RewardLog] ts={self.num_timesteps:,}  "
+                    f"r_total={total:+.4f}  |  {parts}"
+                )
 
         return True
 
-    def _on_training_end(self):
+    def _on_training_end(self) -> None:
         if self._csv_file:
             self._csv_file.close()

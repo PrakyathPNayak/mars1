@@ -10,10 +10,10 @@
   "activation_fn": "ELU",
   "lr": "3e-4 linear decay → 0",
   "clip_range": 0.2,
-  "batch_size": 4096,
+  "batch_size": 512,
   "n_steps": 4096,
-  "n_epochs": 10,
-  "n_epochs_hierarchical": 15,
+  "n_epochs": 20,
+  "n_epochs_hierarchical": 20,
   "gamma": 0.99,
   "gae_lambda": 0.95,
   "ent_coef": 0.01,
@@ -48,11 +48,17 @@
       0.20
     ]
   },
+  "gradient_budget_mlp": {
+    "note": "8 envs × 4096 n_steps = 32768 samples/rollout; 32768/512 = 64 minibatches × 20 epochs = 1280 grad steps/rollout; at 10M steps → ~305 rollouts → ~390K total grad steps"
+  },
+  "gradient_budget_hierarchical": {
+    "note": "8 envs × 2048 n_steps = 16384 samples/rollout; 16384/256 = 64 minibatches × 20 epochs = 1280 grad steps/rollout; at 15M steps → ~916 rollouts → ~1.17M total grad steps"
+  },
   "training_methods": {
-    "standard": "src/training/train.py — MLP PPO [2048,1024,512], default 3M steps",
+    "standard": "src/training/train.py — MLP PPO [2048,1024,512], default 10M steps, batch=512, n_epochs=20",
     "advanced": "src/training/train_advanced.py — Transformer+MoE PPO (d_model=256)",
     "imitation": "src/training/train_with_imitation.py — BC + MLP PPO",
-    "hierarchical": "src/training/train_hierarchical.py — BC(100 epochs) + Transformer+MoE PPO(10M)"
+    "hierarchical": "src/training/train_hierarchical.py — BC(100 epochs) + Transformer+MoE PPO(15M, n_epochs=20)"
   },
   "pd_controller": {
     "kp": 100.0,

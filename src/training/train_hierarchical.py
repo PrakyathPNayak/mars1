@@ -377,7 +377,7 @@ def train_ppo_hierarchical(args, bc_extractor_state: dict):
         learning_rate=lambda p: 3e-4 * lr_schedule(p),
         n_steps=2048,
         batch_size=256,
-        n_epochs=getattr(args, "n_epochs", 15),
+        n_epochs=getattr(args, "n_epochs", 20),
         gamma=0.99,
         gae_lambda=0.95,
         clip_range=0.2,
@@ -428,19 +428,54 @@ def train_ppo_hierarchical(args, bc_extractor_state: dict):
     curriculum = AdaptiveCurriculum(n_envs=args.n_envs)
 
     class ProgressLogger(BaseCallback):
-        def __init__(self):
+        """Prints a one-line training summary to console every `log_every` timesteps."""
+
+        def __init__(self, total_steps: int, rollout_size: int, log_every: int = 20_000):
             super().__init__(verbose=0)
-            self._last_log = 0
-        def _on_step(self):
-            if self.n_calls - self._last_log >= 10000:
-                self._last_log = self.n_calls
-                try:
-                    with open(".state/PROGRESS.md", "a") as f:
-                        f.write(f"[{time.strftime('%H:%M:%S')}] Step {self.n_calls:>8,d} | "
-                                f"timesteps={self.num_timesteps:,}\n")
-                except Exception:
-                    pass
+            self._total_steps = total_steps
+            self._rollout_size = max(rollout_size, 1)
+            self._log_every = log_every
+            self._ep_rewards: list[float] = []
+            self._ep_lengths: list[int] = []
+            self._last_log_ts: int = 0
+
+        def _on_step(self) -> bool:
+            for info in self.locals.get("infos", []):
+                ep = info.get("episode")
+                if ep is not None:
+                    self._ep_rewards.append(float(ep["r"]))
+                    self._ep_lengths.append(int(ep["l"]))
+
+            if self.num_timesteps - self._last_log_ts >= self._log_every:
+                self._last_log_ts = self.num_timesteps
+                pct = 100.0 * self.num_timesteps / self._total_steps
+                rollout_n = self.num_timesteps // self._rollout_size
+
+                if self._ep_rewards:
+                    recent_rew = self._ep_rewards[-100:]
+                    recent_len = self._ep_lengths[-100:]
+                    mean_rew = sum(recent_rew) / len(recent_rew)
+                    max_rew  = max(recent_rew)
+                    mean_len = sum(recent_len) / len(recent_len)
+                    ep_str = (
+                        f"ep_rew={mean_rew:+7.2f} (max={max_rew:+7.2f})  "
+                        f"ep_len={mean_len:.0f}  n_ep={len(self._ep_rewards)}"
+                    )
+                else:
+                    ep_str = "ep_rew=n/a (no completed episodes yet)"
+
+                print(
+                    f"[{time.strftime('%H:%M:%S')}]  "
+                    f"step {self.num_timesteps:>10,d}/{self._total_steps:,}  "
+                    f"({pct:5.1f}%)  rollout #{rollout_n:,}  |  {ep_str}"
+                )
             return True
+
+    rollout_size = model.n_steps * args.n_envs
+    minibatches_per_epoch = rollout_size // model.batch_size
+    grad_steps_per_rollout = minibatches_per_epoch * model.n_epochs
+    total_rollouts = args.total_steps // rollout_size
+    total_grad_steps = total_rollouts * grad_steps_per_rollout
 
     callbacks = [
         CheckpointCallback(
@@ -462,11 +497,20 @@ def train_ppo_hierarchical(args, bc_extractor_state: dict):
             verbose=1 if args.verbose else 0,
         ),
         CurriculumCallback(curriculum, verbose=1 if args.verbose else 0),
-        ProgressLogger(),
+        ProgressLogger(
+            total_steps=args.total_steps,
+            rollout_size=rollout_size,
+        ),
         RewardComponentCallback(log_dir=str(log_dir), verbose=1),
     ]
 
     print(f"\n  Starting training for {args.total_steps:,} steps...")
+    print(f"  Gradient update budget:")
+    print(f"    rollout size      = {args.n_envs} envs × {model.n_steps} steps = {rollout_size:,} samples")
+    print(f"    minibatches/epoch = {rollout_size:,} / {model.batch_size} = {minibatches_per_epoch}")
+    print(f"    grad steps/update = {minibatches_per_epoch} × {model.n_epochs} epochs = {grad_steps_per_rollout:,}")
+    print(f"    total rollouts    = {total_rollouts:,}")
+    print(f"    total grad steps  = {total_grad_steps:,}")
     model.learn(
         total_timesteps=args.total_steps,
         callback=callbacks,
@@ -565,9 +609,9 @@ def main():
     parser.add_argument("--bc-lr", type=float, default=5e-4)
     parser.add_argument("--bc-batch", type=int, default=256)
     # PPO phase
-    parser.add_argument("--total-steps", type=int, default=10_000_000)
+    parser.add_argument("--total-steps", type=int, default=15_000_000)
     parser.add_argument("--n-envs", type=int, default=8)
-    parser.add_argument("--n-epochs", type=int, default=15,
+    parser.add_argument("--n-epochs", type=int, default=20,
                         help="PPO gradient update epochs per rollout (default: 15)")
     # Architecture
     parser.add_argument("--d-model", type=int, default=256)
