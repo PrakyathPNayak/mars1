@@ -63,7 +63,7 @@ def linear_schedule(initial_value: float):
 # ══════════════════════════════════════════════════════════════════════
 
 def collect_expert_data(expert_path: str, n_episodes: int = 200,
-                        max_steps_per_ep: int = 1000):
+                        max_steps_per_ep: int = 1000, device: str = "cpu"):
     """Roll out expert policy and collect (obs, action) pairs.
 
     Returns:
@@ -76,8 +76,8 @@ def collect_expert_data(expert_path: str, n_episodes: int = 200,
     project_root = str(Path(__file__).resolve().parent.parent.parent)
     ckpt_dir = Path(project_root) / "checkpoints"
 
-    # Load expert
-    expert = PPO.load(expert_path, device="cpu")
+    # Load expert (CPU is typically faster for sequential single-env inference)
+    expert = PPO.load(expert_path, device=device)
 
     # Load VecNormalize if available (for consistent observation normalization)
     norm_path = str(ckpt_dir / "vec_normalize.pkl")
@@ -122,11 +122,17 @@ def collect_expert_data(expert_path: str, n_episodes: int = 200,
 def behavioral_cloning(obs_data: np.ndarray, act_data: np.ndarray,
                        obs_dim: int, act_dim: int,
                        net_arch: list, bc_epochs: int = 30,
-                       bc_lr: float = 1e-3, bc_batch: int = 256):
+                       bc_lr: float = 1e-3, bc_batch: int = 256,
+                       device: str = "auto"):
     """Train a policy network via supervised learning on expert data.
 
     Returns a state_dict compatible with the SB3 PPO actor network.
+    BC is a supervised task and can fully utilise GPU acceleration.
     """
+    if device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"  BC device: {device}")
+
     # Build a simple MLP matching the PPO actor architecture
     layers = []
     in_dim = obs_dim
@@ -135,7 +141,7 @@ def behavioral_cloning(obs_data: np.ndarray, act_data: np.ndarray,
         layers.append(nn.ELU())
         in_dim = h
     layers.append(nn.Linear(in_dim, act_dim))
-    bc_net = nn.Sequential(*layers)
+    bc_net = nn.Sequential(*layers).to(device)
 
     # Orthogonal initialization (matching PPO convention)
     for m in bc_net.modules():
@@ -159,6 +165,8 @@ def behavioral_cloning(obs_data: np.ndarray, act_data: np.ndarray,
         total_loss = 0.0
         n_batches = 0
         for obs_batch, act_batch in loader:
+            obs_batch = obs_batch.to(device)
+            act_batch = act_batch.to(device)
             pred = bc_net(obs_batch)
             loss = criterion(pred, act_batch)
             optimizer.zero_grad()
@@ -171,7 +179,8 @@ def behavioral_cloning(obs_data: np.ndarray, act_data: np.ndarray,
             print(f"  Epoch {epoch + 1:3d}/{bc_epochs} — loss: {avg_loss:.6f}")
 
     print(f"  BC training complete. Final loss: {avg_loss:.6f}")
-    return bc_net.state_dict()
+    # Move back to CPU so inject_bc_weights works regardless of PPO model device
+    return bc_net.cpu().state_dict()
 
 
 def inject_bc_weights(model, bc_state_dict, net_arch):
@@ -285,16 +294,25 @@ def train(args):
 
     net_arch = [2048, 1024, 512]
 
+    # Resolve device once; pass to all phases
+    device = args.device
+    if device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"  Device: {device}")
+
     # ── Phase 1: Collect expert demonstrations ──
+    # Expert rollout uses a single env sequentially — CPU avoids GPU transfer
+    # overhead and is typically faster here.
     obs_data, act_data = collect_expert_data(
         args.expert,
         n_episodes=args.n_expert_episodes,
         max_steps_per_ep=1000,
+        device="cpu",
     )
     obs_dim = obs_data.shape[1]
     act_dim = act_data.shape[1]
 
-    # ── Phase 2: Behavioral cloning ──
+    # ── Phase 2: Behavioral cloning (supervised — GPU accelerated) ──
     bc_state_dict = behavioral_cloning(
         obs_data, act_data,
         obs_dim=obs_dim, act_dim=act_dim,
@@ -302,6 +320,7 @@ def train(args):
         bc_epochs=args.bc_epochs,
         bc_lr=args.bc_lr,
         bc_batch=args.bc_batch,
+        device=device,
     )
 
     # ── Build vectorized environments ──
@@ -417,8 +436,8 @@ def main():
                         help="PPO fine-tuning total timesteps")
     parser.add_argument("--n-envs", type=int, default=8,
                         help="Number of parallel environments for PPO")
-    parser.add_argument("--device", type=str, default="cpu",
-                        help="Device: cpu, cuda, or auto")
+    parser.add_argument("--device", type=str, default="auto",
+                        help="Device: cpu, cuda, or auto (default: auto-detect GPU)")
     args = parser.parse_args()
     train(args)
 

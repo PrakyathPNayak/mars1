@@ -91,7 +91,7 @@ def make_flat_env(rank=0, **kwargs):
 
 def collect_expert_data(expert_path: str, n_episodes: int = 200,
                         max_steps_per_ep: int = 2000, history_len: int = 16,
-                        vec_normalize_path: str = None):
+                        vec_normalize_path: str = None, device: str = "cpu"):
     """Roll out expert policy and collect (obs_history, action) pairs.
 
     The expert is an MLP policy (no history wrapper needed), but we
@@ -108,7 +108,9 @@ def collect_expert_data(expert_path: str, n_episodes: int = 200,
 
     project_root = str(Path(__file__).resolve().parent.parent.parent)
 
-    expert = PPO.load(expert_path, device="cpu")
+    # Expert rollout is sequential single-env inference — CPU avoids GPU
+    # transfer overhead and is typically faster here.
+    expert = PPO.load(expert_path, device=device)
 
     if vec_normalize_path is not None:
         norm_path = vec_normalize_path
@@ -175,13 +177,17 @@ def behavioral_cloning_transformer(
     bc_epochs: int = 50,
     bc_lr: float = 5e-4,
     bc_batch: int = 256,
-    device: str = "cpu",
+    device: str = "auto",
 ):
     """Train the Transformer feature extractor + action head via BC.
 
+    BC is a supervised task and benefits from GPU acceleration.
     Uses the same TransformerExtractor as the full policy so weights
     can be transferred directly.
     """
+    if device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"  BC device: {device}")
     from src.training.sb3_integration import TransformerExtractor
     from gymnasium import spaces
 
@@ -259,7 +265,8 @@ def behavioral_cloning_transformer(
                   f"loss: {avg_loss:.6f}, lr: {scheduler.get_last_lr()[0]:.2e}")
 
     print(f"  BC training complete. Final loss: {avg_loss:.6f}")
-    return extractor.state_dict()
+    # Move state dict to CPU so weight injection works regardless of PPO device
+    return {k: v.cpu() for k, v in extractor.state_dict().items()}
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -472,12 +479,14 @@ def train(args):
     print("=" * 60)
 
     # Phase 1: Collect expert demonstrations with observation history
+    # Expert rollout uses a single env sequentially — keep on CPU.
     history_data, act_data = collect_expert_data(
         args.expert,
         n_episodes=args.n_expert_episodes,
         max_steps_per_ep=2000,
         history_len=args.history_len,
         vec_normalize_path=getattr(args, 'vec_normalize', None),
+        device="cpu",
     )
 
     # Phase 2: Behavioral cloning on the Transformer encoder
