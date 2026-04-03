@@ -51,13 +51,13 @@ def run_diag(mode: str, steps: int = 200) -> None:
 
 
 def main() -> None:
+    valid_modes = list(HEIGHT_TARGETS.keys())
     parser = argparse.ArgumentParser(description="Reward component diagnostic")
     parser.add_argument(
         "--mode",
         type=str,
         default="stand",
-        choices=list(HEIGHT_TARGETS.keys()),
-        help="Command mode to test (default: stand)",
+        help=f"Command mode to test. One of: {valid_modes} (default: stand)",
     )
     parser.add_argument(
         "--steps",
@@ -66,7 +66,14 @@ def main() -> None:
         help="Number of simulation steps (default: 200)",
     )
     args = parser.parse_args()
-    run_diag(args.mode, args.steps)
+    # Accept both `stand` and `mode=stand` (the latter can occur when just
+    # passes a named-parameter value through certain shell invocations)
+    mode = args.mode
+    if "=" in mode:
+        mode = mode.split("=", 1)[1]
+    if mode not in valid_modes:
+        parser.error(f"--mode: invalid choice {mode!r} (choose from {valid_modes})")
+    run_diag(mode, args.steps)
 
 
 if __name__ == "__main__":
