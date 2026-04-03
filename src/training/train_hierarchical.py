@@ -91,7 +91,8 @@ def make_flat_env(rank=0, **kwargs):
 
 def collect_expert_data(expert_path: str, n_episodes: int = 200,
                         max_steps_per_ep: int = 2000, history_len: int = 16,
-                        vec_normalize_path: str = None, device: str = "cpu"):
+                        vec_normalize_path: str | None = None, device: str = "cpu",
+                        n_collect_envs: int = 4):
     """Roll out expert policy and collect (obs_history, action) pairs.
 
     The expert is an MLP policy (no history wrapper needed), but we
@@ -104,7 +105,7 @@ def collect_expert_data(expert_path: str, n_episodes: int = 200,
     """
     from collections import deque
     from stable_baselines3 import PPO
-    from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+    from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 
     project_root = str(Path(__file__).resolve().parent.parent.parent)
 
@@ -116,7 +117,16 @@ def collect_expert_data(expert_path: str, n_episodes: int = 200,
         norm_path = vec_normalize_path
     else:
         norm_path = str(Path(project_root) / "checkpoints" / "vec_normalize.pkl")
-    base_env = DummyVecEnv([make_flat_env(999)])
+    # Phase 1 runs entirely on CPU (MuJoCo simulation is CPU-bound).
+    # Parallelise collection across multiple environments to cut wall time.
+    n_collect_envs = min(n_collect_envs, n_episodes)
+    env_fns = [make_flat_env(i) for i in range(n_collect_envs)]
+    try:
+        base_env = SubprocVecEnv(env_fns)
+        print(f"  Using SubprocVecEnv ({n_collect_envs} parallel envs)")
+    except Exception as e:
+        print(f"  SubprocVecEnv failed ({e}), falling back to DummyVecEnv")
+        base_env = DummyVecEnv(env_fns)
     if os.path.exists(norm_path):
         vec_env = VecNormalize.load(norm_path, base_env)
         vec_env.training = False
@@ -125,32 +135,48 @@ def collect_expert_data(expert_path: str, n_episodes: int = 200,
         vec_env = base_env
 
     obs_dim = vec_env.observation_space.shape[0]
+    n_envs_active = vec_env.num_envs
     history_list = []
     act_list = []
 
-    print(f"[Phase 1] Collecting expert data: {n_episodes} episodes, "
-          f"history_len={history_len}")
+    print(f"[Phase 1] Collecting expert data: {n_episodes} episodes "
+          f"({n_envs_active} parallel envs), history_len={history_len}")
 
-    for ep in range(n_episodes):
-        obs = vec_env.reset()
-        obs_buf = deque(maxlen=history_len)
-        # Fill buffer with initial observation
+    # Initialise per-env observation history buffers.
+    obs: np.ndarray = np.asarray(vec_env.reset())  # (n_envs, obs_dim)
+    obs_bufs = [deque(maxlen=history_len) for _ in range(n_envs_active)]
+    for i in range(n_envs_active):
         for _ in range(history_len):
-            obs_buf.append(obs.squeeze(0).copy())
+            obs_bufs[i].append(obs[i].copy())
 
-        for step in range(max_steps_per_ep):
-            action, _ = expert.predict(obs, deterministic=True)
-            # Store the full history window + action
-            history_flat = np.concatenate(list(obs_buf), axis=0)
+    eps_done = 0
+    while eps_done < n_episodes:
+        # Single batched forward pass covers all parallel environments.
+        action, _ = expert.predict(obs, deterministic=True)  # (n_envs, act_dim)
+
+        # Record (history, action) for every env before stepping.
+        for i in range(n_envs_active):
+            history_flat = np.concatenate(list(obs_bufs[i]), axis=0)
             history_list.append(history_flat)
-            act_list.append(action.squeeze(0).copy())
-            obs, reward, done, info = vec_env.step(action)
-            obs_buf.append(obs.squeeze(0).copy())
-            if done[0]:
-                break
-        if (ep + 1) % 50 == 0:
-            print(f"  Collected {ep + 1}/{n_episodes} episodes, "
-                  f"{len(history_list)} transitions")
+            act_list.append(action[i].copy())
+
+        obs_next_raw, reward, done, info = vec_env.step(action)
+        obs_next: np.ndarray = np.asarray(obs_next_raw)
+
+        for i in range(n_envs_active):
+            if done[i]:
+                eps_done += 1
+                # obs_next[i] is the auto-reset initial obs; fill the buffer
+                # so stale frames from the finished episode don't leak through.
+                for _ in range(history_len):
+                    obs_bufs[i].append(obs_next[i].copy())
+                if eps_done % 50 == 0 or eps_done == n_episodes:
+                    print(f"  Completed {eps_done}/{n_episodes} episodes, "
+                          f"{len(history_list)} transitions")
+            else:
+                obs_bufs[i].append(obs_next[i].copy())
+
+        obs = obs_next
 
     vec_env.close()
 
@@ -229,7 +255,19 @@ def behavioral_cloning_transformer(
         torch.from_numpy(history_data),
         torch.from_numpy(act_data),
     )
-    loader = DataLoader(dataset, batch_size=bc_batch, shuffle=True, drop_last=True)
+    # pin_memory enables async DMA transfers to GPU; workers overlap data
+    # prep with GPU compute, improving throughput during BC training.
+    _pin = device.startswith("cuda")
+    _workers = min(4, os.cpu_count() or 1) if _pin else 0
+    loader = DataLoader(
+        dataset,
+        batch_size=bc_batch,
+        shuffle=True,
+        drop_last=True,
+        pin_memory=_pin,
+        num_workers=_workers,
+        persistent_workers=_workers > 0,
+    )
 
     print(f"\n[Phase 2] Behavioral cloning (Transformer): "
           f"{bc_epochs} epochs, {len(history_data)} samples")
@@ -487,6 +525,7 @@ def train(args):
         history_len=args.history_len,
         vec_normalize_path=getattr(args, 'vec_normalize', None),
         device="cpu",
+        n_collect_envs=args.n_collect_envs,
     )
 
     # Phase 2: Behavioral cloning on the Transformer encoder
@@ -543,6 +582,8 @@ def main():
                         help="Directory for TensorBoard logs (default: logs/training_hierarchical)")
     parser.add_argument("--vec-normalize", type=str, default=None,
                         help="Path to VecNormalize stats (.pkl) from expert training")
+    parser.add_argument("--n-collect-envs", type=int, default=4,
+                        help="Parallel envs for Phase 1 expert data collection (default: 4)")
     args = parser.parse_args()
     train(args)
 
