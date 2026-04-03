@@ -11,7 +11,7 @@ def test_env_creation():
     from src.env.cheetah_env import MiniCheetahEnv
     env = MiniCheetahEnv(render_mode="none", randomize_domain=False)
     obs, info = env.reset()
-    assert obs.shape == (48,), f"Expected obs shape (48,), got {obs.shape}"
+    assert obs.shape == (49,), f"Expected obs shape (49,), got {obs.shape}"
     assert obs.dtype == np.float32
     env.close()
     print("  [PASS] test_env_creation")
@@ -23,7 +23,7 @@ def test_step():
     obs, _ = env.reset()
     action = env.action_space.sample()
     obs2, reward, done, truncated, info = env.step(action)
-    assert obs2.shape == (48,)
+    assert obs2.shape == (49,)
     assert isinstance(reward, float)
     assert isinstance(done, bool)
     assert isinstance(truncated, bool)
@@ -134,7 +134,7 @@ def test_action_space():
 def test_observation_space():
     from src.env.cheetah_env import MiniCheetahEnv
     env = MiniCheetahEnv(render_mode="none", randomize_domain=False)
-    assert env.observation_space.shape == (48,)
+    assert env.observation_space.shape == (49,)
     obs, _ = env.reset()
     assert env.observation_space.contains(obs), "obs not in observation space"
     env.close()

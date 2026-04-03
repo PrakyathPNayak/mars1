@@ -44,7 +44,7 @@ model = PPO(
     n_steps=128, batch_size=64, n_epochs=3,
     gamma=0.99, gae_lambda=0.95, clip_range=0.2,
     ent_coef=0.01, vf_coef=0.5, max_grad_norm=0.5,
-    policy_kwargs=dict(d_model=128, n_heads=4, n_layers=3, n_experts=4, history_len=HISTORY, obs_dim=48),
+    policy_kwargs=dict(d_model=128, n_heads=4, n_layers=3, n_experts=4, history_len=HISTORY, obs_dim=49),
     verbose=0, device='cpu',
 )
 

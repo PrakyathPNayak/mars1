@@ -1,65 +1,55 @@
 {
-  "total_steps": 50000000,
-  "n_envs": 64,
+  "robot": "Unitree Go1 (mujoco_menagerie)",
+  "model_xml": "assets/go1.xml",
+  "total_steps": 20000000,
+  "n_envs": 8,
   "algorithm": "PPO",
-  "net_arch": "pi=[512,256,128], vf=[512,256,128]",
+  "policy": "MlpPolicy",
+  "net_arch": "pi=[2048,1024,512], vf=[2048,1024,512]",
   "activation_fn": "ELU",
-  "lr": 0.0003,
-  "lr_schedule": "cosine_decay_to_1e-5",
+  "lr": "3e-4 linear decay → 0",
   "clip_range": 0.2,
-  "batch_size": 8192,
+  "batch_size": 4096,
   "n_steps": 4096,
   "n_epochs": 5,
   "gamma": 0.99,
   "gae_lambda": 0.95,
   "ent_coef": 0.01,
-  "ent_coef_schedule": "linear_decay_to_0.001",
   "vf_coef": 0.5,
   "max_grad_norm": 1.0,
-  "device": "cuda",
+  "log_std_init": -0.5,
+  "ortho_init": true,
+  "device": "cpu",
+  "vec_normalize": "norm_obs=True, norm_reward=False, clip_obs=100",
   "episode_length": 2000,
-  "hardware": {
-    "gpu": "NVIDIA RTX 4090 (24 GB VRAM)",
-    "cpu": "Intel Core i9-14900 (24C/32T, 5.8 GHz boost)",
-    "ram": "128 GB DDR5",
-    "notes": "64 CPU envs via SubprocVecEnv; GPU for policy updates; 262K samples per rollout"
-  },
-  "reward_scales": {
-    "lin_vel_tracking": 1.0,
-    "ang_vel_tracking": 0.5,
-    "height": -1.0,
-    "orientation": -1.0,
-    "lin_vel_z": -2.0,
-    "ang_vel_xy": -0.05,
-    "torque": -2e-5,
-    "action_rate": -0.02,
-    "joint_acc": -2.5e-7,
-    "joint_limit": -1.0,
-    "contact": -0.2,
-    "terrain": 0.2,
-    "collision": -0.5,
-    "stumble": -0.5
-  },
-  "domain_randomization": {
-    "mass_range": [0.85, 1.15],
-    "floor_friction_range": [0.3, 1.5],
-    "foot_friction_range": [0.8, 2.0],
-    "damping_range": [0.8, 1.2],
-    "armature_range": [0.8, 1.2],
-    "kp_range": [0.85, 1.15],
-    "kd_range": [0.85, 1.15],
-    "max_torque_range": [0.9, 1.1],
-    "obs_noise_std": 0.02
+  "obs_dim": 49,
+  "act_dim": 12,
+  "tracking_sigma": 0.25,
+  "only_positive_rewards": true,
+  "command_resample_interval": 200,
+  "training_methods": {
+    "standard": "src/training/train.py — MLP PPO [2048,1024,512]",
+    "advanced": "src/training/train_advanced.py — Transformer+MoE PPO (d_model=256)",
+    "imitation": "src/training/train_with_imitation.py — BC + MLP PPO",
+    "hierarchical": "src/training/train_hierarchical.py — BC + Transformer+MoE PPO"
   },
   "pd_controller": {
-    "kp": 80.0,
-    "kd": 2.0,
-    "max_torque_nm": 17.0,
-    "reference": "Kim et al. 2019, Mini Cheetah proprietary actuators"
+    "kp": 100.0,
+    "kd": 0.0,
+    "max_torque_nm": 33.5,
+    "reference": "Go1 specs: 23.7 Nm hip/thigh, 35.55 Nm knee"
   },
-  "push_perturbation": {
-    "magnitude_newtons": 50.0,
-    "interval_steps": 200,
-    "method": "xfrc_applied (proper MuJoCo external force)"
+  "domain_randomization": {
+    "mass_range": [
+      0.85,
+      1.15
+    ],
+    "friction_range": [
+      0.8,
+      2.0
+    ],
+    "obs_noise_std": 0.02
   }
+}
+}
 }

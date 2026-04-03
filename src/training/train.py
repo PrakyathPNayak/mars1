@@ -1,7 +1,7 @@
 """
 PPO training pipeline for Unitree Go1 quadruped locomotion.
 
-Architecture: Actor/Critic MLP [1024, 512, 256] with ELU activation
+Architecture: Actor/Critic MLP [2048, 1024, 512] with ELU activation
 Algorithm: PPO (clip=0.2, lr=3e-4→0 linear, 4096 steps/rollout)
 
 Key design choices (from legged_gym / Isaac Gym conventions):
@@ -38,7 +38,7 @@ def make_env(rank=0, **kwargs):
         env = MiniCheetahEnv(
             render_mode="none",
             randomize_domain=True,
-            episode_length=1000,
+            episode_length=2000,
             **kwargs
         )
         env.reset(seed=rank)
@@ -64,10 +64,11 @@ def train(args):
     )
     from src.training.reward_logger import RewardComponentCallback
 
-    log_dir = Path("logs/training")
-    ckpt_dir = Path("checkpoints")
+    log_dir = Path(args.log_dir)
+    ckpt_dir = Path(args.ckpt_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
     ckpt_dir.mkdir(parents=True, exist_ok=True)
+    (ckpt_dir / "best").mkdir(parents=True, exist_ok=True)
 
     class ProgressLogger(BaseCallback):
         def __init__(self):
@@ -120,7 +121,7 @@ def train(args):
 
     # ── Policy architecture ─────────────────────────────────────────
     policy_kwargs = dict(
-        net_arch=dict(pi=[1024, 512, 256], vf=[1024, 512, 256]),
+        net_arch=dict(pi=[2048, 1024, 512], vf=[2048, 1024, 512]),
         activation_fn=torch.nn.ELU,    # better gradient flow than Tanh for locomotion
         ortho_init=True,               # orthogonal weight init (PPO standard)
         log_std_init=-0.5,             # initial std ≈ 0.6 (matches ±0.5 action range)
@@ -195,7 +196,7 @@ def train(args):
         "total_steps": args.total_steps,
         "n_envs": args.n_envs,
         "algorithm": "PPO",
-        "net_arch": "pi=[1024,512,256], vf=[1024,512,256]",
+        "net_arch": "pi=[2048,1024,512], vf=[2048,1024,512]",
         "activation_fn": "ELU",
         "lr": "3e-4 linear decay",
         "clip": 0.2,
@@ -224,6 +225,10 @@ def main():
     parser.add_argument("--resume", type=str, default=None)
     parser.add_argument("--device", type=str, default="cpu",
                         help="Device: cpu, cuda, or auto (auto uses GPU if available)")
+    parser.add_argument("--ckpt-dir", type=str, default="checkpoints",
+                        help="Directory to save checkpoints (default: checkpoints)")
+    parser.add_argument("--log-dir", type=str, default="logs/training",
+                        help="Directory for TensorBoard logs (default: logs/training)")
     args = parser.parse_args()
     train(args)
 

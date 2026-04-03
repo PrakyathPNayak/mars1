@@ -35,7 +35,7 @@ def make_terrain_env(rank=0, history_len=16, **env_kwargs):
             randomize_domain=True,
             randomize_terrain=True,
             randomize_skill=True,
-            episode_length=1000,
+            episode_length=2000,
             push_interval=200,
             push_magnitude=0.5,
             **env_kwargs,

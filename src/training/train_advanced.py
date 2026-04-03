@@ -38,7 +38,7 @@ def make_env(rank=0, history_len=16, **kwargs):
         env = MiniCheetahEnv(
             render_mode="none",
             randomize_domain=True,
-            episode_length=1000,
+            episode_length=2000,
             **kwargs
         )
         env = ActionSmoothingWrapper(env, alpha=0.8)
@@ -140,7 +140,7 @@ def train(args):
         n_layers=n_layers,
         n_experts=n_experts,
         history_len=history_len,
-        obs_dim=48,
+        obs_dim=49,
     )
 
     if args.resume and os.path.exists(args.resume):
@@ -245,7 +245,7 @@ def main():
     )
     parser.add_argument("--total-steps", type=int, default=5_000_000)
     parser.add_argument("--n-envs", type=int, default=8)
-    parser.add_argument("--d-model", type=int, default=128)
+    parser.add_argument("--d-model", type=int, default=256)
     parser.add_argument("--n-layers", type=int, default=3)
     parser.add_argument("--n-experts", type=int, default=4)
     parser.add_argument("--history-len", type=int, default=16)

@@ -18,7 +18,7 @@ def record(checkpoint_path, output_path="logs/rollout.mp4", n_episodes=1, fps=50
     env = MiniCheetahEnv(
         render_mode="rgb_array",
         randomize_domain=False,
-        episode_length=1000,
+        episode_length=2000,
     )
     policy, normalize_fn = load_policy_for_inference(checkpoint_path)
 

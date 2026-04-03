@@ -9,7 +9,7 @@ Key bindings (held-key style):
   W/↑: Forward   S/↓: Backward   A/←: Strafe left   D/→: Strafe right
   Q: Turn left    E: Turn right    SPACE: Stop all    1/2/3: Walk/Trot/Run
   J: Jump          C: Toggle crouch
-  ESC: Quit
+  ESC ESC: Quit (press twice quickly — single ESC ignored to prevent arrow-key misfires)
 """
 import sys
 import os
@@ -78,18 +78,26 @@ class TerminalKeyController:
                         continue
                     # Handle escape sequences (arrow keys)
                     if ch == "\x1b":
-                        # Could be ESC or start of escape sequence
-                        if select.select([sys.stdin], [], [], 0.05)[0]:
+                        # Could be ESC or start of arrow-key escape sequence.
+                        # Wait up to 150ms for the follow-up bytes (\x1b[A etc.)
+                        # to arrive. If nothing comes, it was a bare ESC press.
+                        if select.select([sys.stdin], [], [], 0.15)[0]:
                             ch2 = sys.stdin.read(1)
                             if ch2 == "[":
-                                ch3 = sys.stdin.read(1)
-                                self._handle_arrow(ch3)
+                                if select.select([sys.stdin], [], [], 0.15)[0]:
+                                    ch3 = sys.stdin.read(1)
+                                    self._handle_arrow(ch3)
                                 continue
-                        else:
-                            # Bare ESC
+                        # Bare ESC — require two consecutive bare ESCs within
+                        # 500ms for actual quit (prevents accidental arrow-key
+                        # misparse from terminating the program).
+                        now = time.monotonic()
+                        if hasattr(self, '_last_esc_time') and (now - self._last_esc_time) < 0.5:
                             with self._lock:
                                 self.quit = True
                             return
+                        self._last_esc_time = now
+                        continue
                     self._handle_key(ch)
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
@@ -148,8 +156,8 @@ class TerminalKeyController:
                 self.crouching = not self.crouching
                 self.jumping = False
                 self.mode = "crouch" if self.crouching else "trot"
-            elif ch == "\x1b":  # ESC
-                self.quit = True
+            elif ch == "\x1b":  # ESC — handled in _read_loop (double-ESC required)
+                pass
 
     def _handle_arrow(self, ch3: str):
         with self._lock:
@@ -216,7 +224,7 @@ def print_terminal_bindings():
 ║  C            : Toggle crouch                   ║
 ║  1 / 2 / 3    : Walk / Trot / Run speed         ║
 ║  SPACE        : Stop all motion                 ║
-║  ESC          : Quit                            ║
+║  ESC ESC      : Quit (press ESC twice quickly)  ║
 ╠══════════════════════════════════════════════════╣
 ║  Input is from THIS TERMINAL — no need to       ║
 ║  click the MuJoCo viewer window.                ║

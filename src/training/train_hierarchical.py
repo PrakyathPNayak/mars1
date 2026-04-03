@@ -1,0 +1,542 @@
+"""
+Hierarchical training pipeline for Unitree Go1 quadruped locomotion.
+
+Combines imitation learning (behavioral cloning) with the advanced
+Transformer+MoE architecture for a three-phase training pipeline:
+
+  Phase 1 — Expert data collection: Roll out a pre-trained (MLP PPO) expert
+            and record (observation_history, action) pairs.
+  Phase 2 — Behavioral cloning (BC): Supervised pre-training of the
+            Transformer encoder + MLP head to mimic the expert, giving
+            the temporal encoder a warm-start on real locomotion data.
+  Phase 3 — Full PPO + Transformer+MoE: Continue training with the full
+            hierarchical policy (sensory-group attention, symmetry
+            augmentation, MoE action head, world-model auxiliary loss,
+            adaptive curriculum).
+
+References:
+  - ULT (2503.08997), TERT (2212.07740): Transformer for locomotion
+  - Walk These Ways (Margolis 2023): Curriculum + multi-task
+  - DAgger (Ross et al. 2011): Online imitation → RL fine-tuning
+  - BC + PPO warm-start is used in legged_gym / AMP pipelines
+
+Usage:
+    python3 src/training/train_hierarchical.py \\
+        --expert checkpoints/best/best_model.zip \\
+        --total-steps 10000000
+"""
+import os
+import sys
+import json
+import time
+import argparse
+import numpy as np
+from pathlib import Path
+
+import torch
+import torch.nn as nn
+from torch.utils.data import TensorDataset, DataLoader
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+
+
+def make_env(rank=0, history_len=16, **kwargs):
+    """Environment factory with history wrapper for vectorized training."""
+    project_root = str(Path(__file__).resolve().parent.parent.parent)
+    def _init():
+        import sys
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
+        import os
+        os.chdir(project_root)
+        from src.env.cheetah_env import MiniCheetahEnv
+        from src.training.sb3_integration import HistoryWrapper, ActionSmoothingWrapper
+        env = MiniCheetahEnv(
+            render_mode="none",
+            randomize_domain=True,
+            episode_length=2000,
+            **kwargs
+        )
+        env = ActionSmoothingWrapper(env, alpha=0.8)
+        env = HistoryWrapper(env, history_len=history_len)
+        env.reset(seed=rank)
+        return env
+    return _init
+
+
+def make_flat_env(rank=0, **kwargs):
+    """Environment factory WITHOUT history wrapper (for expert data collection)."""
+    project_root = str(Path(__file__).resolve().parent.parent.parent)
+    def _init():
+        import sys
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
+        import os
+        os.chdir(project_root)
+        from src.env.cheetah_env import MiniCheetahEnv
+        env = MiniCheetahEnv(
+            render_mode="none",
+            randomize_domain=True,
+            episode_length=2000,
+            **kwargs
+        )
+        env.reset(seed=rank)
+        return env
+    return _init
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  Phase 1: Collect expert demonstrations
+# ══════════════════════════════════════════════════════════════════════
+
+def collect_expert_data(expert_path: str, n_episodes: int = 200,
+                        max_steps_per_ep: int = 2000, history_len: int = 16,
+                        vec_normalize_path: str = None):
+    """Roll out expert policy and collect (obs_history, action) pairs.
+
+    The expert is an MLP policy (no history wrapper needed), but we
+    collect overlapping observation windows of length `history_len` so
+    the BC-trained transformer sees proper temporal context.
+
+    Returns:
+        history_data: np.ndarray (N, history_len * obs_dim)
+        act_data: np.ndarray (N, act_dim)
+    """
+    from collections import deque
+    from stable_baselines3 import PPO
+    from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+
+    project_root = str(Path(__file__).resolve().parent.parent.parent)
+
+    expert = PPO.load(expert_path, device="cpu")
+
+    if vec_normalize_path is not None:
+        norm_path = vec_normalize_path
+    else:
+        norm_path = str(Path(project_root) / "checkpoints" / "vec_normalize.pkl")
+    base_env = DummyVecEnv([make_flat_env(999)])
+    if os.path.exists(norm_path):
+        vec_env = VecNormalize.load(norm_path, base_env)
+        vec_env.training = False
+        vec_env.norm_reward = False
+    else:
+        vec_env = base_env
+
+    obs_dim = vec_env.observation_space.shape[0]
+    history_list = []
+    act_list = []
+
+    print(f"[Phase 1] Collecting expert data: {n_episodes} episodes, "
+          f"history_len={history_len}")
+
+    for ep in range(n_episodes):
+        obs = vec_env.reset()
+        obs_buf = deque(maxlen=history_len)
+        # Fill buffer with initial observation
+        for _ in range(history_len):
+            obs_buf.append(obs.squeeze(0).copy())
+
+        for step in range(max_steps_per_ep):
+            action, _ = expert.predict(obs, deterministic=True)
+            # Store the full history window + action
+            history_flat = np.concatenate(list(obs_buf), axis=0)
+            history_list.append(history_flat)
+            act_list.append(action.squeeze(0).copy())
+            obs, reward, done, info = vec_env.step(action)
+            obs_buf.append(obs.squeeze(0).copy())
+            if done[0]:
+                break
+        if (ep + 1) % 50 == 0:
+            print(f"  Collected {ep + 1}/{n_episodes} episodes, "
+                  f"{len(history_list)} transitions")
+
+    vec_env.close()
+
+    history_data = np.array(history_list, dtype=np.float32)
+    act_data = np.array(act_list, dtype=np.float32)
+    print(f"  Total: {len(history_data)} transitions "
+          f"(history: {history_data.shape}, act: {act_data.shape})")
+    return history_data, act_data
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  Phase 2: Behavioral cloning on the Transformer encoder
+# ══════════════════════════════════════════════════════════════════════
+
+def behavioral_cloning_transformer(
+    history_data: np.ndarray,
+    act_data: np.ndarray,
+    d_model: int = 256,
+    n_heads: int = 4,
+    n_layers: int = 3,
+    history_len: int = 16,
+    obs_dim: int = 49,
+    act_dim: int = 12,
+    bc_epochs: int = 50,
+    bc_lr: float = 5e-4,
+    bc_batch: int = 256,
+    device: str = "cpu",
+):
+    """Train the Transformer feature extractor + action head via BC.
+
+    Uses the same TransformerExtractor as the full policy so weights
+    can be transferred directly.
+    """
+    from src.training.sb3_integration import TransformerExtractor
+    from gymnasium import spaces
+
+    # Create a dummy observation space matching the history wrapper output
+    dummy_obs_space = spaces.Box(
+        low=-np.inf, high=np.inf,
+        shape=(history_len * obs_dim,),
+        dtype=np.float32,
+    )
+
+    # Build the same extractor used by TransformerActorCriticPolicy
+    extractor = TransformerExtractor(
+        observation_space=dummy_obs_space,
+        d_model=d_model,
+        n_heads=n_heads,
+        n_layers=n_layers,
+        history_len=history_len,
+        obs_dim=obs_dim,
+    ).to(device)
+
+    # Simple action head matching the extractor output
+    action_head = nn.Sequential(
+        nn.Linear(d_model, d_model),
+        nn.ELU(),
+        nn.Linear(d_model, act_dim),
+    ).to(device)
+
+    # Orthogonal init
+    for m in action_head.modules():
+        if isinstance(m, nn.Linear):
+            nn.init.orthogonal_(m.weight, gain=np.sqrt(2))
+            nn.init.constant_(m.bias, 0.0)
+
+    all_params = list(extractor.parameters()) + list(action_head.parameters())
+    optimizer = torch.optim.AdamW(all_params, lr=bc_lr, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=bc_epochs)
+
+    dataset = TensorDataset(
+        torch.from_numpy(history_data),
+        torch.from_numpy(act_data),
+    )
+    loader = DataLoader(dataset, batch_size=bc_batch, shuffle=True, drop_last=True)
+
+    print(f"\n[Phase 2] Behavioral cloning (Transformer): "
+          f"{bc_epochs} epochs, {len(history_data)} samples")
+    n_params = sum(p.numel() for p in all_params)
+    print(f"  Extractor + head params: {n_params:,}")
+
+    extractor.train()
+    action_head.train()
+
+    for epoch in range(bc_epochs):
+        total_loss = 0.0
+        n_batches = 0
+        for hist_batch, act_batch in loader:
+            hist_batch = hist_batch.to(device)
+            act_batch = act_batch.to(device)
+
+            features = extractor(hist_batch)
+            pred_action = action_head(features)
+            loss = nn.functional.mse_loss(pred_action, act_batch)
+
+            optimizer.zero_grad()
+            loss.backward()
+            nn.utils.clip_grad_norm_(all_params, max_norm=1.0)
+            optimizer.step()
+
+            total_loss += loss.item()
+            n_batches += 1
+
+        scheduler.step()
+        avg_loss = total_loss / max(n_batches, 1)
+        if (epoch + 1) % 5 == 0 or epoch == 0:
+            print(f"  Epoch {epoch + 1:3d}/{bc_epochs} — "
+                  f"loss: {avg_loss:.6f}, lr: {scheduler.get_last_lr()[0]:.2e}")
+
+    print(f"  BC training complete. Final loss: {avg_loss:.6f}")
+    return extractor.state_dict()
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  Phase 3: Full PPO training with BC warm-start
+# ══════════════════════════════════════════════════════════════════════
+
+def train_ppo_hierarchical(args, bc_extractor_state: dict):
+    """PPO training with Transformer+MoE policy, warm-started from BC."""
+    from stable_baselines3 import PPO
+    from stable_baselines3.common.vec_env import (
+        SubprocVecEnv, DummyVecEnv, VecMonitor,
+    )
+    from stable_baselines3.common.callbacks import (
+        EvalCallback, CheckpointCallback, BaseCallback,
+    )
+    from src.training.sb3_integration import (
+        TransformerActorCriticPolicy,
+        WorldModelCallback,
+        CurriculumCallback,
+    )
+    from src.training.advanced_policy import AdaptiveCurriculum
+    from src.training.reward_logger import RewardComponentCallback
+
+    log_dir = Path(getattr(args, 'log_dir', 'logs/training_hierarchical'))
+    ckpt_dir = Path(getattr(args, 'ckpt_dir', 'checkpoints/hierarchical'))
+    log_dir.mkdir(parents=True, exist_ok=True)
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+
+    # LR schedule with warmup + cosine decay
+    def lr_schedule(progress_remaining: float) -> float:
+        progress = 1.0 - progress_remaining
+        warmup_frac = 0.05
+        if progress < warmup_frac:
+            return progress / warmup_frac
+        decay_progress = (progress - warmup_frac) / (1.0 - warmup_frac)
+        return 0.5 * (1.0 + np.cos(np.pi * decay_progress))
+
+    device = args.device
+    if device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"\n[Phase 3] PPO + Transformer+MoE training")
+    print(f"  Device: {device}")
+
+    print(f"  Creating {args.n_envs} parallel environments with history...")
+    try:
+        vec_env = SubprocVecEnv(
+            [make_env(i, history_len=args.history_len) for i in range(args.n_envs)]
+        )
+        print("  Using SubprocVecEnv (parallel)")
+    except Exception as e:
+        print(f"  SubprocVecEnv failed ({e}), falling back to DummyVecEnv")
+        vec_env = DummyVecEnv(
+            [make_env(i, history_len=args.history_len) for i in range(args.n_envs)]
+        )
+    vec_env = VecMonitor(vec_env, str(log_dir))
+    eval_env = DummyVecEnv([make_env(999, history_len=args.history_len)])
+
+    policy_kwargs = dict(
+        d_model=args.d_model,
+        n_heads=4,
+        n_layers=args.n_layers,
+        n_experts=args.n_experts,
+        history_len=args.history_len,
+        obs_dim=49,
+    )
+
+    model = PPO(
+        policy=TransformerActorCriticPolicy,
+        env=vec_env,
+        learning_rate=lambda p: 3e-4 * lr_schedule(p),
+        n_steps=2048,
+        batch_size=256,
+        n_epochs=10,
+        gamma=0.99,
+        gae_lambda=0.95,
+        clip_range=0.2,
+        ent_coef=0.01,
+        vf_coef=0.5,
+        max_grad_norm=0.5,
+        policy_kwargs=policy_kwargs,
+        tensorboard_log=str(log_dir),
+        verbose=1,
+        device=device,
+    )
+
+    # ── Inject BC-trained weights into the feature extractor ──
+    print("\n  Injecting BC-trained Transformer weights...")
+    extractor = model.policy.features_extractor
+    extractor_params = dict(extractor.named_parameters())
+    matched = 0
+    skipped = 0
+    for name, bc_tensor in bc_extractor_state.items():
+        if name in extractor_params:
+            param = extractor_params[name]
+            if param.shape == bc_tensor.shape:
+                with torch.no_grad():
+                    param.copy_(bc_tensor.to(param.device))
+                matched += 1
+            else:
+                skipped += 1
+        else:
+            # Also check buffer names
+            try:
+                parts = name.split(".")
+                mod = extractor
+                for p in parts[:-1]:
+                    mod = getattr(mod, p)
+                buf = getattr(mod, parts[-1])
+                if hasattr(buf, 'copy_') and buf.shape == bc_tensor.shape:
+                    buf.copy_(bc_tensor)
+                    matched += 1
+            except (AttributeError, RuntimeError):
+                skipped += 1
+    print(f"  Injected {matched} parameters, skipped {skipped}")
+
+    total_params = sum(p.numel() for p in model.policy.parameters())
+    train_params = sum(p.numel() for p in model.policy.parameters() if p.requires_grad)
+    print(f"  Total parameters: {total_params:,}")
+    print(f"  Trainable parameters: {train_params:,}")
+
+    curriculum = AdaptiveCurriculum(n_envs=args.n_envs)
+
+    class ProgressLogger(BaseCallback):
+        def __init__(self):
+            super().__init__(verbose=0)
+            self._last_log = 0
+        def _on_step(self):
+            if self.n_calls - self._last_log >= 10000:
+                self._last_log = self.n_calls
+                try:
+                    with open(".state/PROGRESS.md", "a") as f:
+                        f.write(f"[{time.strftime('%H:%M:%S')}] Step {self.n_calls:>8,d} | "
+                                f"timesteps={self.num_timesteps:,}\n")
+                except Exception:
+                    pass
+            return True
+
+    callbacks = [
+        CheckpointCallback(
+            save_freq=max(100_000 // args.n_envs, 1),
+            save_path=str(ckpt_dir),
+            name_prefix="hierarchical",
+            verbose=1,
+        ),
+        EvalCallback(
+            eval_env,
+            best_model_save_path=str(ckpt_dir / "best"),
+            log_path=str(log_dir / "eval"),
+            eval_freq=max(50_000 // args.n_envs, 1),
+            n_eval_episodes=5,
+            verbose=1,
+        ),
+        WorldModelCallback(
+            wm_lr=1e-4, wm_coeff=0.1, update_freq=2048,
+            verbose=1 if args.verbose else 0,
+        ),
+        CurriculumCallback(curriculum, verbose=1 if args.verbose else 0),
+        ProgressLogger(),
+        RewardComponentCallback(log_dir=str(log_dir), verbose=1),
+    ]
+
+    print(f"\n  Starting training for {args.total_steps:,} steps...")
+    model.learn(
+        total_timesteps=args.total_steps,
+        callback=callbacks,
+        progress_bar=True,
+    )
+
+    final_path = str(ckpt_dir / "hierarchical_final")
+    model.save(final_path)
+    print(f"\n  Training complete. Model saved: {final_path}")
+
+    config = {
+        "method": "hierarchical (BC + Transformer+MoE PPO)",
+        "expert": args.expert,
+        "n_expert_episodes": args.n_expert_episodes,
+        "bc_epochs": args.bc_epochs,
+        "total_steps": args.total_steps,
+        "n_envs": args.n_envs,
+        "d_model": args.d_model,
+        "n_layers": args.n_layers,
+        "n_experts": args.n_experts,
+        "history_len": args.history_len,
+        "device": device,
+        "total_params": total_params,
+        "trainable_params": train_params,
+    }
+    with open(ckpt_dir / "training_config.json", "w") as f:
+        json.dump(config, f, indent=2)
+
+    vec_env.close()
+    eval_env.close()
+    return final_path
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  Main pipeline
+# ══════════════════════════════════════════════════════════════════════
+
+def train(args):
+    project_root = str(Path(__file__).resolve().parent.parent.parent)
+    os.chdir(project_root)
+
+    print("=" * 60)
+    print("HIERARCHICAL TRAINING: BC → Transformer+MoE PPO")
+    print("=" * 60)
+    print(f"  Expert: {args.expert}")
+    print(f"  d_model={args.d_model}, layers={args.n_layers}, experts={args.n_experts}")
+    print(f"  BC epochs={args.bc_epochs}, PPO steps={args.total_steps:,}")
+    print("=" * 60)
+
+    # Phase 1: Collect expert demonstrations with observation history
+    history_data, act_data = collect_expert_data(
+        args.expert,
+        n_episodes=args.n_expert_episodes,
+        max_steps_per_ep=2000,
+        history_len=args.history_len,
+        vec_normalize_path=getattr(args, 'vec_normalize', None),
+    )
+
+    # Phase 2: Behavioral cloning on the Transformer encoder
+    device = args.device
+    if device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    bc_state = behavioral_cloning_transformer(
+        history_data, act_data,
+        d_model=args.d_model,
+        n_heads=4,
+        n_layers=args.n_layers,
+        history_len=args.history_len,
+        obs_dim=49,
+        act_dim=12,
+        bc_epochs=args.bc_epochs,
+        bc_lr=args.bc_lr,
+        bc_batch=args.bc_batch,
+        device=device,
+    )
+
+    # Phase 3: PPO with full Transformer+MoE, warm-started from BC
+    final_path = train_ppo_hierarchical(args, bc_state)
+    return final_path
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Hierarchical training: BC → Transformer+MoE PPO for Go1"
+    )
+    # Expert / data collection
+    parser.add_argument("--expert", type=str, required=True,
+                        help="Path to expert policy checkpoint (.zip)")
+    parser.add_argument("--n-expert-episodes", type=int, default=200)
+    # BC phase
+    parser.add_argument("--bc-epochs", type=int, default=50)
+    parser.add_argument("--bc-lr", type=float, default=5e-4)
+    parser.add_argument("--bc-batch", type=int, default=256)
+    # PPO phase
+    parser.add_argument("--total-steps", type=int, default=10_000_000)
+    parser.add_argument("--n-envs", type=int, default=8)
+    # Architecture
+    parser.add_argument("--d-model", type=int, default=256)
+    parser.add_argument("--n-layers", type=int, default=3)
+    parser.add_argument("--n-experts", type=int, default=4)
+    parser.add_argument("--history-len", type=int, default=16)
+    # System
+    parser.add_argument("--device", type=str, default="auto",
+                        help="Device: cpu, cuda, or auto")
+    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--ckpt-dir", type=str, default="checkpoints/hierarchical",
+                        help="Directory to save checkpoints (default: checkpoints/hierarchical)")
+    parser.add_argument("--log-dir", type=str, default="logs/training_hierarchical",
+                        help="Directory for TensorBoard logs (default: logs/training_hierarchical)")
+    parser.add_argument("--vec-normalize", type=str, default=None,
+                        help="Path to VecNormalize stats (.pkl) from expert training")
+    args = parser.parse_args()
+    train(args)
+
+
+if __name__ == "__main__":
+    main()

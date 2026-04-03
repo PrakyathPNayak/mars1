@@ -43,7 +43,7 @@ def make_env(rank=0, **kwargs):
         env = MiniCheetahEnv(
             render_mode="none",
             randomize_domain=True,
-            episode_length=1000,
+            episode_length=2000,
             **kwargs
         )
         env.reset(seed=rank)
@@ -283,7 +283,7 @@ def train(args):
     project_root = str(Path(__file__).resolve().parent.parent.parent)
     os.chdir(project_root)
 
-    net_arch = [1024, 512, 256]
+    net_arch = [2048, 1024, 512]
 
     # ── Phase 1: Collect expert demonstrations ──
     obs_data, act_data = collect_expert_data(
@@ -369,7 +369,7 @@ def train(args):
         policy_kwargs=policy_kwargs,
         tensorboard_log=str(log_dir),
         verbose=1,
-        device="cpu",
+        device=args.device,
     )
 
     # ── Inject BC weights into the PPO actor ──
@@ -417,6 +417,8 @@ def main():
                         help="PPO fine-tuning total timesteps")
     parser.add_argument("--n-envs", type=int, default=8,
                         help="Number of parallel environments for PPO")
+    parser.add_argument("--device", type=str, default="cpu",
+                        help="Device: cpu, cuda, or auto")
     args = parser.parse_args()
     train(args)
 

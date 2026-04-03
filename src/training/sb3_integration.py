@@ -72,7 +72,7 @@ class ActionSmoothingWrapper(gym.ActionWrapper):
 class HistoryWrapper(gym.ObservationWrapper):
     """Wraps env to stack observation history along a new dimension.
 
-    Transforms obs space from Box(48,) to Box(history_len * 48,) flattened.
+    Transforms obs space from Box(obs_dim,) to Box(history_len * obs_dim,) flattened.
     On reset, fills history with the initial observation to avoid discontinuity.
     Uses a smooth fade-in to reduce the impact of sudden history resets on
     the temporal transformer during auto-reset in vectorized envs.
@@ -237,7 +237,7 @@ class TransformerExtractor(BaseFeaturesExtractor):
             (batch_size,), self._step_counter_buf.item(), device=device
         )
         self._step_counter_buf += 1
-        command = latest_obs[..., 45:48]
+        command = latest_obs[..., 45:48]  # vx, vy, wz (not target_height)
         phase_features = self.phase_oscillator(step_count, command)
 
         # Fuse all features

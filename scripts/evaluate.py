@@ -19,7 +19,7 @@ def evaluate(checkpoint_path, n_episodes=20, render=False):
     env = MiniCheetahEnv(
         render_mode="human" if render else "none",
         randomize_domain=False,
-        episode_length=1000,
+        episode_length=2000,
     )
     policy, normalize_fn = load_policy_for_inference(checkpoint_path)
 

@@ -43,11 +43,15 @@ DEFAULT_STANCE = np.array([
 ], dtype=np.float32)
 
 # Reward scale dictionary — signed weights (ETH/legged_gym convention).
-# Redesigned to create strong gradient between standing still and walking:
-#   Old design: standing≈3.3/step vs walking≈3.5 (gradient=0.2 — too weak)
-#   New design: standing≈2.9/step vs walking≈4.5 (gradient≈1.6 — 8× stronger)
-# Key changes: removed alive bonus, added cmd penalty & feet_air_time,
-# tighter tracking sigma, combined exp kernel (legged_gym style).
+#
+# CALIBRATION (from 20M-step training log analysis):
+#   Raw penalty magnitudes at typical behavior:
+#     body_acc²≈320, joint_acc²≈8M, smooth²≈4.4, ang_vel_xy²≈70,
+#     cmd_vel_error≈1.5, lin_vel_z²≈0.19, torque²≈~10000
+#   Scales are set so each penalty contributes at most ~0.2-0.5/step.
+#   Positive rewards (tracking + alive) should sum to ~4.0-5.0/step.
+#   Ref: legged_gym (Rudin et al. 2022), Walk These Ways (Margolis et al. 2023)
+#
 # Height targets for different command modes
 HEIGHT_TARGETS = {
     "stand": 0.27, "walk": 0.27, "trot": 0.27, "run": 0.27, "explore": 0.27,
@@ -63,34 +67,37 @@ CROUCH_HEIGHT_THRESHOLD = 0.22  # below this counts as "crouching"
 ROBOT_MASS = 12.74
 
 REWARD_SCALES = {
+    # ── Positive rewards (should sum to ~4-5/step for good behavior) ──
+    "r_alive":           2.0,      # survival bonus (legged_gym standard, prevents death spiral)
     "r_linvel":          2.0,      # exp tracking for xy vel (combined kernel, max 1.0)
     "r_yaw":             1.0,      # exp tracking for yaw rate (max 1.0)
     "r_feet_air_time":   1.5,      # gait reward: incentivises leg swing (legged_gym)
-    "r_cmd_vel_error":  -2.0,      # squared velocity error — penalises NOT tracking cmd
-    "r_orientation":    -0.2,      # gravity-tilt penalty
-    "r_lin_vel_z":      -1.0,      # vertical bounce penalty
-    "r_ang_vel_xy":     -0.005,    # roll/pitch rate penalty
-    "r_height":         -0.5,      # height deviation from mode-dependent target
-    "r_torque":         -5e-6,     # torque squared penalty
-    "r_smooth":         -0.1,      # action rate penalty (10× stronger for anti-shake)
-    "r_joint_acc":      -5e-7,     # joint accel penalty (20× stronger for smoothness)
-    "r_joint_limit":    -5.0,      # joint limit proximity penalty
-    "r_crouch_penalty": -1.0,      # anti-crouch: penalize sustained low height when not in crouch mode
-    "r_power":          -1e-5,     # mechanical power |tau·qvel|: energy efficiency
-    "r_stand_still":    -0.5,      # penalize joint deviation from default at zero command
     "r_gait_phase":      0.5,      # trot diagonal contact symmetry reward
     "r_foot_clearance":  0.3,      # swing-foot height reward
-    # ── Joint-angle posture & gait smoothness rewards ──
     "r_posture":         0.5,      # hip-knee angle target per mode (exp kernel)
-    "r_foot_strike_vel":-0.05,     # foot velocity at ground contact (anti-stomp)
-    "r_body_acc":       -0.02,     # body linear acceleration penalty (anti-shake)
-    "r_action_jerk":    -0.005,    # second-order action smoothness (d²a/dt²)
     "r_jump_phase":      1.0,      # jump FSM phase-specific rewards
+    # ── Penalties (each should contribute at most ~0.2-0.5/step) ──
+    "r_cmd_vel_error":  -0.5,      # squared velocity error (was -2.0, raw≈1.5 → -0.75)
+    "r_orientation":    -0.5,      # gravity-tilt penalty (raw≈0.17 → -0.085)
+    "r_lin_vel_z":      -2.0,      # vertical bounce penalty (raw≈0.19 → -0.38)
+    "r_ang_vel_xy":     -0.005,    # roll/pitch rate penalty (raw≈70 → -0.35)
+    "r_height":         -1.0,      # height deviation from mode-dependent target
+    "r_torque":         -5e-6,     # torque squared penalty (raw≈10k → -0.05)
+    "r_smooth":         -0.05,     # action rate penalty (raw≈4.4 → -0.22)
+    "r_joint_acc":      -5e-8,     # joint accel penalty (raw≈8M → -0.40)
+    "r_joint_limit":    -5.0,      # joint limit proximity penalty (raw≈0.002 → -0.01)
+    "r_crouch_penalty": -1.0,      # anti-crouch: penalize sustained low height
+    "r_power":          -1e-5,     # mechanical power |tau·qvel| (raw≈4000 → -0.04)
+    "r_stand_still":    -0.5,      # penalize joint deviation at zero command
+    "r_foot_strike_vel":-0.005,    # foot velocity at contact (raw≈1.8 → -0.009)
+    "r_body_acc":       -0.0005,   # body linear accel penalty (raw≈320 → -0.16)
+    "r_action_jerk":    -0.005,    # second-order action smoothness (raw≈12 → -0.06)
 }
 
-# Tracking σ for exp kernel: tighter than legged_gym default (0.25).
-# At σ=0.15, standing with cmd=0.5 m/s → exp≈0.19 (vs 0.37 at σ=0.25).
-TRACKING_SIGMA = 0.15
+# Tracking σ for exp kernel: legged_gym default is 0.25.
+# At σ=0.25, standing with cmd=0.5 → exp≈0.37 (decent gradient for early training).
+# Was 0.15 which made early exploration get near-zero tracking reward.
+TRACKING_SIGMA = 0.25
 
 # Feet air-time threshold (seconds).  First-contact reward = (air_time - threshold).
 # Positive for steps longer than threshold (natural gait), negative for chattering.
@@ -111,6 +118,11 @@ JUMP_CROUCH_STEPS = 10    # 0.2s at 50 Hz
 JUMP_LAUNCH_STEPS = 8     # 0.16s
 JUMP_LANDING_STEPS = 15   # 0.3s
 JUMP_AIRBORNE_MAX = 50    # 1s max airborne before forced landing
+
+# ── Command re-randomization during training ──────────────────────
+# Re-randomize velocity commands every N steps so the policy sees diverse
+# commands within a single episode (ref: Walk These Ways, Margolis 2023).
+COMMAND_RESAMPLE_INTERVAL = 200  # 4 seconds at 50 Hz
 
 # ── Joint-angle posture targets (hip, knee) per mode ──────────────
 # Based on ETH/RMA legged_gym conventions for Unitree Go1.
@@ -137,7 +149,7 @@ class MiniCheetahEnv(gym.Env):
         terrain_type: str = "flat",
         control_mode: str = "direct",
         randomize_domain: bool = True,
-        episode_length: int = 1000,
+        episode_length: int = 2000,
         dt: float = 0.02,
         physics_dt: float = 0.002,
     ):
@@ -309,6 +321,15 @@ class MiniCheetahEnv(gym.Env):
         self.prev_prev_action = self.prev_action.copy()
         self.prev_action = action.copy()
         self.step_count += 1
+
+        # ── Mid-episode command re-randomization (Walk These Ways convention) ──
+        if (self.randomize_commands
+                and self.step_count % COMMAND_RESAMPLE_INTERVAL == 0):
+            rng = self.np_random if hasattr(self, 'np_random') and self.np_random is not None else np.random
+            vx = float(rng.uniform(-0.5, 2.0))
+            vy = float(rng.uniform(-0.5, 0.5))
+            wz = float(rng.uniform(-0.5, 0.5))
+            self.command = np.array([vx, vy, wz], dtype=np.float32)
 
         if self.render_mode == "human":
             self.render()
@@ -493,6 +514,7 @@ class MiniCheetahEnv(gym.Env):
 
         # ── Assemble with REWARD_SCALES ──
         components = {
+            "r_alive": 1.0,          # constant survival bonus (legged_gym convention)
             "r_linvel": r_linvel,
             "r_yaw": r_yaw,
             "r_feet_air_time": r_feet_air_time,
