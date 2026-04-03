@@ -83,6 +83,7 @@ def _build_hier_args(
         n_layers=args.n_layers,
         n_experts=args.n_experts,
         history_len=args.history_len,
+        n_collect_envs=getattr(args, 'n_collect_envs', 4),
         device=args.device,
         verbose=args.verbose,
         ckpt_dir=str(run_dir / "hierarchical_training"),
