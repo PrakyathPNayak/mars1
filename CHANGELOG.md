@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+### Cycle 4 — Reward v6: Gait & Training Optimization (2025-XX-XX)
+
+**Diagnosis**: 10M-step MLP PPO training showed weak gait (r_gait=0.35-0.53),
+smoothness penalty hurting locomotion (r_smooth=-0.15 to -0.19/step), frozen
+exploration std (0.637 throughout), LR decaying to 1.4e-6, and only 40 gradient
+steps per rollout. Research into quadruped gait literature (SLIP models, legged_gym,
+Walk These Ways, DreamWaQ) informed the following changes.
+
+- **fix(reward)**: r_smooth penalty: L2 at -0.05 → L1 at -0.01 (5× reduction).
+  L2 quadratically penalized the big leg swings needed for proper trotting gait.
+  L1 is linear and tolerates cyclic motions (legged_gym convention: -0.01).
+- **fix(reward)**: r_gait scale: 2.0 → 3.5. Added stride frequency sub-reward
+  (exp kernel on touchdown count, peaks at trot=2). Gait now has 4 sub-components:
+  air_time(0.3) + trot_symmetry(0.25) + foot_clearance(0.25) + stride_freq(0.20).
+- **fix(reward)**: Trot symmetry: abs(diff)/2 → sqrt(abs(diff)/2) for smoother gradient.
+- **fix(reward)**: Foot clearance target: 5cm → 8cm (5cm was too low for natural gait).
+- **fix(reward)**: r_linvel scale: 4.0 → 5.0. Walk multiplier: 1.0 → 1.2. Run: 1.5 → 2.0.
+- **fix(reward)**: r_dof_vel scale: -2e-4 → -1e-4 (was constant -0.315/step, halved).
+- **fix(reward)**: Run mode r_smooth multiplier: -0.03 → 0.5× base (halves penalty for fast motion).
+- **fix(reward)**: Walk mode r_gait multiplier: 1.5 → 2.0 (proper gait is key for walking).
+- **fix(training)**: LR schedule: linear decay to 0 → linear decay to min 1e-5
+  (prevents clip_fraction→0 and std freezing at end of training).
+- **fix(training)**: log_std_init: -0.5 → -1.0 (initial std≈0.37, was frozen at 0.637).
+- **fix(training)**: n_epochs: 5 → 10, batch_size: 4096 → 2048
+  (160 gradient steps per rollout, was 40 — 4× more learning per trajectory).
+- **docs**: Updated architecture.md with v6 reward tables and training parameters.
+- **test**: All 39 tests pass (unit, integration, performance, regression).
+
 ### Cycle 3 — Reward v5: Multi-Skill Training Overhaul (2025-XX-XX)
 
 **Diagnosis**: Hierarchical Transformer+MoE PPO training failed at ~15M steps.

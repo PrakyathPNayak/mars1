@@ -1,0 +1,14 @@
+# Task List
+- [x] 0. Bootstrap environment
+- [x] 1. Research phase
+- [x] 2. Robot model generation
+- [x] 3. Gymnasium environment
+- [x] 4. Training pipeline
+- [x] 5. Visualization
+- [x] 6. Tests & evaluation
+- [x] 7. Entrypoints
+- [x] 8. Documentation
+- [x] 9. Final validation
+- [x] 10. Reward v5: Multi-skill training overhaul (OBS_DIM 49→54, 5 skills, mode-dependent rewards)
+- [ ] 11. Retrain hierarchical model with v5 reward
+- [ ] 12. Evaluate v5 trained model across all 5 skill modes

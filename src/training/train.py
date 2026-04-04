@@ -2,14 +2,15 @@
 PPO training pipeline for Unitree Go1 quadruped locomotion.
 
 Architecture: Actor/Critic MLP [2048, 1024, 512] with ELU activation
-Algorithm: PPO (clip=0.2, lr=3e-4→0 linear, 4096 steps/rollout)
+Algorithm: PPO (clip=0.2, lr=3e-4→1e-5 linear, 4096 steps/rollout)
 
 Key design choices (from legged_gym / Isaac Gym conventions):
   - CPU device: SB3 MLP PPO is faster on CPU than GPU for small networks
   - VecNormalize: running observation normalization (critical for locomotion)
   - ELU activation + orthogonal init: better gradient flow for locomotion
-  - log_std_init=-0.5: initial exploration std≈0.6 (matches ±0.5 action range)
-  - LR linear annealing: decays from 3e-4 to 0 over training
+  - log_std_init=-1.0: initial exploration std≈0.37 (tight for ±0.5 actions)
+  - LR linear annealing: decays from 3e-4 to min 1e-5 over training
+  - n_epochs=10, batch_size=2048: 160 gradient steps per rollout update
 
 Usage: python3 src/training/train.py --total-steps 5000000
 """
@@ -46,10 +47,15 @@ def make_env(rank=0, **kwargs):
     return _init
 
 
-def linear_schedule(initial_value: float):
-    """Linear decay from initial_value to 0 over training."""
+def linear_schedule(initial_value: float, min_value: float = 1e-5):
+    """Linear decay from initial_value to min_value over training.
+
+    The floor prevents learning from stopping entirely in the final
+    phase of training (previous runs showed clip_fraction → 0 and
+    std freezing when LR decayed unclamped to 0).
+    """
     def func(progress_remaining: float) -> float:
-        return progress_remaining * initial_value
+        return max(progress_remaining * initial_value, min_value)
     return func
 
 
@@ -157,7 +163,7 @@ def train(args):
         net_arch=dict(pi=[2048, 1024, 512], vf=[2048, 1024, 512]),
         activation_fn=torch.nn.ELU,    # better gradient flow than Tanh for locomotion
         ortho_init=True,               # orthogonal weight init (PPO standard)
-        log_std_init=-0.5,             # initial std ≈ 0.6 (matches ±0.5 action range)
+        log_std_init=-1.0,             # initial std ≈ 0.37 (tighter; -0.5 led to frozen std)
     )
 
     # SB3 MLP PPO: CPU is typically faster for smaller networks due to
@@ -170,19 +176,19 @@ def train(args):
         print(f"Resuming from: {args.resume}")
         model = PPO.load(args.resume, env=vec_env, device=device)
     else:
-        n_epochs = getattr(args, "n_epochs", 5)
+        n_epochs = getattr(args, "n_epochs", 10)
         # n_steps=4096: long rollouts improve GAE advantage estimates for locomotion.
-        # batch_size=4096: 32768 samples / 4096 = 8 minibatches per epoch.
-        # n_epochs=5: 8 × 5 = 40 gradient steps per rollout update.
-        # Matches legged_gym convention: moderate updates per rollout to
-        # avoid policy overshoot (high clip_fraction / KL divergence).
-        # At 10M env steps → ~305 rollouts → ~12,200 total gradient steps.
+        # batch_size=2048: 32768 samples / 2048 = 16 minibatches per epoch.
+        # n_epochs=10: 16 × 10 = 160 gradient steps per rollout update.
+        # Up from 40 (was n_epochs=5, batch_size=4096) — previous run showed
+        # clip_fraction→0 and stagnant learning; more gradient steps per
+        # rollout extract more from each collected trajectory.
         model = PPO(
             policy="MlpPolicy",
             env=vec_env,
             learning_rate=linear_schedule(3e-4),
             n_steps=4096,
-            batch_size=4096,
+            batch_size=2048,
             n_epochs=n_epochs,
             gamma=0.99,
             gae_lambda=0.95,
@@ -253,13 +259,13 @@ def train(args):
         "algorithm": "PPO",
         "net_arch": "pi=[2048,1024,512], vf=[2048,1024,512]",
         "activation_fn": "ELU",
-        "lr": "3e-4 linear decay",
+        "lr": "3e-4 linear decay (min 1e-5)",
         "clip": 0.2,
-        "batch_size": 4096,
+        "batch_size": 2048,
         "n_steps": 4096,
-        "n_epochs": getattr(args, "n_epochs", 5),
+        "n_epochs": getattr(args, "n_epochs", 10),
         "ent_coef": 0.01,
-        "log_std_init": -0.5,
+        "log_std_init": -1.0,
         "ortho_init": True,
         "device": device,
         "robot": "Unitree Go1 (mujoco_menagerie)",
@@ -277,8 +283,8 @@ def main():
     parser = argparse.ArgumentParser(description="Train Unitree Go1 PPO")
     parser.add_argument("--total-steps", type=int, default=10_000_000)
     parser.add_argument("--n-envs", type=int, default=8)
-    parser.add_argument("--n-epochs", type=int, default=5,
-                        help="PPO gradient update epochs per rollout (default: 5; legged_gym convention)")
+    parser.add_argument("--n-epochs", type=int, default=10,
+                        help="PPO gradient update epochs per rollout (default: 10)")
     parser.add_argument("--resume", type=str, default=None)
     parser.add_argument("--device", type=str, default="cpu",
                         help="Device: cpu, cuda, or auto (auto uses GPU if available)")

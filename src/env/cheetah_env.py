@@ -57,22 +57,28 @@ DEFAULT_STANCE = np.array([
 ], dtype=np.float32)
 
 # ══════════════════════════════════════════════════════════════════════
-#  Reward v5 — Skill-aware, simplified, no-clip redesign
+#  Reward v6 — Gait-focused, smoothness-fixed, training-tuned
 #
-#  Problems fixed from v4.1 (hierarchical training failure):
-#    1. 27 reward terms created noisy signal with conflicting gradients
-#    2. No skill encoding → policy couldn't distinguish modes with same
-#       target_height (stand vs walk at 0.27m)
-#    3. ONLY_POSITIVE_REWARDS clipped negatives → hid gradient info
-#    4. Mode-independent reward weights → wrong emphasis per skill
-#    5. No jump mode in training randomization
-#    6. Training std=1.49 (separate fix in train_hierarchical.py)
+#  Problems fixed from v5 (10M step training analysis):
+#    1. r_smooth L2 at -0.05 caused -0.15 to -0.19/step → choppy gait
+#       Fix: L1 at -0.01 (legged_gym uses -0.01; tolerates cyclic swings)
+#    2. r_gait only 0.35-0.53/step: clearance_target=5cm too low,
+#       trot_symmetry binary, no stride frequency incentive
+#       Fix: clearance→8cm, sqrt symmetry, +stride_freq, scale 2.0→3.5
+#    3. LR decayed to 1.4e-6 → clip_fraction→0, std frozen at 0.637
+#       Fix: min_lr=1e-5 floor, log_std_init=-1.0
+#    4. Only 40 grad steps/rollout (n_epochs=5, batch=4096)
+#       Fix: n_epochs=10, batch=2048 → 160 grad steps/rollout
+#    5. r_dof_vel constant -0.315/step dominated penalties
+#       Fix: scale -2e-4 → -1e-4 (halved)
+#    6. r_linvel too low for walk/run modes
+#       Fix: scale 4.0→5.0, walk mult 1.2, run mult 2.0
 #
-#  Design principles (v5):
-#    - 14 core terms (down from 27) with clear per-skill emphasis
-#    - Per-mode reward scale multipliers (Walk These Ways style)
-#    - No ONLY_POSITIVE_REWARDS: alive bonus (2.0) keeps most steps net+
-#    - Skill one-hot in observation: policy always knows what to do
+#  Research references (quadruped gait, analogous to bipedal LIPM/LOM):
+#    - SLIP model (Spring-Loaded Inverted Pendulum): stride frequency
+#    - legged_gym (Rudin 2022): r_smooth scale, clearance targets
+#    - Walk These Ways (Margolis 2023): per-mode multipliers, gait phase
+#    - DreamWaQ (Nahrendra 2023): gait oscillator / phase variables
 # ══════════════════════════════════════════════════════════════════════
 
 # Height targets per skill mode
@@ -98,9 +104,9 @@ ALIVE_SCALE_MAX = 3.0  # cap (e.g. 3× at full episode length)
 # ── Base reward scales (apply to all modes) ──────────────────────────
 REWARD_SCALES = {
     # Positive rewards (r_alive removed — now a multiplicative survival factor)
-    "r_linvel":         4.0,       # exp-kernel xy-vel tracking
+    "r_linvel":         5.0,       # exp-kernel xy-vel tracking (up from 4.0)
     "r_yaw":            1.5,       # exp-kernel yaw-rate tracking
-    "r_gait":           2.0,       # combined: trot symmetry + foot clearance + air time
+    "r_gait":           3.5,       # combined: trot symmetry + foot clearance + air time (up from 2.0)
     "r_posture":        2.0,       # exp-kernel joint-angle tracking (mode-dependent target)
     "r_body_height":    2.0,       # exp-kernel height tracking (centered at 0)
     "r_stillness":      1.0,       # reward for minimal motion (stand/crouch)
@@ -108,10 +114,10 @@ REWARD_SCALES = {
     # Penalties
     "r_orientation":   -1.0,       # gravity-tilt squared
     "r_torque":        -5e-6,      # torque squared
-    "r_smooth":        -0.05,      # action rate squared
+    "r_smooth":        -0.01,      # action rate (L1); was -0.05 L2 — over-penalised gait swings
     "r_joint_limit":   -2.0,       # joint limit proximity squared
     "r_lin_vel_z":     -0.5,       # vertical bounce squared
-    "r_dof_vel":       -2e-4,      # joint velocity squared (anti-shake)
+    "r_dof_vel":       -1e-4,      # joint velocity squared (halved; was -2e-4)
 }
 
 # ── Per-mode reward multipliers (Walk These Ways / multi-skill style) ──
@@ -128,23 +134,23 @@ MODE_REWARD_MULTIPLIERS = {
         "r_jump_phase": 0.0,
     },
     "walk": {
-        "r_linvel": 1.0,
+        "r_linvel": 1.2,
         "r_yaw": 1.0,
-        "r_gait": 1.5,
+        "r_gait": 2.0,         # amplified: proper gait is key for walking
         "r_posture": 1.0,
         "r_body_height": 1.0,
         "r_stillness": 0.0,    # no stillness reward when walking
         "r_jump_phase": 0.0,
     },
     "run": {
-        "r_linvel": 1.5,       # amplified: speed is the main goal
+        "r_linvel": 2.0,       # strongly amplified: speed is the main goal
         "r_yaw": 1.0,
-        "r_gait": 1.0,
+        "r_gait": 1.5,
         "r_posture": 0.5,      # relaxed: running posture differs
         "r_body_height": 0.5,
         "r_stillness": 0.0,
         "r_jump_phase": 0.0,
-        "r_smooth": -0.03,     # relax smoothness for fast motion
+        "r_smooth": 0.5,       # halve smoothness penalty for fast motion
     },
     "crouch": {
         "r_linvel": 0.3,       # low speed tracking
@@ -176,7 +182,7 @@ POSTURE_SIGMA = 0.5
 # Feet air-time threshold (seconds).
 FEET_AIR_TIME_THRESHOLD = 0.15
 
-# v5: No ONLY_POSITIVE_REWARDS. The alive bonus (2.0/step) and exp-kernel
+# v6: No ONLY_POSITIVE_REWARDS. Survival multiplier and exp-kernel
 # rewards keep most transitions net positive. Removing the clip lets the
 # policy learn from negative episodes instead of getting zero gradient.
 ONLY_POSITIVE_REWARDS = False
@@ -508,7 +514,7 @@ class MiniCheetahEnv(gym.Env):
     # ── Reward ──────────────────────────────────────────────────────
 
     def _compute_reward(self, action: np.ndarray) -> float:
-        """Reward v5: Skill-aware, simplified, mode-dependent scaling."""
+        """Reward v6: Gait-focused, L1 smoothness, stride frequency."""
         quat = self.data.qpos[3:7]
         base_linvel = self._quat_rotate_inv(quat, self.data.qvel[:3])
         base_angvel = self._quat_rotate_inv(quat, self.data.qvel[3:6])
@@ -550,15 +556,17 @@ class MiniCheetahEnv(gym.Env):
             air_time_reward = 0.0
         self._feet_air_time[contact_filt] = 0.0
 
-        # Trot symmetry sub-reward
+        # Trot symmetry sub-reward: diagonal pairs should alternate.
+        # In trot, when FR+RL are in stance, FL+RR are in swing (|diff|=2).
+        # sqrt makes gradient smoother for partial trot patterns.
         diag1 = float(contact_filt[0] + contact_filt[3])  # FR + RL
         diag2 = float(contact_filt[1] + contact_filt[2])  # FL + RR
-        trot_symmetry = abs(diag1 - diag2) / 2.0 if cmd_speed > 0.1 else 0.0
+        trot_symmetry = math.sqrt(abs(diag1 - diag2) / 2.0) if cmd_speed > 0.1 else 0.0
 
-        # Foot clearance sub-reward
+        # Foot clearance sub-reward (raised target for proper leg swings)
         foot_heights = self.data.site_xpos[self._foot_site_ids, 2]
         swing_mask = ~contact_filt
-        clearance_target = 0.05
+        clearance_target = 0.08  # 8cm (was 5cm — too low for natural gait)
         foot_clearance = 0.0
         if np.any(swing_mask) and cmd_speed > 0.1:
             swing_heights = foot_heights[swing_mask]
@@ -566,8 +574,17 @@ class MiniCheetahEnv(gym.Env):
                 np.clip(swing_heights, 0, clearance_target) / clearance_target
             ))
 
-        # Combined gait = weighted average of sub-components
-        r_gait = (0.4 * air_time_reward + 0.3 * trot_symmetry + 0.3 * foot_clearance)
+        # Stride frequency sub-reward: encourages regular stepping cadence.
+        # Counts feet that touched down this step; ideal trot = 2 touchdowns
+        # per cycle. Reward peaks when exactly 2 feet make first contact.
+        n_touchdowns = float(np.sum(first_contact))
+        stride_freq_reward = math.exp(-0.5 * (n_touchdowns - 2.0) ** 2) if cmd_speed > 0.1 else 0.0
+
+        # Combined gait = weighted sum of four sub-components
+        r_gait = (0.3 * air_time_reward
+                  + 0.25 * trot_symmetry
+                  + 0.25 * foot_clearance
+                  + 0.2 * stride_freq_reward)
 
         # ── 4. Posture tracking (exp kernel on joint angles) ──
         hip_q = q[HIP_JOINT_INDICES]
@@ -599,8 +616,8 @@ class MiniCheetahEnv(gym.Env):
         # ── 9. Torque penalty ──
         r_torque = float(np.sum(tau ** 2))
 
-        # ── 10. Action smoothness penalty ──
-        r_smooth = float(np.sum((action - self.prev_action) ** 2))
+        # ── 10. Action smoothness penalty (L1 — tolerates cyclic gait swings) ──
+        r_smooth = float(np.sum(np.abs(action - self.prev_action)))
 
         # ── 11. Joint limit proximity penalty ──
         jnt_range = self.model.jnt_range[1:NUM_JOINTS + 1]

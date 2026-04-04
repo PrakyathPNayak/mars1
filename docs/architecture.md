@@ -74,8 +74,9 @@ Paper-inspired architecture combining insights from 55+ papers:
 ## Environments
 
 ### Base Environment: MiniCheetahEnv (cheetah_env.py)
-- Observation: 48 dimensions
+- Observation: 54 dimensions (49 base + 5 skill one-hot)
 - Flat ground, velocity command tracking, domain randomization
+- 5 skill modes: stand, walk, run, crouch, jump
 
 ### Terrain Environment: AdvancedTerrainEnv (terrain_env.py)
 - Observation: 57 dimensions (base 48 + 8 terrain encoding + 1 phase)
@@ -84,7 +85,7 @@ Paper-inspired architecture combining insights from 55+ papers:
 - Foot contact detection, push perturbations, skill-dependent rewards
 - Curriculum: AdvancedTerrainCurriculum (terrain type + difficulty + skill progression)
 
-## Observation Space (48 base / 57 terrain)
+## Observation Space (54 base / 57 terrain)
 | Range   | Content                               |
 |---------|---------------------------------------|
 | [0:12]  | Joint positions (rad)                 |
@@ -93,7 +94,8 @@ Paper-inspired architecture combining insights from 55+ papers:
 | [27:30] | Base angular velocity (rad/s, body)   |
 | [30:33] | Gravity vector in body frame          |
 | [33:45] | Previous action                       |
-| [45:48] | Velocity command (vx, vy, wz)         |
+| [45:49] | Command (vx, vy, wz, target_height)   |
+| [49:54] | Skill one-hot encoding (5 modes)      |
 | [48:56] | Terrain encoding (terrain env only)   |
 | [56]    | Episode phase (terrain env only)      |
 
@@ -102,63 +104,67 @@ Delta joint positions from default stance, clipped to ±0.5 rad.
 Applied via PD controller (kp=100, kd=0; MuJoCo joint damping=2)
 at 500 Hz physics (n_substeps=10 at 50 Hz control).
 
-## Reward Function (v3)
+## Reward Function (v6)
 
-Reward design informed by legged_gym (Rudin 2022), Humanoid-Gym (Gu 2024),
-and diagnostic analysis of stand/crouch failure modes.
+Reward v6 — Gait-focused redesign based on training log analysis at 10M steps.
+Informed by legged_gym (Rudin 2022), Walk These Ways (Margolis 2023),
+DreamWaQ (Nahrendra 2023), and SLIP (Spring-Loaded Inverted Pendulum) models.
 
-### Key v3 Changes from v2
-| Issue | Root Cause | Fix |
+### Key v6 Changes from v5
+| Issue (from 10M-step logs) | Root Cause | Fix |
 |-------|-----------|-----|
-| Shaking on stand | No joint velocity penalty | Added `r_dof_vel` (sum of joint_vel²) |
-| Reward increased while shaking | Penalties too weak vs tracking reward | 6× `r_smooth`, 10× `r_body_acc`, 4× `r_action_jerk` |
-| Crouch not working | r_body_height always positive (exp kernel) | Centered at 0: `exp(-err²/σ) - 1.0` |
-| No crouch gradient | r_posture exp kernel too narrow (σ=0.5) | Flipped to negative squared-error penalty |
-| Crouch conflicts | r_stand_still penalized joint deviation in crouch mode | Gated by `mode not in (crouch, jump)` |
-| Model never sees crouch | command_mode always "stand" during training | Randomized mode every reset + resample |
+| r_smooth = -0.15 to -0.19/step (hurting gait) | L2 penalty (-0.05) quadratically punishes big leg swings | L1 penalty at -0.01 (5× reduction, linear) |
+| r_gait only 0.35-0.53/step | clearance_target=5cm too low; binary trot symmetry; weak sub-components | clearance→8cm, sqrt trot symmetry, +stride_freq sub-reward, scale 2.0→3.5 |
+| std frozen at 0.637 throughout training | LR decayed to 1.4e-6; log_std_init=-0.5 already close to final value | log_std_init=-1.0, LR floor=1e-5 |
+| clip_fraction → 0 at end of training | LR linear decay to 0 | Added min_lr=1e-5 floor |
+| Only 40 gradient steps per rollout | batch_size=4096, n_epochs=5 | batch_size=2048, n_epochs=10 → 160 grad steps/rollout |
+| r_dof_vel constant -0.315/step | Scale -2e-4 too aggressive for joint oscillation | Halved to -1e-4 |
 
-### Positive Rewards (~6/step at convergence)
-| Component | Scale | Formula | Purpose |
-|-----------|-------|---------|---------|
-| r_linvel | 4.0 | exp(-‖v_xy_err‖²/0.25) | Velocity tracking (combined xy) |
-| r_yaw | 2.0 | exp(-w_z_err²/0.25) | Yaw rate tracking |
-| r_feet_air_time | 2.0 | Σ(air_time − 0.15) @ first contact | Gait frequency |
-| r_gait_phase | 1.5 | |diag1 − diag2| / 2 | Trot symmetry |
-| r_foot_clearance | 0.5 | mean(swing_height / 0.05) | Foot lift |
+### Reward Components (13 terms + survival multiplier)
+
+| Component | Base Scale | Formula | Purpose |
+|-----------|-----------|---------|---------|
+| r_linvel | 5.0 | exp(-‖v_xy_err‖²/0.25) | Velocity tracking |
+| r_yaw | 1.5 | exp(-w_z_err²/0.25) | Yaw rate tracking |
+| r_gait | 3.5 | 0.3×air_time + 0.25×trot_sym + 0.25×clearance + 0.2×stride_freq | Combined gait quality |
+| r_posture | 2.0 | exp(-joint_err/0.5) | Joint angle targets per mode |
 | r_body_height | 2.0 | exp(-Δh²/0.02) − 1.0 | Height tracking (0 at target) |
-| r_jump_phase | 1.0 | FSM phase reward | Jump behavior |
-| r_alive | 0.2 | constant | Survival tie-breaker |
-
-### Penalties
-| Component | Scale | Formula | Purpose |
-|-----------|-------|---------|---------|
-| r_posture | −1.5 | Σ(hip_err² + knee_err²) | Joint angle targets per mode |
-| r_dof_vel | −0.1 | Σ(joint_vel²) | **Anti-shake** (key addition) |
-| r_stand_still | −3.0 | Σ|q − default| if standing, mode ≠ crouch | Stand stability |
-| r_height | −5.0 | (base_z − target)² | Height penalty |
-| r_orientation | −2.0 | Σ(gravity_body_xy²) | Anti-tilt |
-| r_lin_vel_z | −2.0 | vz² | Anti-bounce |
-| r_smooth | −0.3 | Σ(Δaction²) | Action rate (6× from v2) |
-| r_body_acc | −0.005 | Σ(body_acc²) | Anti-shake (10× from v2) |
-| r_action_jerk | −0.02 | Σ(action_jerk²) | 2nd-order smoothness (4× from v2) |
-| r_cmd_vel_error | −1.0 | lin_vel_error | Velocity error |
-| r_crouch_penalty | −5.0 | Height window detection | Anti-unwanted-crouch |
-| r_joint_limit | −5.0 | Proximity squared | Joint limits |
-| r_abduction | −2.0 | Σ(abd_q²) | Anti-splay |
-| r_hip_excess | −3.0 | Σ(clip(hip − 1.3, 0)²) | Anti-belly-sit |
+| r_stillness | 1.0 | exp(-(joint²×0.001+body²)/0.5) | Stand/crouch stillness |
+| r_jump_phase | 3.0 | FSM: crouch→launch→airborne→land | Jump behavior |
+| r_orientation | −1.0 | Σ(gravity_body_xy²) | Anti-tilt |
 | r_torque | −5e-6 | Σ(tau²) | Energy |
-| r_power | −1e-5 | Σ|tau·qvel| | Mechanical power |
-| r_ang_vel_xy | −0.01 | Σ(wx² + wy²) | Roll/pitch rate |
-| r_joint_acc | −5e-8 | Σ(joint_acc²) | Joint acceleration |
-| r_foot_strike_vel | −0.005 | Σ(foot_z_vel²) @ contact | Impact |
+| r_smooth | −0.01 | Σ\|Δaction\| (L1) | Action rate (was L2 at -0.05) |
+| r_joint_limit | −2.0 | Proximity squared | Joint limits |
+| r_lin_vel_z | −0.5 | vz² | Anti-bounce |
+| r_dof_vel | −1e-4 | Σ(joint_vel²) | Joint velocity (halved) |
 
-### Command Mode Randomization (v3)
+**Survival multiplier**: total_reward × min(1 + √(t/T) × 2, 3.0)
+
+### Gait Sub-Components (v6)
+| Sub-Component | Weight | Description |
+|---------------|--------|-------------|
+| Air time reward | 0.30 | Σ(air_time − 0.15s) at first contact |
+| Trot symmetry | 0.25 | √(\|diag_FR+RL − diag_FL+RR\| / 2) — soft gradient |
+| Foot clearance | 0.25 | mean(swing_height / 0.08m) — raised from 5cm |
+| Stride frequency | 0.20 | exp(-0.5×(n_touchdowns − 2)²) — peaks at trot cadence |
+
+### Per-Mode Reward Multipliers (Walk These Ways style)
+| Mode | r_linvel | r_gait | r_posture | r_smooth | r_stillness |
+|------|----------|--------|-----------|----------|-------------|
+| stand | 0.3 | 0.0 | 3.0 | 1.0 | 3.0 |
+| walk | 1.2 | 2.0 | 1.0 | 1.0 | 0.0 |
+| run | 2.0 | 1.5 | 0.5 | 0.5 | 0.0 |
+| crouch | 0.3 | 0.0 | 3.0 | 1.0 | 2.0 |
+| jump | 0.2 | 0.0 | 0.5 | 1.0 | 0.0 |
+
+### Command Mode Randomization (v5+)
 During training, `command_mode` is randomly sampled at each reset and
 every 200 steps (4s at 50 Hz) with mode-appropriate velocity ranges:
-- stand (15%): 50% zero velocity, 50% low velocity
-- walk (15%), trot (25%), explore (10%): full range
-- run (15%): high velocity only (0.5–2.0 m/s)
-- crouch (20%): low velocity only (−0.1–0.3 m/s)
+- stand (20%): 50% zero velocity, 50% low velocity
+- walk (25%): moderate velocity (0.2–1.0 m/s)
+- run (20%): high velocity only (1.0–2.5 m/s)
+- crouch (15%): low velocity only (−0.1–0.2 m/s)
+- jump (20%): forward (0.0–0.5 m/s)
 
 ### Diagnostic Validation
 With zero action (200 steps):
@@ -169,11 +175,13 @@ With zero action (200 steps):
 
 ## Training (PPO)
 - Network: Actor/Critic MLP [2048, 1024, 512] with ELU activation
-- PPO: clip=0.2, lr=3e-4 (linear decay), batch=4096, epochs=5, gamma=0.99
+- PPO: clip=0.2, lr=3e-4 → min 1e-5 (linear decay with floor), batch=2048, epochs=10, gamma=0.99
 - 8 parallel environments, 4096 steps per rollout
-- Domain randomization: mass ±15%, friction 0.5–1.5×, obs noise 2%
-- MLP expert: 3M steps default
-- Hierarchical (BC + Transformer PPO): 100 BC epochs + 10M PPO steps
+- Gradient budget: 16 minibatches × 10 epochs = 160 grad steps/rollout → ~48.8K total at 10M steps
+- log_std_init=-1.0 (initial std≈0.37)
+- Domain randomization: mass ±15%, friction 0.8–2.0×, obs noise 2%
+- MLP expert: 10M steps default
+- Hierarchical (BC + Transformer PPO): 100 BC epochs + 15M PPO steps
 
 ## Meta-Learning Assessment
 
