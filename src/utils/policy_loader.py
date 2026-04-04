@@ -13,7 +13,43 @@ Usage:
 """
 import os
 import numpy as np
+from collections import deque
 from typing import Callable, Optional, Tuple
+
+# Observation dimension produced by MiniCheetahEnv (single step, no history)
+_BASE_OBS_DIM = 49
+
+
+class HistoryAwarePolicy:
+    """Wraps a history-based policy so callers can pass single-step raw observations.
+
+    At inference time the env is used directly (no HistoryWrapper), so we
+    replicate what HistoryWrapper does during training: maintain a rolling
+    deque of the last `history_len` normalized observations and concatenate
+    them before passing to the inner policy.
+    """
+
+    def __init__(self, policy, normalize_fn: Callable, history_len: int):
+        self._policy = policy
+        self._normalize = normalize_fn
+        self._history_len = history_len
+        self._history: deque = deque(maxlen=history_len)
+
+    def reset_history(self, obs: np.ndarray) -> None:
+        """Fill history buffer with the initial observation (call after env.reset())."""
+        norm = self._normalize(obs)
+        self._history.clear()
+        for _ in range(self._history_len):
+            self._history.append(norm.copy())
+
+    def predict(self, obs: np.ndarray, deterministic: bool = True):
+        """Accept a single raw observation, maintain history, return action."""
+        if len(self._history) == 0:
+            self.reset_history(obs)
+        norm = self._normalize(obs)
+        self._history.append(norm.copy())
+        stacked = np.concatenate(list(self._history)).astype(np.float32)
+        return self._policy.predict(stacked, deterministic=deterministic)
 
 
 def load_policy_for_inference(
@@ -63,6 +99,16 @@ def load_policy_for_inference(
         print("[WARN] No checkpoint found. Using PD standing controller.")
         return None, identity
 
+    # Detect whether this is a history-based policy (hierarchical Transformer).
+    # If the policy's observation space is larger than _BASE_OBS_DIM and evenly
+    # divisible, it was trained with HistoryWrapper (history_len × obs_dim).
+    policy_obs_dim = policy.observation_space.shape[0]
+    history_len = 1
+    if policy_obs_dim > _BASE_OBS_DIM and policy_obs_dim % _BASE_OBS_DIM == 0:
+        history_len = policy_obs_dim // _BASE_OBS_DIM
+        print(f"[INFO] History-based policy detected (obs_dim={policy_obs_dim}, "
+              f"history_len={history_len}, base_obs_dim={_BASE_OBS_DIM})")
+
     # Load VecNormalize stats for observation normalization
     norm_path = "checkpoints/vec_normalize.pkl"
     if os.path.exists(norm_path):
@@ -96,11 +142,20 @@ def load_policy_for_inference(
                 return np.clip(normalized, -clip_obs, clip_obs).astype(np.float32)
 
             print(f"[OK] Loaded VecNormalize stats: {norm_path}")
-            return policy, normalize_fn
         except Exception as e:
             print(f"[WARN] Could not load VecNormalize stats: {e}")
-            return policy, identity
+            normalize_fn = identity
     else:
         print("[INFO] No VecNormalize stats found (checkpoints/vec_normalize.pkl). "
               "Using raw observations.")
-        return policy, identity
+        normalize_fn = identity
+
+    # Wrap history-based policies so callers can pass single-step raw obs.
+    # The wrapper maintains the rolling deque and applies normalization internally.
+    if history_len > 1:
+        wrapped = HistoryAwarePolicy(policy, normalize_fn, history_len)
+        print(f"[INFO] Wrapped in HistoryAwarePolicy (history_len={history_len}). "
+              "Call policy.reset_history(obs) after env.reset().")
+        return wrapped, identity
+
+    return policy, normalize_fn

@@ -58,6 +58,9 @@ def run(checkpoint_path=None, use_policy=True):
 
     obs, _ = env.reset()
     env.set_command(0.0, 0.0, 0.0, "stand")
+    # Prime the history buffer for history-based (hierarchical) policies.
+    if policy is not None and hasattr(policy, 'reset_history'):
+        policy.reset_history(obs)
 
     # Launch MuJoCo viewer WITHOUT key_callback — input comes from terminal
     viewer = mujoco.viewer.launch_passive(env.model, env.data)
@@ -116,6 +119,8 @@ def run(checkpoint_path=None, use_policy=True):
                 obs, _ = env.reset()
                 env.set_command(0.0, 0.0, 0.0, "stand")
                 ctrl.reset_motion()
+                if policy is not None and hasattr(policy, 'reset_history'):
+                    policy.reset_history(obs)
                 ep_reward = 0.0
                 ep_num += 1
 
