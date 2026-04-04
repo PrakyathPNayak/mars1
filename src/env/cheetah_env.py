@@ -91,10 +91,13 @@ CROUCH_HEIGHT_THRESHOLD = 0.22  # below this counts as "crouching"
 # Go1 approximate total mass (kg) — for cost-of-transport scaling
 ROBOT_MASS = 12.74
 
+# Survival multiplier: scales total reward by sqrt(t / T), encouraging longer
+# episodes. Capped so it never dominates. At t=0 → 1.0×; at t=T → ALIVE_SCALE_MAX×.
+ALIVE_SCALE_MAX = 3.0  # cap (e.g. 3× at full episode length)
+
 # ── Base reward scales (apply to all modes) ──────────────────────────
 REWARD_SCALES = {
-    # Positive rewards
-    "r_alive":          2.0,       # survival baseline (strong, prevents death spiral)
+    # Positive rewards (r_alive removed — now a multiplicative survival factor)
     "r_linvel":         4.0,       # exp-kernel xy-vel tracking
     "r_yaw":            1.5,       # exp-kernel yaw-rate tracking
     "r_gait":           2.0,       # combined: trot symmetry + foot clearance + air time
@@ -612,16 +615,12 @@ class MiniCheetahEnv(gym.Env):
         # ── 13. Joint velocity penalty (anti-shake) ──
         r_dof_vel = float(np.sum(joint_vel ** 2))
 
-        # ── 14. Alive bonus ──
-        # (always 1.0, scaled by REWARD_SCALES)
-
         # ── Update tracking state ──
         self._prev_base_linvel = base_linvel.copy()
         self._prev_foot_heights = foot_heights.copy()
 
         # ── Assemble with mode-dependent reward scales ──
         raw_components = {
-            "r_alive":       1.0,
             "r_linvel":      r_linvel,
             "r_yaw":         r_yaw,
             "r_gait":        r_gait,
@@ -651,6 +650,17 @@ class MiniCheetahEnv(gym.Env):
         if ONLY_POSITIVE_REWARDS:
             total = max(total, 0.0)
 
+        # ── Survival multiplier: sqrt(t / T), capped at ALIVE_SCALE_MAX ──
+        # Grows from 1.0 at step 0 to ALIVE_SCALE_MAX at t=episode_length,
+        # encouraging the policy to stay alive longer without a fixed additive bonus.
+        t_frac = self.step_count / max(self.episode_length, 1)
+        survival_mult = min(
+            1.0 + math.sqrt(t_frac) * (ALIVE_SCALE_MAX - 1.0),
+            ALIVE_SCALE_MAX,
+        )
+        total *= survival_mult
+
+        scaled_components["survival_mult"] = survival_mult
         scaled_components["r_total"] = total
         self._last_reward_components = scaled_components
 
