@@ -670,9 +670,9 @@ class MiniCheetahEnv(gym.Env):
         # ── Survival multiplier: sqrt(t / T), capped at ALIVE_SCALE_MAX ──
         # Grows from 1.0 at step 0 to ALIVE_SCALE_MAX at t=episode_length,
         # encouraging the policy to stay alive longer without a fixed additive bonus.
-        t_frac = self.step_count / max(self.episode_length, 1)
+        t_frac = self.step_count / max(self.episode_length * 2, 1) # avoid div by zero
         survival_mult = min(
-            1.0 + math.sqrt(t_frac) * (ALIVE_SCALE_MAX - 1.0),
+            1.0 + math.sqrt(t_frac) * (ALIVE_SCALE_MAX), # was edited for more aggressive survival reward
             ALIVE_SCALE_MAX,
         )
         total *= survival_mult
