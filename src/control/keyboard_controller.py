@@ -27,8 +27,8 @@ class KeyboardController:
         self.vx = 0.0
         self.vy = 0.0
         self.wz = 0.0
-        self.mode = "trot"
-        self.speed_level = self.SPEED_TROT
+        self.mode = "walk"
+        self.speed_level = self.SPEED_WALK
         self.crouching = False
         self.jumping = False
         self.exploring = False
@@ -107,19 +107,19 @@ class KeyboardController:
         if key_str == "1":
             self.speed_level = self.SPEED_WALK; self.mode = "walk"
         elif key_str == "2":
-            self.speed_level = self.SPEED_TROT; self.mode = "trot"
+            self.speed_level = self.SPEED_TROT; self.mode = "walk"
         elif key_str == "3":
             self.speed_level = self.SPEED_RUN; self.mode = "run"
         elif key_str == "j":
             self.jumping = True; self.mode = "jump"
         elif key_str == "ctrl" or key_str == "ctrl_l":
             self.crouching = not self.crouching
-            self.mode = "crouch" if self.crouching else "trot"
+            self.mode = "crouch" if self.crouching else "walk"
         elif key_str == "space":
             self.vx = self.vy = self.wz = 0.0; self.mode = "stand"
         elif key_str == "x":
             self.exploring = not self.exploring
-            self.mode = "explore" if self.exploring else "trot"
+            self.mode = "explore" if self.exploring else "walk"
 
     @staticmethod
     def _key_to_str(key) -> Optional[str]:

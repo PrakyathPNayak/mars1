@@ -140,7 +140,7 @@ def train(args):
         n_layers=n_layers,
         n_experts=n_experts,
         history_len=history_len,
-        obs_dim=49,
+        obs_dim=54,
     )
 
     if args.resume and os.path.exists(args.resume):

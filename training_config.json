@@ -24,27 +24,25 @@
   "device": "cpu",
   "vec_normalize": "norm_obs=True, norm_reward=False, clip_obs=100",
   "episode_length": 2000,
-  "obs_dim": 49,
+  "obs_dim": 54,
   "act_dim": 12,
   "tracking_sigma": 0.25,
   "body_height_sigma": 0.02,
-  "only_positive_rewards": true,
+  "only_positive_rewards": false,
   "command_resample_interval": 200,
   "command_mode_randomization": {
     "modes": [
       "stand",
       "walk",
-      "trot",
       "run",
-      "explore",
-      "crouch"
+      "crouch",
+      "jump"
     ],
     "weights": [
-      0.15,
-      0.15,
+      0.20,
       0.25,
+      0.20,
       0.15,
-      0.10,
       0.20
     ]
   },

@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### Cycle 3 — Reward v5: Multi-Skill Training Overhaul (2025-XX-XX)
+
+**Diagnosis**: Hierarchical Transformer+MoE PPO training failed at ~15M steps.
+Root causes: action std=1.49 (never learned), LR decayed to ~1e-9, no skill encoding
+in observations, 27 noisy reward terms, ONLY_POSITIVE_REWARDS clipping gradients.
+
+- **fix(env)**: Observation space expanded from 49 → 54 dims. Added 5-dim skill one-hot
+  encoding (stand/walk/run/crouch/jump) as the last 5 observation elements.
+- **fix(reward)**: Redesigned reward function (v5): 14 terms (down from 27), mode-dependent
+  multipliers (Walk These Ways style). Each skill mode has its own reward emphasis.
+- **fix(reward)**: Disabled `ONLY_POSITIVE_REWARDS` — was hiding gradient information
+  by clipping negative rewards to zero.
+- **fix(env)**: Removed "trot" and "explore" modes. Consolidated to 5 canonical skills:
+  stand, walk, run, crouch, jump.
+- **fix(env)**: Added jump finite state machine (FSM) with 5 phases:
+  idle → crouch → launch → airborne → land. Phase-specific rewards and height targets.
+- **fix(training)**: Learning rate schedule now has `min_lr=1e-5` floor (was decaying to 0).
+- **fix(training)**: `log_std_init` changed from -0.5 to -1.0 (std: 0.61 → 0.37).
+  Prevents chaotic exploration that prevented any learning.
+- **feat(env)**: Mode-dependent reward multipliers: stand/crouch emphasize posture+stillness;
+  walk/run emphasize velocity tracking+gait; jump uses FSM phase rewards.
+- **feat(env)**: Adaptive termination: crouch mode uses lower min_height threshold (0.08m).
+- **refactor**: Updated all downstream code for OBS_DIM=54: advanced_policy.py, sb3_integration.py,
+  train_hierarchical.py, train_advanced.py, policy_loader.py, curriculum.py, keyboard_controller.py.
+- **test**: All 39 tests pass (unit, integration, performance, regression).
+
 ### Cycle 2 — Body-Frame Velocity Tracking (2025-XX-XX)
 - **fix(reward)**: Velocity tracking reward now computed in body frame (Isaac Gym convention).
   Before: world-frame velocity vs world-frame command caused confusing reward signal when robot yawed.

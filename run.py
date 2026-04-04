@@ -102,7 +102,7 @@ def main():
         obs, _ = env.reset()
         for step in range(2000):
             vx, vy, wz = ctrl.get_command(0.0)
-            env.set_command(vx, vy, wz, "explore")
+            env.set_command(vx, vy, wz, "walk")
             action = np.zeros(12, dtype=np.float32)
             obs, _, done, truncated, _ = env.step(action)
             if done or truncated:

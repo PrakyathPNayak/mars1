@@ -159,10 +159,10 @@ class TestSuite:
         from src.env.cheetah_env import MiniCheetahEnv
         env = MiniCheetahEnv(render_mode="none", randomize_domain=False)
         obs, info = env.reset(seed=42)
-        assert obs.shape == (49,), f"Expected (49,), got {obs.shape}"
+        assert obs.shape == (54,), f"Expected (54,), got {obs.shape}"
         assert obs.dtype == np.float32
         env.close()
-        return {"obs_dim": 49}
+        return {"obs_dim": 54}
 
     def _test_env_step(self):
         from src.env.cheetah_env import MiniCheetahEnv
@@ -170,7 +170,7 @@ class TestSuite:
         env.reset(seed=42)
         action = np.zeros(12, dtype=np.float32)
         obs, reward, done, trunc, info = env.step(action)
-        assert obs.shape == (49,)
+        assert obs.shape == (54,)
         assert isinstance(reward, float)
         env.close()
         return {"reward": reward}
@@ -186,7 +186,7 @@ class TestSuite:
     def _test_observation_space(self):
         from src.env.cheetah_env import MiniCheetahEnv
         env = MiniCheetahEnv(render_mode="none", randomize_domain=False)
-        assert env.observation_space.shape == (49,)
+        assert env.observation_space.shape == (54,)
         obs, _ = env.reset()
         assert env.observation_space.contains(obs)
         env.close()
@@ -300,7 +300,7 @@ class TestSuite:
         from src.training.advanced_policy import HierarchicalTransformerPolicy
         policy = HierarchicalTransformerPolicy(d_model=64, n_transformer_layers=2,
                                                 n_experts=2)
-        obs = torch.randn(2, 1, 49)
+        obs = torch.randn(2, 1, 54)
         step_count = torch.zeros(2)
         out = policy(obs, step_count=step_count)
         assert out["action_mean"].shape == (2, 12)
@@ -319,7 +319,7 @@ class TestSuite:
         assert phase.shape == (1, d)
 
         te = TerrainEstimator(d_model=d)
-        obs_hist = torch.randn(2, 8, 49)  # (batch, seq, obs_dim)
+        obs_hist = torch.randn(2, 8, 54)  # (batch, seq, obs_dim)
         feat, lat = te(obs_hist)
         assert feat.shape == (2, d)
         assert lat.shape == (2, 8)
@@ -407,7 +407,7 @@ class TestSuite:
             TransformerActorCriticPolicy, env,
             n_steps=32, batch_size=32, verbose=0, device="cpu",
             policy_kwargs=dict(d_model=64, n_heads=2, n_layers=1, n_experts=2,
-                               history_len=8, obs_dim=49),
+                               history_len=8, obs_dim=54),
         )
         model.learn(total_timesteps=64)
         n_params = sum(p.numel() for p in model.policy.parameters())
@@ -421,9 +421,9 @@ class TestSuite:
         wrapped = HistoryWrapper(env, history_len=8)
         obs, _ = wrapped.reset()
         # HistoryWrapper may return (history_len, obs_dim) or (history_len * obs_dim,)
-        assert obs.size == 8 * 49, f"Expected 392 elements, got {obs.size}"
+        assert obs.size == 8 * 54, f"Expected 432 elements, got {obs.size}"
         obs2, _, _, _, _ = wrapped.step(np.zeros(12, dtype=np.float32))
-        assert obs2.size == 8 * 49, f"Expected 392 elements, got {obs2.size}"
+        assert obs2.size == 8 * 54, f"Expected 432 elements, got {obs2.size}"
         wrapped.close()
         return {"obs_shape": list(obs.shape)}
 
@@ -451,7 +451,7 @@ class TestSuite:
         self.run("perf_terrain_gaps", "performance", self._perf_terrain_gaps)
         self.run("perf_terrain_mixed", "performance", self._perf_terrain_mixed)
         self.run("perf_skill_walk", "performance", lambda: self._perf_skill("walk"))
-        self.run("perf_skill_trot", "performance", lambda: self._perf_skill("trot"))
+        self.run("perf_skill_trot", "performance", lambda: self._perf_skill("walk"))
         self.run("perf_skill_run", "performance", lambda: self._perf_skill("run"))
         self.run("perf_skill_jump", "performance", lambda: self._perf_skill("jump"))
         self.run("perf_skill_crouch", "performance", lambda: self._perf_skill("crouch"))
@@ -516,7 +516,7 @@ class TestSuite:
         from src.env.terrain_env import AdvancedTerrainEnv
         env = AdvancedTerrainEnv(render_mode="none", terrain_type=terrain_type,
                                   difficulty=difficulty, randomize_terrain=False,
-                                  randomize_skill=False, skill_mode="trot")
+                                  randomize_skill=False, skill_mode="walk")
         m = self._run_episodes(env, n_episodes=5, max_steps=200)
         m.scenario = f"terrain_{terrain_type}"
         env.close()

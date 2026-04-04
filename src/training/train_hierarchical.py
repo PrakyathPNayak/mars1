@@ -198,7 +198,7 @@ def behavioral_cloning_transformer(
     n_heads: int = 4,
     n_layers: int = 3,
     history_len: int = 16,
-    obs_dim: int = 49,
+    obs_dim: int = 54,
     act_dim: int = 12,
     bc_epochs: int = 100,
     bc_lr: float = 5e-4,
@@ -368,11 +368,17 @@ def train_ppo_hierarchical(args, bc_extractor_state: dict):
         n_layers=args.n_layers,
         n_experts=args.n_experts,
         history_len=args.history_len,
-        obs_dim=49,
+        obs_dim=54,
     )
 
     def _hier_lr(progress_remaining: float) -> float:
-        """Warmup + cosine decay schedule, serialization-safe (no outer closure)."""
+        """Warmup + cosine decay with minimum LR floor.
+
+        v5 fix: previous cosine decayed to 0, killing gradients.
+        Now maintains a floor of 1e-5 so the policy can always learn.
+        """
+        peak_lr = 3e-4
+        min_lr = 1e-5
         progress = 1.0 - float(progress_remaining)
         warmup_frac = 0.05
         if progress < warmup_frac:
@@ -380,7 +386,7 @@ def train_ppo_hierarchical(args, bc_extractor_state: dict):
         else:
             decay_progress = (progress - warmup_frac) / (1.0 - warmup_frac)
             factor = 0.5 * (1.0 + np.cos(np.pi * decay_progress))
-        return 3e-4 * factor
+        return max(peak_lr * factor, min_lr)
 
     model = PPO(
         policy=TransformerActorCriticPolicy,
@@ -594,7 +600,7 @@ def train(args):
         n_heads=4,
         n_layers=args.n_layers,
         history_len=args.history_len,
-        obs_dim=49,
+        obs_dim=54,
         act_dim=12,
         bc_epochs=args.bc_epochs,
         bc_lr=args.bc_lr,

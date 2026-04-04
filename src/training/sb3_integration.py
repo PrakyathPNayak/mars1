@@ -346,7 +346,7 @@ class TransformerActorCriticPolicy(ActorCriticPolicy):
 
         self.action_dist = DiagGaussianDistribution(latent_dim_pi)
         self.action_net, self.log_std = self.action_dist.proba_distribution_net(
-            latent_dim=latent_dim_pi, log_std_init=-0.5
+            latent_dim=latent_dim_pi, log_std_init=-1.0  # v5: lower std (0.37) to prevent chaotic exploration
         )
         self.value_net = nn.Linear(latent_dim_vf, 1)
 

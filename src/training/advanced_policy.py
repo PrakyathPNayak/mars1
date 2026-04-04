@@ -29,12 +29,12 @@ from typing import Dict, List, Optional, Tuple
 
 # ── Constants ─────────────────────────────────────────────────────────
 
-OBS_DIM = 49
+OBS_DIM = 54
 ACT_DIM = 12
 HISTORY_LEN = 16  # Number of past observations to keep
 
 # Sensory groups for structured attention
-# Must match cheetah_env.py observation layout exactly (49 dims).
+# Must match cheetah_env.py observation layout exactly (54 dims).
 SENSORY_GROUPS = {
     "joint_pos":   (0,  12),   # 12 joint positions
     "joint_vel":   (12, 24),   # 12 joint velocities
@@ -43,6 +43,7 @@ SENSORY_GROUPS = {
     "gravity":     (30, 33),   # 3 projected gravity
     "prev_action": (33, 45),   # 12 previous action
     "command":     (45, 49),   # 4: vx, vy, wz, target_height
+    "skill_cmd":   (49, 54),   # 5: one-hot skill encoding
 }
 
 # Leg symmetry mapping: FR<->FL, RR<->RL (3 joints per leg)
@@ -214,6 +215,7 @@ class SymmetryAugmenter(nn.Module):
         sign[46] = -1.0  # vy_cmd
         sign[47] = -1.0  # wz_cmd
         # sign[48] = +1.0 (target_height is symmetric, no flip needed)
+        # sign[49:54] = +1.0 (skill one-hot is symmetric, no flip needed)
 
         self.register_buffer("_perm", torch.tensor(perm, dtype=torch.long))
         self.register_buffer("_sign", torch.tensor(sign, dtype=torch.float32))

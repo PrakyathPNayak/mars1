@@ -55,7 +55,7 @@ class AdvancedTerrainCurriculum:
     ]
 
     SKILL_SEQUENCE = [
-        "stand", "walk", "trot", "run", "crouch", "jump",
+        "stand", "walk", "run", "crouch", "jump",
     ]
 
     def __init__(
