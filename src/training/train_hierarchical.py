@@ -371,10 +371,21 @@ def train_ppo_hierarchical(args, bc_extractor_state: dict):
         obs_dim=49,
     )
 
+    def _hier_lr(progress_remaining: float) -> float:
+        """Warmup + cosine decay schedule, serialization-safe (no outer closure)."""
+        progress = 1.0 - float(progress_remaining)
+        warmup_frac = 0.05
+        if progress < warmup_frac:
+            factor = progress / warmup_frac
+        else:
+            decay_progress = (progress - warmup_frac) / (1.0 - warmup_frac)
+            factor = 0.5 * (1.0 + np.cos(np.pi * decay_progress))
+        return 3e-4 * factor
+
     model = PPO(
         policy=TransformerActorCriticPolicy,
         env=vec_env,
-        learning_rate=lambda p: 3e-4 * lr_schedule(p),
+        learning_rate=_hier_lr,
         n_steps=2048,
         batch_size=256,
         n_epochs=getattr(args, "n_epochs", 5),

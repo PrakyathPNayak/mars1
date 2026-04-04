@@ -45,7 +45,17 @@ def load_policy_for_inference(
     policy = None
     for ckpt in candidates:
         if ckpt and os.path.exists(ckpt):
-            policy = PPO.load(ckpt, device=device)
+            # Override learning_rate with a plain float so that checkpoints
+            # saved with a lambda/closure lr_schedule (which can't be
+            # reconstructed at load time) don't raise TypeError on _setup_model.
+            try:
+                policy = PPO.load(ckpt, device=device,
+                                  custom_objects={"learning_rate": 3e-4,
+                                                  "clip_range": 0.2})
+            except Exception as e:
+                print(f"[WARN] PPO.load failed ({e}), retrying with lr override")
+                policy = PPO.load(ckpt, device=device,
+                                  custom_objects={"learning_rate": 3e-4})
             print(f"[OK] Loaded policy: {ckpt}")
             break
 
