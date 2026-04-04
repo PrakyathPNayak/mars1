@@ -1,15 +1,23 @@
 # =============================================================================
-# Dev Container for Legged Robot Locomotion Research (MuJoCo Playground)
+# Docker image for Mini Cheetah Locomotion – RTX 4090 / CUDA 12.3
 # Base: NVIDIA CUDA 12.3 + cuDNN 9 on Ubuntu 22.04
+#
+# Build:
+#   docker build -t mini-cheetah .
+#
+# Run (GPU):
+#   docker run --gpus all --ipc=host -it mini-cheetah
+#
+# Run with display forwarding:
+#   docker run --gpus all --ipc=host -e DISPLAY=$DISPLAY \
+#       -v /tmp/.X11-unix:/tmp/.X11-unix -it mini-cheetah
 # =============================================================================
 FROM nvidia/cuda:12.3.2-cudnn9-devel-ubuntu22.04
 
-# Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# ---- System packages --------------------------------------------------------
+# ── System packages ──────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Python 3.11
     software-properties-common \
     && add-apt-repository -y ppa:deadsnakes/ppa \
     && apt-get update && apt-get install -y --no-install-recommends \
@@ -17,7 +25,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.11-venv \
     python3.11-dev \
     python3.11-distutils \
-    # Build essentials
     build-essential \
     cmake \
     pkg-config \
@@ -25,7 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     wget \
     unzip \
-    # X11 / OpenGL / EGL — needed for MuJoCo native viewer & off-screen
+    # X11 / OpenGL / EGL for MuJoCo rendering
     libgl1-mesa-dev \
     libgl1-mesa-glx \
     libegl1-mesa-dev \
@@ -54,68 +61,64 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xauth \
     # Video recording
     ffmpeg \
-    # Node.js (via NodeSource for a recent LTS)
+    # GitHub CLI
     ca-certificates \
     gnupg \
-    && mkdir -p /etc/apt/keyrings \
-    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-    | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
-    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
-    > /etc/apt/sources.list.d/nodesource.list \
-    && apt-get update && apt-get install -y --no-install-recommends nodejs \
-    # GitHub CLI (for `gh auth`)
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-    | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+       | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-    > /etc/apt/sources.list.d/github-cli.list \
+       > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends gh \
-    # Cleanup
     && rm -rf /var/lib/apt/lists/*
 
-# ---- Make Python 3.11 the default ------------------------------------------
+# ── Python 3.11 as default ──────────────────────────────────────────
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
     && update-alternatives --install /usr/bin/python  python  /usr/bin/python3.11 1 \
     && curl -sS https://bootstrap.pypa.io/get-pip.py | python3.11
 
-# ---- Python packages --------------------------------------------------------
-# JAX with CUDA 12 support (for MJX GPU backend)
+# ── Python dependencies ─────────────────────────────────────────────
+# PyTorch with CUDA 12.1 support (compatible with CUDA 12.3 runtime)
 RUN pip install --no-cache-dir \
-    "jax[cuda12]"
+    torch torchvision --index-url https://download.pytorch.org/whl/cu121
 
-# Fix distutils-installed system packages that pip cannot uninstall normally.
-# Ubuntu 22.04 ships blinker 1.4 as a distutils package; playground requires >=1.9.0.
-RUN pip install --no-cache-dir --ignore-installed blinker
-
-# MuJoCo Playground (includes MuJoCo, MJX, pretrained policies)
+# MuJoCo + simulation
 RUN pip install --no-cache-dir \
     mujoco \
-    playground
-
-# RL & gymnasium
-# rsl-rl is not on PyPI; install from the official GitHub repo
-RUN pip install --no-cache-dir \
-    stable-baselines3 \
     gymnasium \
-    git+https://github.com/leggedrobotics/rsl_rl.git
+    stable-baselines3
 
-# Useful extras for research
+# Science stack
 RUN pip install --no-cache-dir \
-    matplotlib \
+    numpy \
+    scipy \
+    matplotlib
+
+# Logging / visualization
+RUN pip install --no-cache-dir \
     tensorboard \
     imageio \
     imageio-ffmpeg \
-    tqdm
+    tqdm \
+    rich
 
-# ---- GitHub Copilot CLI (npm) ----------------------------------------------
-RUN npm install -g @githubnext/github-copilot-cli
+# Optional: JAX CUDA for MJX GPU backend
+RUN pip install --no-cache-dir --ignore-installed blinker \
+    && pip install --no-cache-dir "jax[cuda12]" playground \
+    || echo "JAX CUDA install skipped (non-fatal)"
 
-# ---- Environment variables --------------------------------------------------
-# Let MuJoCo find the EGL device for off-screen rendering
+# ── Project setup ────────────────────────────────────────────────────
+WORKDIR /workspace
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+# ── Environment variables ────────────────────────────────────────────
 ENV MUJOCO_GL=egl
-# Ensure GPU is visible
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics,display
-
-# ---- Default shell ----------------------------------------------------------
+ENV PYTHONPATH=/workspace
 ENV SHELL=/bin/bash
-WORKDIR /workspace
+
+# ── Entrypoint ───────────────────────────────────────────────────────
+CMD ["/bin/bash"]
