@@ -1,19 +1,19 @@
 {
   "robot": "Unitree Go1 (mujoco_menagerie)",
   "model_xml": "assets/go1.xml",
-  "reward_version": "v6",
-  "total_steps": 20000000,
-  "n_envs": 8,
+  "reward_version": "v7",
+  "total_steps": 100000000,
+  "n_envs": 24,
   "algorithm": "PPO",
   "policy": "MlpPolicy",
   "net_arch": "pi=[2048,1024,512], vf=[2048,1024,512]",
   "activation_fn": "ELU",
   "lr": "3e-4 linear decay → min 1e-5",
   "clip_range": 0.2,
-  "batch_size": 2048,
+  "batch_size": 4096,
   "n_steps": 4096,
   "n_epochs": 10,
-  "n_epochs_hierarchical": 5,
+  "n_epochs_hierarchical": 10,
   "gamma": 0.99,
   "gae_lambda": 0.95,
   "ent_coef": 0.01,
@@ -22,6 +22,7 @@
   "log_std_init": -1.0,
   "ortho_init": true,
   "device": "cpu",
+  "target_hardware": "i9-14900K (8P + 16E = 24 physical cores)",
   "vec_normalize": "norm_obs=True, norm_reward=False, clip_obs=100",
   "episode_length": 2000,
   "obs_dim": 54,
@@ -31,32 +32,27 @@
   "only_positive_rewards": false,
   "command_resample_interval": 200,
   "command_mode_randomization": {
-    "modes": [
-      "stand",
-      "walk",
-      "run",
-      "crouch",
-      "jump"
-    ],
-    "weights": [
-      0.20,
-      0.25,
-      0.20,
-      0.15,
-      0.20
-    ]
+    "modes": ["stand", "walk", "run", "crouch", "jump"],
+    "weights": [0.20, 0.25, 0.20, 0.15, 0.20]
+  },
+  "velocity_ranges": {
+    "stand": "0, 0, 0 (always zero)",
+    "walk": "vx=[0.3, 0.8] m/s (Gait-heuristic 2024)",
+    "run": "vx=[1.5, 3.0] m/s (AMP Go1=3.0, Tencent=3.2)",
+    "crouch": "0, 0, 0 (always zero)",
+    "jump": "vx=[0.0, 0.5] m/s"
   },
   "gradient_budget_mlp": {
-    "note": "8 envs × 4096 n_steps = 32768 samples/rollout; 32768/2048 = 16 minibatches × 10 epochs = 160 grad steps/rollout; at 10M steps → ~305 rollouts → ~48.8K total grad steps (4× prior run)"
+    "note": "24 envs × 4096 n_steps = 98,304 samples/rollout; 98304/4096 = 24 minibatches × 10 epochs = 240 grad steps/rollout; at 100M steps → ~1,017 rollouts → ~244K total grad steps"
   },
   "gradient_budget_hierarchical": {
-    "note": "8 envs × 2048 n_steps = 16384 samples/rollout; 16384/256 = 64 minibatches × 5 epochs = 320 grad steps/rollout; at 15M steps → ~916 rollouts → ~293K total grad steps"
+    "note": "24 envs × 2048 n_steps = 49,152 samples/rollout; 49152/256 = 192 minibatches × 10 epochs = 1920 grad steps/rollout; at 50M steps → ~1,017 rollouts → ~1.95M total grad steps"
   },
   "training_methods": {
-    "standard": "src/training/train.py — MLP PPO [2048,1024,512], default 10M steps, batch=2048, n_epochs=10",
+    "standard": "src/training/train.py — MLP PPO [2048,1024,512], default 100M steps, batch=4096, n_epochs=10",
     "advanced": "src/training/train_advanced.py — Transformer+MoE PPO (d_model=256)",
     "imitation": "src/training/train_with_imitation.py — BC + MLP PPO",
-    "hierarchical": "src/training/train_hierarchical.py — BC(100 epochs) + Transformer+MoE PPO(15M, n_epochs=5)"
+    "hierarchical": "src/training/train_hierarchical.py — BC(100 epochs) + Transformer+MoE PPO(50M, n_epochs=10)"
   },
   "pd_controller": {
     "kp": 100.0,
@@ -65,31 +61,36 @@
     "reference": "Go1 specs: 23.7 Nm hip/thigh, 35.55 Nm knee"
   },
   "domain_randomization": {
-    "mass_range": [
-      0.85,
-      1.15
-    ],
-    "friction_range": [
-      0.8,
-      2.0
-    ],
+    "mass_range": [0.85, 1.15],
+    "friction_range": [0.8, 2.0],
     "obs_noise_std": 0.02
   },
-  "reward_scales_v6": {
+  "reward_scales_v7": {
     "note": "See REWARD_SCALES in src/env/cheetah_env.py for authoritative values",
-    "key_changes_from_v5": [
-      "r_smooth: -0.05 L2 → -0.01 L1 (5x reduction + L1 tolerates cyclic gait swings)",
-      "r_gait: 2.0 → 3.5 (stronger gait incentive with 4 sub-components)",
-      "r_linvel: 4.0 → 5.0 (amplified velocity tracking)",
-      "r_dof_vel: -2e-4 → -1e-4 (halved; was constant -0.315/step dominating penalties)",
-      "Gait sub-components: +stride_freq_reward (exp kernel on touchdown count, targets trot=2)",
-      "Trot symmetry: abs→sqrt for smoother gradient",
-      "Foot clearance target: 0.05m → 0.08m (proper leg swing height)",
-      "Walk mode r_gait multiplier: 1.5 → 2.0, r_linvel: 1.0 → 1.2",
-      "Run mode r_linvel multiplier: 1.5 → 2.0, r_gait: 1.0 → 1.5, r_smooth: 0.5x",
-      "LR floor: 0 → 1e-5 (prevents clip_fraction→0 and frozen std)",
-      "log_std_init: -0.5 → -1.0 (was frozen at 0.637 throughout training)",
-      "n_epochs: 5 → 10, batch_size: 4096 → 2048 (160 grad steps/rollout, was 40)"
+    "key_changes_from_v6": [
+      "r_body_height: FIXED — removed -1.0 offset that made it always ≤0 (was a penalty, now proper [0,1] reward)",
+      "r_stillness: FIXED — exp kernel → 1/(1+x) rational kernel (was saturating to ~0.045 avg)",
+      "Survival multiplier: REMOVED — replaced with constant r_alive=0.5/step (RMA/legged_gym standard)",
+      "r_ang_vel_xy: ADDED — -0.05 × (ωx²+ωy²), legged_gym standard wobble penalty",
+      "r_smooth: L1 → L2 (paper consensus; L2 penalizes jerks more than cyclic motion)",
+      "r_linvel: 5.0 → 1.5 (closer to legged_gym 1.0; was dominating reward signal)",
+      "r_yaw: 1.5 → 0.5 (legged_gym standard)",
+      "r_gait: 3.5 → 1.0 (legged_gym standard)",
+      "r_posture: 2.0 → 1.0, r_body_height: 2.0 → 1.0",
+      "r_orientation: -1.0 → -2.0 (stricter upright constraint)",
+      "r_torque: -5e-6 → -1e-5 (aligned with typical Στ²≈5K-8K)",
+      "r_joint_limit: -2.0 → -10.0 (legged_gym standard)",
+      "r_lin_vel_z: -0.5 → -2.0 (legged_gym standard, strongly penalizes bouncing)",
+      "r_dof_vel: -1e-4 → -5e-5 (halved again; was -0.16/step)",
+      "Stand mode: r_linvel=0, r_yaw=0 (disabled tracking; was 0.3)",
+      "Stand velocity: always zero (removed random small velocity)",
+      "Crouch mode: r_linvel=0, r_yaw=0, velocity=0 (stationary)",
+      "Run mode: vx=[1.5,3.0] m/s (was [1.0,2.5]; Go1 supports 3.0)",
+      "Walk mode: vx=[0.3,0.8] m/s (was [0.2,1.0]; literature standard)",
+      "Termination: min_height 0.18→0.15, tilt 45°→60° (lenient for learning)",
+      "MODE_TRANSITION_GRACE_STEPS: 25→50 (1s, crouch→stand needs time)",
+      "set_command(): now grants grace period on mode change (fixes interactive ctrl)",
+      "Training: n_envs 8→24 (i9-14900K), total_steps 20M→100M, batch 2048→4096"
     ]
   }
 }

@@ -10,9 +10,19 @@ Key design choices (from legged_gym / Isaac Gym conventions):
   - ELU activation + orthogonal init: better gradient flow for locomotion
   - log_std_init=-1.0: initial exploration std≈0.37 (tight for ±0.5 actions)
   - LR linear annealing: decays from 3e-4 to min 1e-5 over training
-  - n_epochs=10, batch_size=2048: 160 gradient steps per rollout update
+  - n_epochs=10, batch_size=4096: 240 gradient steps per rollout update
 
-Usage: python3 src/training/train.py --total-steps 5000000
+Hardware note: n_envs=24 targets i9-14900K (8P+16E = 24 physical cores).
+SB3 SubprocVecEnv runs one MuJoCo env per process.
+
+Training budget:
+  - 24 envs × 4096 n_steps = 98,304 samples/rollout
+  - batch_size=4096 → 24 minibatches × 10 epochs = 240 grad steps/update
+  - At 100M steps: ~1,017 rollouts × 240 = ~244K total gradient steps
+  - Papers: Walk These Ways uses ~1B steps with 4096 GPU envs;
+    100M CPU steps with 24 envs provides comparable policy training.
+
+Usage: python3 src/training/train.py --total-steps 100000000
 """
 import os
 import sys
@@ -196,17 +206,15 @@ def train(args):
     else:
         n_epochs = getattr(args, "n_epochs", 10)
         # n_steps=4096: long rollouts improve GAE advantage estimates for locomotion.
-        # batch_size=2048: 32768 samples / 2048 = 16 minibatches per epoch.
-        # n_epochs=10: 16 × 10 = 160 gradient steps per rollout update.
-        # Up from 40 (was n_epochs=5, batch_size=4096) — previous run showed
-        # clip_fraction→0 and stagnant learning; more gradient steps per
-        # rollout extract more from each collected trajectory.
+        # batch_size=4096: 98304 samples / 4096 = 24 minibatches per epoch.
+        # n_epochs=10: 24 × 10 = 240 gradient steps per rollout update.
+        # With 24 envs (i9-14900K): 3× more samples per rollout than 8 envs.
         model = PPO(
             policy="MlpPolicy",
             env=vec_env,
             learning_rate=linear_schedule(3e-4),
             n_steps=4096,
-            batch_size=2048,
+            batch_size=4096,
             n_epochs=n_epochs,
             gamma=0.99,
             gae_lambda=0.95,
@@ -280,7 +288,7 @@ def train(args):
         "activation_fn": "ELU",
         "lr": "3e-4 linear decay (min 1e-5)",
         "clip": 0.2,
-        "batch_size": 2048,
+        "batch_size": 4096,
         "n_steps": 4096,
         "n_epochs": getattr(args, "n_epochs", 10),
         "ent_coef": 0.01,
@@ -300,8 +308,8 @@ def train(args):
 
 def main():
     parser = argparse.ArgumentParser(description="Train Unitree Go1 PPO")
-    parser.add_argument("--total-steps", type=int, default=10_000_000)
-    parser.add_argument("--n-envs", type=int, default=8)
+    parser.add_argument("--total-steps", type=int, default=100_000_000)
+    parser.add_argument("--n-envs", type=int, default=24)
     parser.add_argument("--n-epochs", type=int, default=10,
                         help="PPO gradient update epochs per rollout (default: 10)")
     parser.add_argument("--resume", type=str, default=None)

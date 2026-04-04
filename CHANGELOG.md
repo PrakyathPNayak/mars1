@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+### Cycle 6 — Reward v7: Paper-Aligned Final Calibration (2025-06-05)
+
+**Diagnosis**: CSV analysis of v6 training (68K episodes) revealed:
+- 69.2% of episodes terminate at step 50-100 (right after grace period)
+- r_body_height always negative (-0.33 avg) due to `exp(...)-1.0` formula bug
+- r_stillness effectively zero (0.045 avg) — exp kernel saturated
+- survival_mult averaging 1.62, only 0.3% reach full episode length
+
+Research papers consulted: legged_gym (ETH), Walk These Ways, RMA, AMP, DreamWaQ.
+
+- **fix(reward)**: r_body_height formula `exp(...)-1.0` -> `exp(...)`. Was always <= 0.
+- **fix(reward)**: r_stillness kernel `exp(-x/sigma)` -> `1/(1+x)` rational kernel.
+- **fix(reward)**: r_smooth L1 -> L2 squared (legged_gym standard).
+- **fix(reward)**: Added r_alive=0.5 constant per-step bonus (replaces survival_mult).
+- **fix(reward)**: Added r_ang_vel_xy=-0.05 (roll/pitch rate penalty, legged_gym).
+- **fix(reward)**: Removed survival multiplier entirely (was masking reward signal).
+- **fix(reward)**: r_joint_limit -2.0 -> -10.0 (legged_gym standard).
+- **fix(reward)**: r_lin_vel_z -0.5 -> -2.0 (legged_gym standard).
+- **fix(reward)**: r_torque -5e-6 -> -1e-5, r_dof_vel -1e-4 -> -5e-5.
+- **fix(reward)**: r_linvel 5.0 -> 1.5, r_yaw 1.5 -> 0.5 (rebalanced with alive bonus).
+- **fix(env)**: Stand mode: r_linvel=0, r_yaw=0, r_orientation=2x, r_ang_vel_xy=2x.
+- **fix(env)**: Crouch mode: r_linvel=0, r_yaw=0 (no velocity tracking).
+- **fix(env)**: Run mode: r_linvel=2.5x, relaxed penalties for high-speed.
+- **fix(env)**: Velocity ranges: walk 0.3-0.8, run 1.5-3.0 m/s (Go1 spec).
+- **fix(env)**: Termination: min_height 0.18 -> 0.15, tilt 45deg -> 60deg (more forgiving).
+- **fix(env)**: MODE_TRANSITION_GRACE_STEPS: 25 -> 50.
+- **fix(env)**: set_command tracks mode changes for grace period.
+- **fix(training)**: n_envs 8 -> 24 (matches i9-14900K 24-core).
+- **fix(training)**: total_steps 10M -> 100M, batch_size 2048 -> 4096.
+- **fix(training)**: train_hierarchical 15M -> 50M steps, 5 -> 10 epochs.
+- **fix(training)**: pipeline.py: mlp 100M, hier 50M, 24 envs, 10 epochs.
+- **test**: All 39 tests pass.
+
 ### Cycle 5 — v6.1: Termination Grace Period & Eval Fix (2026-04-04)
 
 **Diagnosis**: v6 training showed ep_len_mean=29 (robot dies in 0.58s) and first

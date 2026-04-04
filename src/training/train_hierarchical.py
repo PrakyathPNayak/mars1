@@ -23,7 +23,7 @@ References:
 Usage:
     python3 src/training/train_hierarchical.py \\
         --expert checkpoints/best/best_model.zip \\
-        --total-steps 10000000
+        --total-steps 50000000
 """
 import os
 import sys
@@ -626,10 +626,10 @@ def main():
     parser.add_argument("--bc-lr", type=float, default=5e-4)
     parser.add_argument("--bc-batch", type=int, default=256)
     # PPO phase
-    parser.add_argument("--total-steps", type=int, default=15_000_000)
-    parser.add_argument("--n-envs", type=int, default=8)
-    parser.add_argument("--n-epochs", type=int, default=5,
-                        help="PPO gradient update epochs per rollout (default: 15)")
+    parser.add_argument("--total-steps", type=int, default=50_000_000)
+    parser.add_argument("--n-envs", type=int, default=24)
+    parser.add_argument("--n-epochs", type=int, default=10,
+                        help="PPO gradient update epochs per rollout (default: 10)")
     # Architecture
     parser.add_argument("--d-model", type=int, default=256)
     parser.add_argument("--n-layers", type=int, default=3)

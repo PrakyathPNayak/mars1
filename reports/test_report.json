@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-04-04 17:31:50",
-  "duration": 22.59872531890869,
+  "timestamp": "2026-04-04 23:26:00",
+  "duration": 15.585678339004517,
   "passed": 39,
   "failed": 0,
   "total": 39,
@@ -9,7 +9,7 @@
       "name": "env_creation",
       "category": "unit",
       "passed": true,
-      "duration": 0.9865388870239258,
+      "duration": 0.649860143661499,
       "message": "",
       "metrics": {
         "obs_dim": 54
@@ -19,17 +19,17 @@
       "name": "env_step",
       "category": "unit",
       "passed": true,
-      "duration": 0.136885404586792,
+      "duration": 0.09495401382446289,
       "message": "",
       "metrics": {
-        "reward": 1.8625269453429139
+        "reward": 5.3823180980445064
       }
     },
     {
       "name": "env_action_space",
       "category": "unit",
       "passed": true,
-      "duration": 0.09914994239807129,
+      "duration": 0.07050943374633789,
       "message": "",
       "metrics": {}
     },
@@ -37,7 +37,7 @@
       "name": "env_observation_space",
       "category": "unit",
       "passed": true,
-      "duration": 0.08780694007873535,
+      "duration": 0.059036970138549805,
       "message": "",
       "metrics": {}
     },
@@ -45,7 +45,7 @@
       "name": "env_domain_randomization",
       "category": "unit",
       "passed": true,
-      "duration": 0.08875155448913574,
+      "duration": 0.06776070594787598,
       "message": "",
       "metrics": {}
     },
@@ -53,7 +53,7 @@
       "name": "env_episode_termination",
       "category": "unit",
       "passed": true,
-      "duration": 0.09936237335205078,
+      "duration": 0.06881213188171387,
       "message": "",
       "metrics": {}
     },
@@ -61,7 +61,7 @@
       "name": "terrain_generator_all_types",
       "category": "unit",
       "passed": true,
-      "duration": 0.28945159912109375,
+      "duration": 0.17225408554077148,
       "message": "",
       "metrics": {
         "flat": {
@@ -110,7 +110,7 @@
       "name": "terrain_env_creation",
       "category": "unit",
       "passed": true,
-      "duration": 2.0647668838500977,
+      "duration": 1.5940864086151123,
       "message": "",
       "metrics": {
         "obs_dim": 57
@@ -120,7 +120,7 @@
       "name": "terrain_env_step",
       "category": "unit",
       "passed": true,
-      "duration": 0.16236186027526855,
+      "duration": 0.07825064659118652,
       "message": "",
       "metrics": {
         "reward": "1.7901313",
@@ -131,7 +131,7 @@
       "name": "terrain_env_skill_modes",
       "category": "unit",
       "passed": true,
-      "duration": 0.17630720138549805,
+      "duration": 0.08326959609985352,
       "message": "",
       "metrics": {
         "walk": "0.67304456",
@@ -146,7 +146,7 @@
       "name": "terrain_foot_contacts",
       "category": "unit",
       "passed": true,
-      "duration": 0.24038958549499512,
+      "duration": 0.12001180648803711,
       "message": "",
       "metrics": {
         "contacts": [
@@ -161,7 +161,7 @@
       "name": "terrain_encoding",
       "category": "unit",
       "passed": true,
-      "duration": 0.0010573863983154297,
+      "duration": 0.0005781650543212891,
       "message": "",
       "metrics": {
         "encoding": [
@@ -180,7 +180,7 @@
       "name": "curriculum_basic",
       "category": "unit",
       "passed": true,
-      "duration": 0.002386331558227539,
+      "duration": 0.0003559589385986328,
       "message": "",
       "metrics": {
         "level": 7,
@@ -191,7 +191,7 @@
       "name": "curriculum_advanced",
       "category": "unit",
       "passed": true,
-      "duration": 9.441375732421875e-05,
+      "duration": 5.793571472167969e-05,
       "message": "",
       "metrics": {
         "terrain_type": "stairs_up",
@@ -203,7 +203,7 @@
       "name": "policy_forward",
       "category": "unit",
       "passed": true,
-      "duration": 1.4373588562011719,
+      "duration": 0.7631683349609375,
       "message": "",
       "metrics": {
         "n_params": 349163
@@ -213,7 +213,7 @@
       "name": "policy_components",
       "category": "unit",
       "passed": true,
-      "duration": 0.01096963882446289,
+      "duration": 0.002184629440307617,
       "message": "",
       "metrics": {
         "phase_shape": [
@@ -230,7 +230,7 @@
       "name": "keyboard_controller",
       "category": "unit",
       "passed": true,
-      "duration": 0.04614090919494629,
+      "duration": 0.0228726863861084,
       "message": "",
       "metrics": {}
     },
@@ -238,7 +238,7 @@
       "name": "exploration_policy",
       "category": "unit",
       "passed": true,
-      "duration": 0.00023603439331054688,
+      "duration": 0.00016355514526367188,
       "message": "",
       "metrics": {}
     },
@@ -246,7 +246,7 @@
       "name": "sb3_base_env_training",
       "category": "integration",
       "passed": true,
-      "duration": 1.96286940574646,
+      "duration": 1.325669288635254,
       "message": "",
       "metrics": {
         "trained": true
@@ -256,7 +256,7 @@
       "name": "sb3_terrain_env_training",
       "category": "integration",
       "passed": true,
-      "duration": 0.28143763542175293,
+      "duration": 0.22084474563598633,
       "message": "",
       "metrics": {
         "trained": true
@@ -266,7 +266,7 @@
       "name": "sb3_transformer_policy",
       "category": "integration",
       "passed": true,
-      "duration": 0.708364725112915,
+      "duration": 0.46753907203674316,
       "message": "",
       "metrics": {
         "n_params": 199825
@@ -276,7 +276,7 @@
       "name": "history_wrapper",
       "category": "integration",
       "passed": true,
-      "duration": 0.058350324630737305,
+      "duration": 0.04225420951843262,
       "message": "",
       "metrics": {
         "obs_shape": [
@@ -288,7 +288,7 @@
       "name": "action_smoothing_wrapper",
       "category": "integration",
       "passed": true,
-      "duration": 0.05628156661987305,
+      "duration": 0.03885817527770996,
       "message": "",
       "metrics": {}
     },
@@ -296,18 +296,18 @@
       "name": "perf_base_flat",
       "category": "performance",
       "passed": true,
-      "duration": 0.7649791240692139,
+      "duration": 0.5449819564819336,
       "message": "",
       "metrics": {
         "scenario": "flat",
         "n_episodes": 5,
-        "mean_reward": 1230.2626870897425,
-        "std_reward": 1028.8554834858758,
+        "mean_reward": 783.5187652296107,
+        "std_reward": 619.8746342896621,
         "mean_steps": 200.0,
         "survival_rate": 1.0,
         "mean_speed": 0.006127335798432545,
         "mean_height": 0.2643820289496087,
-        "mean_energy": 0.0005975066350769697,
+        "mean_energy": 0.0011950132701539393,
         "foot_contact_ratio": 0.0,
         "extra": {}
       }
@@ -316,7 +316,7 @@
       "name": "perf_terrain_flat",
       "category": "performance",
       "passed": true,
-      "duration": 1.2783260345458984,
+      "duration": 0.9209668636322021,
       "message": "",
       "metrics": {
         "scenario": "terrain_flat",
@@ -336,7 +336,7 @@
       "name": "perf_terrain_rough",
       "category": "performance",
       "passed": true,
-      "duration": 1.1643013954162598,
+      "duration": 0.841801643371582,
       "message": "",
       "metrics": {
         "scenario": "terrain_rough",
@@ -356,7 +356,7 @@
       "name": "perf_terrain_stairs",
       "category": "performance",
       "passed": true,
-      "duration": 1.5078959465026855,
+      "duration": 0.9433422088623047,
       "message": "",
       "metrics": {
         "scenario": "terrain_stairs_up",
@@ -376,7 +376,7 @@
       "name": "perf_terrain_gaps",
       "category": "performance",
       "passed": true,
-      "duration": 0.1167604923248291,
+      "duration": 0.0762176513671875,
       "message": "",
       "metrics": {
         "scenario": "terrain_gaps",
@@ -396,7 +396,7 @@
       "name": "perf_terrain_mixed",
       "category": "performance",
       "passed": true,
-      "duration": 0.8668818473815918,
+      "duration": 0.6033570766448975,
       "message": "",
       "metrics": {
         "scenario": "terrain_mixed",
@@ -416,7 +416,7 @@
       "name": "perf_skill_walk",
       "category": "performance",
       "passed": true,
-      "duration": 1.2769248485565186,
+      "duration": 0.921004056930542,
       "message": "",
       "metrics": {
         "scenario": "skill_walk",
@@ -436,7 +436,7 @@
       "name": "perf_skill_trot",
       "category": "performance",
       "passed": true,
-      "duration": 1.303406000137329,
+      "duration": 0.9379808902740479,
       "message": "",
       "metrics": {
         "scenario": "skill_walk",
@@ -456,7 +456,7 @@
       "name": "perf_skill_run",
       "category": "performance",
       "passed": true,
-      "duration": 1.3077430725097656,
+      "duration": 0.936408281326294,
       "message": "",
       "metrics": {
         "scenario": "skill_run",
@@ -476,7 +476,7 @@
       "name": "perf_skill_jump",
       "category": "performance",
       "passed": true,
-      "duration": 1.3294668197631836,
+      "duration": 0.9453222751617432,
       "message": "",
       "metrics": {
         "scenario": "skill_jump",
@@ -496,7 +496,7 @@
       "name": "perf_skill_crouch",
       "category": "performance",
       "passed": true,
-      "duration": 1.2776572704315186,
+      "duration": 0.9423954486846924,
       "message": "",
       "metrics": {
         "scenario": "skill_crouch",
@@ -516,18 +516,18 @@
       "name": "perf_simulation_fps",
       "category": "performance",
       "passed": true,
-      "duration": 0.7461020946502686,
+      "duration": 0.554741621017456,
       "message": "",
       "metrics": {
-        "fps": 1445.5122063520728,
-        "time_1000_steps": 0.6917963027954102
+        "fps": 1957.6608348720285,
+        "time_1000_steps": 0.5108137130737305
       }
     },
     {
       "name": "regression_standing_stability",
       "category": "regression",
       "passed": true,
-      "duration": 0.19348573684692383,
+      "duration": 0.13884377479553223,
       "message": "",
       "metrics": {
         "min_height": 0.26395201095280124,
@@ -538,7 +538,7 @@
       "name": "regression_determinism",
       "category": "regression",
       "passed": true,
-      "duration": 0.1614539623260498,
+      "duration": 0.1255190372467041,
       "message": "",
       "metrics": {
         "reward_diff": 0.0
@@ -548,7 +548,7 @@
       "name": "regression_obs_bounds",
       "category": "regression",
       "passed": true,
-      "duration": 0.21417856216430664,
+      "duration": 0.1444084644317627,
       "message": "",
       "metrics": {
         "checked_steps": 100
@@ -558,10 +558,10 @@
       "name": "regression_reward_sign",
       "category": "regression",
       "passed": true,
-      "duration": 0.0910031795501709,
+      "duration": 0.06434512138366699,
       "message": "",
       "metrics": {
-        "mean_reward": 2.164445115005641
+        "mean_reward": 1.7489108529972301
       }
     }
   ],
@@ -569,13 +569,13 @@
     {
       "scenario": "flat",
       "n_episodes": 5,
-      "mean_reward": 1230.2626870897425,
-      "std_reward": 1028.8554834858758,
+      "mean_reward": 783.5187652296107,
+      "std_reward": 619.8746342896621,
       "mean_steps": 200.0,
       "survival_rate": 1.0,
       "mean_speed": 0.006127335798432545,
       "mean_height": 0.2643820289496087,
-      "mean_energy": 0.0005975066350769697,
+      "mean_energy": 0.0011950132701539393,
       "foot_contact_ratio": 0.0,
       "extra": {}
     },

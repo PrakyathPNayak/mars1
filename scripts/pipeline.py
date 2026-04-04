@@ -280,11 +280,11 @@ def main():
 
     # ── Stage 1: MLP PPO ──
     parser.add_argument(
-        "--mlp-steps", type=int, default=10_000_000,
-        help="Total env steps for MLP PPO stage (reward v3 converges faster)",
+        "--mlp-steps", type=int, default=100_000_000,
+        help="Total env steps for MLP PPO stage (100M for convergence)",
     )
     parser.add_argument(
-        "--mlp-epochs", type=int, default=5,
+        "--mlp-epochs", type=int, default=10,
         help="PPO n_epochs for MLP stage (gradient steps per rollout)",
     )
     parser.add_argument(
@@ -302,11 +302,11 @@ def main():
 
     # ── Stage 2: Hierarchical PPO ──
     parser.add_argument(
-        "--hier-steps", type=int, default=15_000_000,
+        "--hier-steps", type=int, default=50_000_000,
         help="Total env steps for hierarchical PPO stage",
     )
     parser.add_argument(
-        "--hier-epochs", type=int, default=5,
+        "--hier-epochs", type=int, default=10,
         help="PPO n_epochs for hierarchical Transformer stage",
     )
     parser.add_argument("--n-expert-episodes", type=int, default=200)
@@ -321,7 +321,7 @@ def main():
     parser.add_argument("--history-len", type=int, default=16)
 
     # ── Shared ──
-    parser.add_argument("--n-envs", type=int, default=8)
+    parser.add_argument("--n-envs", type=int, default=24)
     parser.add_argument(
         "--device", type=str, default="auto",
         help="Compute device: cpu | cuda | auto",
