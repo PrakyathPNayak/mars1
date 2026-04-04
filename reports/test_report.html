@@ -59,7 +59,7 @@
 <body>
 
 <h1>Mini Cheetah — Test & Performance Report</h1>
-<p class="meta">Generated: 2026-04-04 14:12:06 &nbsp;|&nbsp; Duration: 14.7s</p>
+<p class="meta">Generated: 2026-04-04 17:31:50 &nbsp;|&nbsp; Duration: 22.6s</p>
 
 <div class="summary-cards">
   <div class="card">
@@ -83,60 +83,60 @@
 <h2>Unit Tests (18/18)</h2>
 <table>
 <tr><th>Test</th><th>Status</th><th>Duration</th><th>Details</th></tr>
-<tr><td>env_creation</td><td><span class="badge pass">PASS</span></td><td>0.45s</td><td>obs_dim=54</td></tr>
-<tr><td>env_step</td><td><span class="badge pass">PASS</span></td><td>0.07s</td><td>reward=1.8625</td></tr>
-<tr><td>env_action_space</td><td><span class="badge pass">PASS</span></td><td>0.05s</td><td></td></tr>
-<tr><td>env_observation_space</td><td><span class="badge pass">PASS</span></td><td>0.04s</td><td></td></tr>
-<tr><td>env_domain_randomization</td><td><span class="badge pass">PASS</span></td><td>0.05s</td><td></td></tr>
-<tr><td>env_episode_termination</td><td><span class="badge pass">PASS</span></td><td>0.05s</td><td></td></tr>
-<tr><td>terrain_generator_all_types</td><td><span class="badge pass">PASS</span></td><td>0.12s</td><td>flat.min=0.0000, flat.max=0.0000, rough.min=-0.0218, rough.max=0.0251, slope_up.min=0.0000, slope_up.max=2.6259, slope_down.min=-2.6259, slope_down.max=-0.0000, stairs_up.min=0.0000, stairs_up.max=0.9450, stairs_down.min=0.0000, stairs_down.max=0.9450, gaps.min=-0.2500, gaps.max=0.0000, stepping_stones.min=-0.0750, stepping_stones.max=0.0478, random_blocks.min=0.0000, random_blocks.max=0.2215, mixed.min=-0.2500, mixed.max=0.9450</td></tr>
-<tr><td>terrain_env_creation</td><td><span class="badge pass">PASS</span></td><td>1.14s</td><td>obs_dim=57</td></tr>
-<tr><td>terrain_env_step</td><td><span class="badge pass">PASS</span></td><td>0.07s</td><td>reward=1.7901313, components=15</td></tr>
-<tr><td>terrain_env_skill_modes</td><td><span class="badge pass">PASS</span></td><td>0.07s</td><td>walk=0.67304456, trot=0.53707063, run=0.5359249, jump=1.7901313, crouch=1.9929657, stand=2.334949</td></tr>
-<tr><td>terrain_foot_contacts</td><td><span class="badge pass">PASS</span></td><td>0.10s</td><td>contacts=[0.0, 0.0, 0.0, 1.0]</td></tr>
+<tr><td>env_creation</td><td><span class="badge pass">PASS</span></td><td>0.99s</td><td>obs_dim=54</td></tr>
+<tr><td>env_step</td><td><span class="badge pass">PASS</span></td><td>0.14s</td><td>reward=1.8625</td></tr>
+<tr><td>env_action_space</td><td><span class="badge pass">PASS</span></td><td>0.10s</td><td></td></tr>
+<tr><td>env_observation_space</td><td><span class="badge pass">PASS</span></td><td>0.09s</td><td></td></tr>
+<tr><td>env_domain_randomization</td><td><span class="badge pass">PASS</span></td><td>0.09s</td><td></td></tr>
+<tr><td>env_episode_termination</td><td><span class="badge pass">PASS</span></td><td>0.10s</td><td></td></tr>
+<tr><td>terrain_generator_all_types</td><td><span class="badge pass">PASS</span></td><td>0.29s</td><td>flat.min=0.0000, flat.max=0.0000, rough.min=-0.0218, rough.max=0.0251, slope_up.min=0.0000, slope_up.max=2.6259, slope_down.min=-2.6259, slope_down.max=-0.0000, stairs_up.min=0.0000, stairs_up.max=0.9450, stairs_down.min=0.0000, stairs_down.max=0.9450, gaps.min=-0.2500, gaps.max=0.0000, stepping_stones.min=-0.0750, stepping_stones.max=0.0478, random_blocks.min=0.0000, random_blocks.max=0.2215, mixed.min=-0.2500, mixed.max=0.9450</td></tr>
+<tr><td>terrain_env_creation</td><td><span class="badge pass">PASS</span></td><td>2.06s</td><td>obs_dim=57</td></tr>
+<tr><td>terrain_env_step</td><td><span class="badge pass">PASS</span></td><td>0.16s</td><td>reward=1.7901313, components=15</td></tr>
+<tr><td>terrain_env_skill_modes</td><td><span class="badge pass">PASS</span></td><td>0.18s</td><td>walk=0.67304456, trot=0.53707063, run=0.5359249, jump=1.7901313, crouch=1.9929657, stand=2.334949</td></tr>
+<tr><td>terrain_foot_contacts</td><td><span class="badge pass">PASS</span></td><td>0.24s</td><td>contacts=[0.0, 0.0, 0.0, 1.0]</td></tr>
 <tr><td>terrain_encoding</td><td><span class="badge pass">PASS</span></td><td>0.00s</td><td>encoding=[0.0016876913141459227, 0.006738555151969194, 0.019199898466</td></tr>
 <tr><td>curriculum_basic</td><td><span class="badge pass">PASS</span></td><td>0.00s</td><td>level=7, terrain=rough_stairs</td></tr>
 <tr><td>curriculum_advanced</td><td><span class="badge pass">PASS</span></td><td>0.00s</td><td>terrain_type=stairs_up, difficulty=0.6000, skill_mode=walk</td></tr>
-<tr><td>policy_forward</td><td><span class="badge pass">PASS</span></td><td>0.75s</td><td>n_params=349163</td></tr>
-<tr><td>policy_components</td><td><span class="badge pass">PASS</span></td><td>0.00s</td><td>phase_shape=[1, 64], terrain_feat_shape=[2, 64]</td></tr>
-<tr><td>keyboard_controller</td><td><span class="badge pass">PASS</span></td><td>0.03s</td><td></td></tr>
+<tr><td>policy_forward</td><td><span class="badge pass">PASS</span></td><td>1.44s</td><td>n_params=349163</td></tr>
+<tr><td>policy_components</td><td><span class="badge pass">PASS</span></td><td>0.01s</td><td>phase_shape=[1, 64], terrain_feat_shape=[2, 64]</td></tr>
+<tr><td>keyboard_controller</td><td><span class="badge pass">PASS</span></td><td>0.05s</td><td></td></tr>
 <tr><td>exploration_policy</td><td><span class="badge pass">PASS</span></td><td>0.00s</td><td></td></tr>
 </table>
 
 <h2>Integration Tests (5/5)</h2>
 <table>
 <tr><th>Test</th><th>Status</th><th>Duration</th><th>Details</th></tr>
-<tr><td>sb3_base_env_training</td><td><span class="badge pass">PASS</span></td><td>1.38s</td><td>trained=True</td></tr>
-<tr><td>sb3_terrain_env_training</td><td><span class="badge pass">PASS</span></td><td>0.18s</td><td>trained=True</td></tr>
-<tr><td>sb3_transformer_policy</td><td><span class="badge pass">PASS</span></td><td>0.44s</td><td>n_params=199825</td></tr>
-<tr><td>history_wrapper</td><td><span class="badge pass">PASS</span></td><td>0.04s</td><td>obs_shape=[432]</td></tr>
-<tr><td>action_smoothing_wrapper</td><td><span class="badge pass">PASS</span></td><td>0.04s</td><td></td></tr>
+<tr><td>sb3_base_env_training</td><td><span class="badge pass">PASS</span></td><td>1.96s</td><td>trained=True</td></tr>
+<tr><td>sb3_terrain_env_training</td><td><span class="badge pass">PASS</span></td><td>0.28s</td><td>trained=True</td></tr>
+<tr><td>sb3_transformer_policy</td><td><span class="badge pass">PASS</span></td><td>0.71s</td><td>n_params=199825</td></tr>
+<tr><td>history_wrapper</td><td><span class="badge pass">PASS</span></td><td>0.06s</td><td>obs_shape=[432]</td></tr>
+<tr><td>action_smoothing_wrapper</td><td><span class="badge pass">PASS</span></td><td>0.06s</td><td></td></tr>
 </table>
 
 <h2>Performance Tests (12/12)</h2>
 <table>
 <tr><th>Test</th><th>Status</th><th>Duration</th><th>Details</th></tr>
-<tr><td>perf_base_flat</td><td><span class="badge pass">PASS</span></td><td>0.56s</td><td>scenario=flat, n_episodes=5, mean_reward=1208.5080, std_reward=1010.7562, mean_steps=200.0000, survival_rate=1.0000, mean_speed=0.0061, mean_height=0.2644, mean_energy=0.0006, foot_contact_ratio=0.0000</td></tr>
-<tr><td>perf_terrain_flat</td><td><span class="badge pass">PASS</span></td><td>0.92s</td><td>scenario=terrain_flat, n_episodes=5, mean_reward=-1482.5979, std_reward=188.1072, mean_steps=200.0000, survival_rate=1.0000, mean_speed=0.2109, mean_height=0.3315, mean_energy=0.0133, foot_contact_ratio=0.5787</td></tr>
-<tr><td>perf_terrain_rough</td><td><span class="badge pass">PASS</span></td><td>0.83s</td><td>scenario=terrain_rough, n_episodes=5, mean_reward=-1059.5696, std_reward=361.5415, mean_steps=163.0000, survival_rate=0.2000, mean_speed=0.0541, mean_height=0.3078, mean_energy=0.0088, foot_contact_ratio=0.9479</td></tr>
-<tr><td>perf_terrain_stairs</td><td><span class="badge pass">PASS</span></td><td>0.93s</td><td>scenario=terrain_stairs_up, n_episodes=5, mean_reward=-1208.6648, std_reward=188.2037, mean_steps=200.0000, survival_rate=1.0000, mean_speed=0.0677, mean_height=0.5636, mean_energy=0.0102, foot_contact_ratio=0.8088</td></tr>
-<tr><td>perf_terrain_gaps</td><td><span class="badge pass">PASS</span></td><td>0.08s</td><td>scenario=terrain_gaps, n_episodes=5, mean_reward=-16.0066, std_reward=1.6056, mean_steps=9.0000, survival_rate=0.0000, mean_speed=0.0000, mean_height=0.2189, mean_energy=0.0000, foot_contact_ratio=0.0000</td></tr>
-<tr><td>perf_terrain_mixed</td><td><span class="badge pass">PASS</span></td><td>0.60s</td><td>scenario=terrain_mixed, n_episodes=5, mean_reward=-787.4022, std_reward=574.6891, mean_steps=120.8000, survival_rate=0.4000, mean_speed=0.1002, mean_height=0.8077, mean_energy=0.0084, foot_contact_ratio=0.7010</td></tr>
-<tr><td>perf_skill_walk</td><td><span class="badge pass">PASS</span></td><td>0.92s</td><td>scenario=skill_walk, n_episodes=5, mean_reward=-1482.5979, std_reward=188.1072, mean_steps=200.0000, survival_rate=1.0000, mean_speed=0.2109, mean_height=0.3315, mean_energy=0.0133, foot_contact_ratio=0.5787</td></tr>
-<tr><td>perf_skill_trot</td><td><span class="badge pass">PASS</span></td><td>0.93s</td><td>scenario=skill_walk, n_episodes=5, mean_reward=-1482.5979, std_reward=188.1072, mean_steps=200.0000, survival_rate=1.0000, mean_speed=0.2109, mean_height=0.3315, mean_energy=0.0133, foot_contact_ratio=0.5787</td></tr>
-<tr><td>perf_skill_run</td><td><span class="badge pass">PASS</span></td><td>0.93s</td><td>scenario=skill_run, n_episodes=5, mean_reward=-1496.9739, std_reward=193.8205, mean_steps=200.0000, survival_rate=1.0000, mean_speed=0.2109, mean_height=0.3315, mean_energy=0.0044, foot_contact_ratio=0.5787</td></tr>
-<tr><td>perf_skill_jump</td><td><span class="badge pass">PASS</span></td><td>0.94s</td><td>scenario=skill_jump, n_episodes=5, mean_reward=-1390.2107, std_reward=172.9646, mean_steps=200.0000, survival_rate=1.0000, mean_speed=0.2109, mean_height=0.3315, mean_energy=0.0044, foot_contact_ratio=0.5787</td></tr>
-<tr><td>perf_skill_crouch</td><td><span class="badge pass">PASS</span></td><td>0.94s</td><td>scenario=skill_crouch, n_episodes=5, mean_reward=-1370.9309, std_reward=175.8531, mean_steps=200.0000, survival_rate=1.0000, mean_speed=0.2109, mean_height=0.3315, mean_energy=0.0133, foot_contact_ratio=0.5787</td></tr>
-<tr><td>perf_simulation_fps</td><td><span class="badge pass">PASS</span></td><td>0.54s</td><td>fps=2002.0181, time_1000_steps=0.4995</td></tr>
+<tr><td>perf_base_flat</td><td><span class="badge pass">PASS</span></td><td>0.76s</td><td>scenario=flat, n_episodes=5, mean_reward=1230.2627, std_reward=1028.8555, mean_steps=200.0000, survival_rate=1.0000, mean_speed=0.0061, mean_height=0.2644, mean_energy=0.0006, foot_contact_ratio=0.0000</td></tr>
+<tr><td>perf_terrain_flat</td><td><span class="badge pass">PASS</span></td><td>1.28s</td><td>scenario=terrain_flat, n_episodes=5, mean_reward=-1482.5979, std_reward=188.1072, mean_steps=200.0000, survival_rate=1.0000, mean_speed=0.2109, mean_height=0.3315, mean_energy=0.0133, foot_contact_ratio=0.5787</td></tr>
+<tr><td>perf_terrain_rough</td><td><span class="badge pass">PASS</span></td><td>1.16s</td><td>scenario=terrain_rough, n_episodes=5, mean_reward=-1059.5696, std_reward=361.5415, mean_steps=163.0000, survival_rate=0.2000, mean_speed=0.0541, mean_height=0.3078, mean_energy=0.0088, foot_contact_ratio=0.9479</td></tr>
+<tr><td>perf_terrain_stairs</td><td><span class="badge pass">PASS</span></td><td>1.51s</td><td>scenario=terrain_stairs_up, n_episodes=5, mean_reward=-1208.6648, std_reward=188.2037, mean_steps=200.0000, survival_rate=1.0000, mean_speed=0.0677, mean_height=0.5636, mean_energy=0.0102, foot_contact_ratio=0.8088</td></tr>
+<tr><td>perf_terrain_gaps</td><td><span class="badge pass">PASS</span></td><td>0.12s</td><td>scenario=terrain_gaps, n_episodes=5, mean_reward=-16.0066, std_reward=1.6056, mean_steps=9.0000, survival_rate=0.0000, mean_speed=0.0000, mean_height=0.2189, mean_energy=0.0000, foot_contact_ratio=0.0000</td></tr>
+<tr><td>perf_terrain_mixed</td><td><span class="badge pass">PASS</span></td><td>0.87s</td><td>scenario=terrain_mixed, n_episodes=5, mean_reward=-787.4022, std_reward=574.6891, mean_steps=120.8000, survival_rate=0.4000, mean_speed=0.1002, mean_height=0.8077, mean_energy=0.0084, foot_contact_ratio=0.7010</td></tr>
+<tr><td>perf_skill_walk</td><td><span class="badge pass">PASS</span></td><td>1.28s</td><td>scenario=skill_walk, n_episodes=5, mean_reward=-1482.5979, std_reward=188.1072, mean_steps=200.0000, survival_rate=1.0000, mean_speed=0.2109, mean_height=0.3315, mean_energy=0.0133, foot_contact_ratio=0.5787</td></tr>
+<tr><td>perf_skill_trot</td><td><span class="badge pass">PASS</span></td><td>1.30s</td><td>scenario=skill_walk, n_episodes=5, mean_reward=-1482.5979, std_reward=188.1072, mean_steps=200.0000, survival_rate=1.0000, mean_speed=0.2109, mean_height=0.3315, mean_energy=0.0133, foot_contact_ratio=0.5787</td></tr>
+<tr><td>perf_skill_run</td><td><span class="badge pass">PASS</span></td><td>1.31s</td><td>scenario=skill_run, n_episodes=5, mean_reward=-1496.9739, std_reward=193.8205, mean_steps=200.0000, survival_rate=1.0000, mean_speed=0.2109, mean_height=0.3315, mean_energy=0.0044, foot_contact_ratio=0.5787</td></tr>
+<tr><td>perf_skill_jump</td><td><span class="badge pass">PASS</span></td><td>1.33s</td><td>scenario=skill_jump, n_episodes=5, mean_reward=-1390.2107, std_reward=172.9646, mean_steps=200.0000, survival_rate=1.0000, mean_speed=0.2109, mean_height=0.3315, mean_energy=0.0044, foot_contact_ratio=0.5787</td></tr>
+<tr><td>perf_skill_crouch</td><td><span class="badge pass">PASS</span></td><td>1.28s</td><td>scenario=skill_crouch, n_episodes=5, mean_reward=-1370.9309, std_reward=175.8531, mean_steps=200.0000, survival_rate=1.0000, mean_speed=0.2109, mean_height=0.3315, mean_energy=0.0133, foot_contact_ratio=0.5787</td></tr>
+<tr><td>perf_simulation_fps</td><td><span class="badge pass">PASS</span></td><td>0.75s</td><td>fps=1445.5122, time_1000_steps=0.6918</td></tr>
 </table>
 
 <h2>Regression Tests (4/4)</h2>
 <table>
 <tr><th>Test</th><th>Status</th><th>Duration</th><th>Details</th></tr>
-<tr><td>regression_standing_stability</td><td><span class="badge pass">PASS</span></td><td>0.14s</td><td>min_height=0.2640, max_height=0.2697</td></tr>
-<tr><td>regression_determinism</td><td><span class="badge pass">PASS</span></td><td>0.13s</td><td>reward_diff=0.0000</td></tr>
-<tr><td>regression_obs_bounds</td><td><span class="badge pass">PASS</span></td><td>0.14s</td><td>checked_steps=100</td></tr>
-<tr><td>regression_reward_sign</td><td><span class="badge pass">PASS</span></td><td>0.06s</td><td>mean_reward=2.1421</td></tr>
+<tr><td>regression_standing_stability</td><td><span class="badge pass">PASS</span></td><td>0.19s</td><td>min_height=0.2640, max_height=0.2697</td></tr>
+<tr><td>regression_determinism</td><td><span class="badge pass">PASS</span></td><td>0.16s</td><td>reward_diff=0.0000</td></tr>
+<tr><td>regression_obs_bounds</td><td><span class="badge pass">PASS</span></td><td>0.21s</td><td>checked_steps=100</td></tr>
+<tr><td>regression_reward_sign</td><td><span class="badge pass">PASS</span></td><td>0.09s</td><td>mean_reward=2.1644</td></tr>
 </table>
 
 <h2>Performance Metrics</h2>
@@ -144,8 +144,8 @@
 <div class="chart-bar">
   <div class="label">flat</div>
   <div class="bar-wrap">
-    <div class="bar-fill" style="width:81%; background:var(--green)"></div>
-    <div class="bar-val">1208.5 &plusmn; 1010.8</div>
+    <div class="bar-fill" style="width:82%; background:var(--green)"></div>
+    <div class="bar-val">1230.3 &plusmn; 1028.9</div>
   </div>
 </div>
 <div class="chart-bar">
@@ -303,7 +303,7 @@
 <th>Survival</th><th>Speed</th><th>Height</th><th>Energy</th><th>Contact</th></tr>
 <tr>
 <td>flat</td><td>5</td>
-<td>1208.51 &plusmn; 1010.76</td>
+<td>1230.26 &plusmn; 1028.86</td>
 <td>200</td>
 <td>100%</td>
 <td>0.006</td>

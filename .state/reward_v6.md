@@ -1,40 +1,35 @@
-# Reward v6 — Gait & Training Optimization
+# Reward v6.1 — Grace Period & Eval Fix
 
 ## Status: READY FOR TRAINING
 
-## Changes from v5
+## Changes from v6
 
-### Reward Function (cheetah_env.py)
-- r_smooth: -0.05 L2 → -0.01 L1 (5× reduction, L1 tolerates cyclic gait)
-- r_gait: 2.0 → 3.5 (added stride_freq sub-reward; 4 sub-components)
-- r_linvel: 4.0 → 5.0 
-- r_dof_vel: -2e-4 → -1e-4 (halved)
-- Trot symmetry: abs→sqrt for smoother gradient
-- Foot clearance target: 5cm → 8cm
-- Walk mode: r_gait mult 1.5→2.0, r_linvel mult 1.0→1.2
-- Run mode: r_linvel mult 1.5→2.0, r_gait mult 1.0→1.5, r_smooth mult=0.5
+### Termination Grace Periods (cheetah_env.py)
+- TERMINATION_GRACE_STEPS = 50 (1s after reset: no early termination)
+- MODE_TRANSITION_GRACE_STEPS = 25 (0.5s after mode switch)
+- Tracks _last_mode_change_step, updated on reset and mode resample
+- Root cause: untrained policy died in ~29 steps (0.58s), no time to learn
 
-### Training Parameters (train.py)
-- LR schedule: min_lr=1e-5 floor (was decaying to 0)
-- log_std_init: -0.5 → -1.0 (std≈0.37)
-- n_epochs: 5 → 10
-- batch_size: 4096 → 2048
-- Gradient budget: 160 steps/rollout (was 40) → ~48.8K total at 10M steps
+### Eval Best-Model Fix (train.py)
+- DelayedEvalCallback: skips eval until 200K training steps
+- Root cause: deterministic do-nothing policy at 50K steps scored 21K reward
+  (stood still for 2001 steps with survival_mult) → saved as "best" forever
+- Increased n_eval_episodes: 5 → 10 for more reliable mode coverage
 
-## Expected Improvements
-- r_smooth penalty: ~-0.06/step (was -0.15 to -0.19)
-- r_gait: higher magnitude due to stride_freq + larger clearance target + higher scale
-- Learning should continue through end of training (LR floor)
-- std should be learnable throughout (LR floor)
-- More gradient updates → better convergence
+## Previous v6 Changes (preserved)
+- r_smooth: -0.05 L2 → -0.01 L1
+- r_gait: 2.0 → 3.5 (4 sub-components including stride_freq)
+- r_linvel: 4.0 → 5.0
+- r_dof_vel: -2e-4 → -1e-4
+- Foot clearance: 5cm → 8cm
+- LR floor: 1e-5, log_std_init: -1.0
+- n_epochs: 10, batch_size: 2048
 
 ## Validation
 - 39/39 tests passing
-- Devil's advocate caught trot symmetry bug (exp kernel rewarded wrong pattern → fixed to sqrt)
+- Devil's advocate: verified grace period doesn't mask genuine falls
+- Devil's advocate: verified DelayedEvalCallback correctly skips early evals
 
 ## Files Modified
-- src/env/cheetah_env.py (reward v6)
-- src/training/train.py (training params)
-- training_config.json (config update)
-- docs/architecture.md (docs update)
-- CHANGELOG.md (changelog)
+- src/env/cheetah_env.py (grace periods)
+- src/training/train.py (DelayedEvalCallback)

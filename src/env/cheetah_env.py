@@ -198,6 +198,13 @@ JUMP_LAUNCH_STEPS = 8     # 0.16s
 JUMP_LANDING_STEPS = 15   # 0.3s
 JUMP_AIRBORNE_MAX = 50    # 1s max airborne before forced landing
 
+# ── Termination grace periods (legged_gym convention) ─────────────
+# Don't terminate early while the robot is settling or adapting to a
+# new mode.  This prevents the untrained policy from dying in <30 steps
+# and gives the mode-transition dynamics time to stabilise.
+TERMINATION_GRACE_STEPS = 50        # 1 s after episode reset
+MODE_TRANSITION_GRACE_STEPS = 25    # 0.5 s after mid-episode mode change
+
 # ── Command re-randomization during training ──────────────────────
 # Re-randomize velocity commands every N steps so the policy sees diverse
 # commands within a single episode (ref: Walk These Ways, Margolis 2023).
@@ -285,6 +292,9 @@ class MiniCheetahEnv(gym.Env):
         self._prev_base_linvel = np.zeros(3, dtype=np.float32)
         self._prev_foot_heights = np.zeros(4, dtype=np.float32)
 
+        # Grace period tracking for termination
+        self._last_mode_change_step = 0
+
         # PD gains — Go1 XML already has damping=2 on joints, so kd=0 here
         # to avoid double-damping. The total damping matches the menagerie
         # position actuator behavior: passive damping only.
@@ -360,6 +370,7 @@ class MiniCheetahEnv(gym.Env):
         self.prev_prev_action = np.zeros(ACT_DIM, dtype=np.float32)
         self._prev_base_linvel = np.zeros(3, dtype=np.float32)
         self._prev_foot_heights = np.zeros(4, dtype=np.float32)
+        self._last_mode_change_step = 0
 
         mujoco = self._mj
         mujoco.mj_resetData(self.model, self.data)
@@ -422,6 +433,7 @@ class MiniCheetahEnv(gym.Env):
             self.command_mode = str(rng.choice(SKILL_MODES, p=mode_weights))
             self.target_height = HEIGHT_TARGETS.get(self.command_mode, 0.27)
             self._randomize_command_for_mode(rng)
+            self._last_mode_change_step = self.step_count
 
         if self.render_mode == "human":
             self.render()
@@ -686,6 +698,15 @@ class MiniCheetahEnv(gym.Env):
     # ── Terminal ────────────────────────────────────────────────────
 
     def _check_done(self) -> bool:
+        # ── Grace periods: don't terminate while settling ──
+        # After episode reset: give the untrained policy time to stabilise
+        if self.step_count < TERMINATION_GRACE_STEPS:
+            return False
+        # After mid-episode mode switch: give time to transition
+        steps_since_mode_change = self.step_count - self._last_mode_change_step
+        if steps_since_mode_change < MODE_TRANSITION_GRACE_STEPS:
+            return False
+
         base_z = self.data.qpos[2]
         quat = self.data.qpos[3:7]
         gravity_body = self._quat_rotate_inv(quat, np.array([0.0, 0.0, -1.0]))

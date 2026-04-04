@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Cycle 5 — v6.1: Termination Grace Period & Eval Fix (2026-04-04)
+
+**Diagnosis**: v6 training showed ep_len_mean=29 (robot dies in 0.58s) and first
+eval at 50K steps saved untrained standing-still policy as "best" (21K reward from
+deterministic zero-action over 2001 steps with survival multiplier).
+
+- **fix(env)**: Added termination grace periods (legged_gym convention):
+  - `TERMINATION_GRACE_STEPS=50` (1s after reset — no termination while settling)
+  - `MODE_TRANSITION_GRACE_STEPS=25` (0.5s after mid-episode mode switch)
+  - Tracks `_last_mode_change_step` to give robot time to adapt between modes
+- **fix(training)**: `DelayedEvalCallback` — subclass of `EvalCallback` that
+  skips evaluation until 200K+ training steps elapsed. Prevents untrained
+  deterministic policy from being saved as "best" model.
+- **fix(training)**: Increased `n_eval_episodes` from 5 to 10 for more reliable
+  reward estimates across all 5 skill modes.
+- **test**: All 39 tests pass.
+
 ### Cycle 4 — Reward v6: Gait & Training Optimization (2025-XX-XX)
 
 **Diagnosis**: 10M-step MLP PPO training showed weak gait (r_gait=0.35-0.53),

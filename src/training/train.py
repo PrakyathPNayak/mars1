@@ -76,6 +76,24 @@ def train(args):
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     (ckpt_dir / "best").mkdir(parents=True, exist_ok=True)
 
+    class DelayedEvalCallback(EvalCallback):
+        """EvalCallback that skips evaluation until min_timesteps have elapsed.
+
+        This prevents an untrained deterministic policy (which stands still
+        and collects survival-multiplied reward over full 2000-step episodes)
+        from being saved as the "best" model before the policy has had any
+        meaningful training.
+        """
+
+        def __init__(self, *args, min_timesteps: int = 200_000, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._min_timesteps = min_timesteps
+
+        def _on_step(self) -> bool:
+            if self.num_timesteps < self._min_timesteps:
+                return True  # skip eval, continue training
+            return super()._on_step()
+
     class ProgressLogger(BaseCallback):
         """Prints a one-line training summary to console every `log_every` timesteps.
 
@@ -215,12 +233,13 @@ def train(args):
             name_prefix="cheetah_ppo",
             verbose=1,
         ),
-        EvalCallback(
+        DelayedEvalCallback(
             eval_env,
             best_model_save_path=str(ckpt_dir / "best"),
             log_path=str(log_dir / "eval"),
             eval_freq=max(50_000 // args.n_envs, 1),
-            n_eval_episodes=5,
+            n_eval_episodes=10,
+            min_timesteps=200_000,
             verbose=1,
         ),
         ProgressLogger(

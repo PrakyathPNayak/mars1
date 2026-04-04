@@ -10,5 +10,8 @@
 - [x] 8. Documentation
 - [x] 9. Final validation
 - [x] 10. Reward v5: Multi-skill training overhaul (OBS_DIM 49→54, 5 skills, mode-dependent rewards)
-- [ ] 11. Retrain hierarchical model with v5 reward
-- [ ] 12. Evaluate v5 trained model across all 5 skill modes
+- [x] 11. Reward v6: Gait-focused (L1 smooth, stride freq, clearance 8cm, LR floor, 160 grad steps)
+- [x] 12. Reward v6.1: Termination grace period (50 steps reset, 25 steps mode transition)
+- [x] 13. Fix eval best-model selection (DelayedEvalCallback, min_timesteps=200K, n_eval=10)
+- [ ] 14. Train with v6.1 and evaluate across all 5 skill modes
+- [ ] 15. Retrain hierarchical model with v6.1 reward
