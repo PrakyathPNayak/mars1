@@ -1,0 +1,18 @@
+{
+  "total_steps": 200000,
+  "n_envs": 8,
+  "algorithm": "PPO",
+  "net_arch": "pi=[2048,1024,512], vf=[2048,1024,512]",
+  "activation_fn": "ELU",
+  "lr": "3e-4 linear decay",
+  "clip": 0.2,
+  "batch_size": 4096,
+  "n_steps": 4096,
+  "n_epochs": 10,
+  "ent_coef": 0.01,
+  "log_std_init": -0.5,
+  "ortho_init": true,
+  "device": "auto",
+  "robot": "Unitree Go1 (mujoco_menagerie)",
+  "vec_normalize": "norm_obs=True, norm_reward=False, clip_obs=100"
+}

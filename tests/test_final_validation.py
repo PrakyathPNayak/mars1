@@ -1,7 +1,7 @@
 """Final validation test for the advanced transformer architecture."""
 import sys, os
-sys.path.insert(0, '/home/prakyathpnayak/Documents/programming/MARS/miniproject')
-os.chdir('/home/prakyathpnayak/Documents/programming/MARS/miniproject')
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+os.chdir(os.path.join(os.path.dirname(__file__), '..'))
 
 import torch
 import numpy as np
