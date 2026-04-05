@@ -126,7 +126,7 @@ REWARD_SCALES = {
     "r_posture":        1.0,       # exp(-joint_err/σ), mode-dependent targets
     "r_body_height":    1.0,       # exp(-(z-h)²/σ²), proper [0,1] reward
     "r_stillness":      1.5,       # 1/(1+motion) rational kernel for stand/crouch
-    "r_motion_penalty": -3.0,      # penalty for any motion in stand/crouch (NEW v8)
+    "r_motion_penalty": -1.5,      # penalty for any motion in stand/crouch (NEW v8; was -3.0, too harsh early)
     "r_jump_phase":     3.0,       # jump FSM phase-specific rewards
     "r_alive":          0.5,       # constant per-step survival bonus (RMA=0.5, legged_gym standard)
     # Penalties (raw_value × scale)
@@ -244,7 +244,8 @@ JUMP_AIRBORNE_MAX = 50    # 1s max airborne before forced landing
 # Don't terminate early while the robot is settling or adapting to a
 # new mode.  This prevents the untrained policy from dying in <30 steps
 # and gives the mode-transition dynamics time to stabilise.
-TERMINATION_GRACE_STEPS = 50        # 1 s after episode reset
+TERMINATION_GRACE_STEPS = 100       # 2 s after episode reset (was 50; untrained policy needs
+                                     # more time to learn balance before termination kicks in)
 MODE_TRANSITION_GRACE_STEPS = 50    # 1 s after mid-episode mode change (was 25;
                                      # 0.5s not enough for crouch→stand transition)
 
@@ -771,16 +772,13 @@ class MiniCheetahEnv(gym.Env):
             return False
 
         base_z = self.data.qpos[2]
-        quat = self.data.qpos[3:7]
-        gravity_body = self._quat_rotate_inv(quat, np.array([0.0, 0.0, -1.0]))
-        # Adaptive min-height: lower threshold when crouching.
-        # v7: non-crouch 0.18→0.15 (was too strict; 69% of v6 episodes died
-        # at step 50-100 because robot couldn't recover from minor dips).
-        min_height = 0.08 if self.command_mode == "crouch" else 0.15
-        # Fallen: too low or tilted beyond 60° (cos 60° = 0.5).
-        # v7: 45°→60° (was too strict for learning; robot needs room to
-        # wobble and recover, especially during mode transitions).
-        return bool(base_z < min_height or gravity_body[2] > -0.5)
+        # v8: Only terminate on ground contact (height < 0.05), not tilt.
+        # The orientation penalty (-2.0, mode-amplified) provides sufficient
+        # gradient signal to learn upright posture. Tilt-based termination
+        # killed 100% of early episodes at the grace boundary, preventing
+        # the policy from ever learning balance beyond 100 steps.
+        min_height = 0.03 if self.command_mode == "crouch" else 0.05
+        return bool(base_z < min_height)
 
     def _get_info(self) -> Dict[str, Any]:
         info = {
