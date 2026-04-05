@@ -42,8 +42,6 @@ from gymnasium import spaces
 NUM_JOINTS = 12
 ACT_DIM = 12
 
-IMPORTANT: ANOTHER PSUEDO PROMPT; You have access to a 4090 and a i9-14900K. Make the best use out of these
-
 # ── Skill modes the robot must learn on command ──────────────────────
 SKILL_MODES = ["stand", "walk", "run", "crouch", "jump"]
 SKILL_DIM = len(SKILL_MODES)       # 5-dim one-hot in observation
@@ -605,7 +603,7 @@ class MiniCheetahEnv(gym.Env):
     # ── Reward ──────────────────────────────────────────────────────
 
     def _compute_reward(self, action: np.ndarray) -> float:
-        """Reward v8: Split vx/vy, stronger yaw, motion penalty, L2 smoothness."""
+        """Reward v9: adaptive sigma, split vx/vy, stronger yaw, motion penalty."""
         quat = self.data.qpos[3:7]
         base_linvel = self._quat_rotate_inv(quat, self.data.qvel[:3])
         base_angvel = self._quat_rotate_inv(quat, self.data.qvel[3:6])
