@@ -130,7 +130,7 @@ REWARD_SCALES = {
     "r_stillness":      1.5,       # 1/(1+motion) rational kernel for stand/crouch
     "r_motion_penalty": -1.5,      # penalty for any motion in stand/crouch
     "r_vel_track_penalty": -2.0,   # v10: explicit penalty for not following velocity commands in walk/run
-    "r_fwd_vel":        1.0,       # v10b: linear velocity bonus for locomotion bootstrap
+    "r_fwd_vel":        1.5,       # v10b: linear velocity bonus for locomotion bootstrap
     "r_jump_phase":     3.0,       # jump FSM phase-specific rewards
     "r_alive":          0.5,       # constant per-step survival bonus (RMA=0.5, legged_gym standard)
     # Penalties (raw_value × scale)
@@ -170,13 +170,17 @@ MODE_REWARD_MULTIPLIERS = {
         "r_vel_y": 2.0,        # strongly amplified: lateral tracking critical
         "r_yaw": 1.5,          # amplified: yaw tracking important for walk
         "r_gait": 2.0,         # amplified: proper gait is key for walking
-        "r_posture": 1.0,
+        "r_posture": 0.5,      # relaxed: walking posture differs from standing
         "r_body_height": 1.0,
         "r_stillness": 0.0,    # disabled: walking requires motion
         "r_motion_penalty": 0.0,  # disabled: walking requires motion
         "r_vel_track_penalty": 1.5,  # v10: penalize not following velocity commands
-        "r_fwd_vel": 2.0,      # v10b: linear velocity bonus to bootstrap walking
+        "r_fwd_vel": 3.0,      # v10b: strong linear velocity bonus to bootstrap walking
         "r_jump_phase": 0.0,
+        "r_smooth": 0.5,       # relaxed: walking involves periodic joint motion
+        "r_ang_vel_xy": 0.5,   # relaxed: walking naturally has some wobble
+        "r_lin_vel_z": 0.5,    # relaxed: walking has vertical COM motion
+        "r_torque": 0.5,       # relaxed: walking requires torque
     },
     # Run: high speed priority, strong tracking penalty, relaxed form penalties
     "run": {
@@ -455,8 +459,9 @@ class MiniCheetahEnv(gym.Env):
         # Randomize velocity command for training diversity
         if self.randomize_commands:
             rng = self.np_random if hasattr(self, 'np_random') and self.np_random is not None else np.random
-            # v5: 5 skill modes with jump included
-            mode_weights = [0.20, 0.25, 0.20, 0.15, 0.20]
+            # v10b: heavily favor locomotion modes to accelerate walk/run discovery
+            # Stand/crouch are easy (just be still); walk/run need concentrated experience
+            mode_weights = [0.10, 0.40, 0.30, 0.05, 0.15]
             self.command_mode = str(rng.choice(SKILL_MODES, p=mode_weights))
             self.target_height = HEIGHT_TARGETS.get(self.command_mode, 0.27)
             self._randomize_command_for_mode(rng)
@@ -504,8 +509,8 @@ class MiniCheetahEnv(gym.Env):
         if (self.randomize_commands
                 and self.step_count % COMMAND_RESAMPLE_INTERVAL == 0):
             rng = self.np_random if hasattr(self, 'np_random') and self.np_random is not None else np.random
-            # v5: 5 skill modes with jump included
-            mode_weights = [0.20, 0.25, 0.20, 0.15, 0.20]
+            # v10b: heavily favor locomotion modes (same weights as reset)
+            mode_weights = [0.10, 0.40, 0.30, 0.05, 0.15]
             self.command_mode = str(rng.choice(SKILL_MODES, p=mode_weights))
             self.target_height = HEIGHT_TARGETS.get(self.command_mode, 0.27)
             self._randomize_command_for_mode(rng)
@@ -753,9 +758,9 @@ class MiniCheetahEnv(gym.Env):
         if mode in ("walk", "run"):
             # Project actual velocity onto commanded direction
             if abs(vx_cmd) > 0.05:
-                r_fwd_vel += base_linvel[0] * (1.0 if vx_cmd > 0 else -1.0)
+                r_fwd_vel += float(base_linvel[0]) * (1.0 if vx_cmd > 0 else -1.0)
             if abs(vy_cmd) > 0.05:
-                r_fwd_vel += base_linvel[1] * (1.0 if vy_cmd > 0 else -1.0)
+                r_fwd_vel += float(base_linvel[1]) * (1.0 if vy_cmd > 0 else -1.0)
             # Clip to prevent reward from velocity overshoot
             r_fwd_vel = max(r_fwd_vel, 0.0)
 
