@@ -130,6 +130,7 @@ REWARD_SCALES = {
     "r_stillness":      1.5,       # 1/(1+motion) rational kernel for stand/crouch
     "r_motion_penalty": -1.5,      # penalty for any motion in stand/crouch
     "r_vel_track_penalty": -2.0,   # v10: explicit penalty for not following velocity commands in walk/run
+    "r_fwd_vel":        1.0,       # v10b: linear velocity bonus for locomotion bootstrap
     "r_jump_phase":     3.0,       # jump FSM phase-specific rewards
     "r_alive":          0.5,       # constant per-step survival bonus (RMA=0.5, legged_gym standard)
     # Penalties (raw_value × scale)
@@ -157,6 +158,7 @@ MODE_REWARD_MULTIPLIERS = {
         "r_stillness": 3.0,    # high: stay perfectly still
         "r_motion_penalty": 1.0,  # active: penalize any motion
         "r_vel_track_penalty": 0.0,  # disabled: no velocity commands to track
+        "r_fwd_vel": 0.0,      # disabled: no forward motion reward for stand
         "r_jump_phase": 0.0,
         "r_orientation": 2.0,  # strict: upright orientation critical for stand
         "r_ang_vel_xy": 2.0,  # strict: no wobbling when standing
@@ -173,6 +175,7 @@ MODE_REWARD_MULTIPLIERS = {
         "r_stillness": 0.0,    # disabled: walking requires motion
         "r_motion_penalty": 0.0,  # disabled: walking requires motion
         "r_vel_track_penalty": 1.5,  # v10: penalize not following velocity commands
+        "r_fwd_vel": 2.0,      # v10b: linear velocity bonus to bootstrap walking
         "r_jump_phase": 0.0,
     },
     # Run: high speed priority, strong tracking penalty, relaxed form penalties
@@ -186,6 +189,7 @@ MODE_REWARD_MULTIPLIERS = {
         "r_stillness": 0.0,    # disabled
         "r_motion_penalty": 0.0,  # disabled
         "r_vel_track_penalty": 2.0,  # v10: strong penalty for not reaching run speed
+        "r_fwd_vel": 3.0,      # v10b: strong linear velocity bonus for running
         "r_jump_phase": 0.0,
         "r_smooth": 0.5,       # halve smoothness penalty for dynamic motion
         "r_lin_vel_z": 0.5,   # relax bounce penalty (bounding gait has vertical motion)
@@ -202,6 +206,7 @@ MODE_REWARD_MULTIPLIERS = {
         "r_stillness": 2.0,    # mostly still
         "r_motion_penalty": 0.5,  # moderate penalty for motion
         "r_vel_track_penalty": 0.0,  # disabled: no velocity commands to track
+        "r_fwd_vel": 0.0,      # disabled: no forward motion reward for crouch
         "r_jump_phase": 0.0,
         "r_orientation": 2.0,  # strict: stay level when crouched
         "r_ang_vel_xy": 2.0,  # strict: no wobbling
@@ -217,6 +222,7 @@ MODE_REWARD_MULTIPLIERS = {
         "r_stillness": 0.0,
         "r_motion_penalty": 0.0,  # disabled
         "r_vel_track_penalty": 0.0,  # disabled
+        "r_fwd_vel": 0.0,      # disabled: jump doesn't need forward velocity
         "r_jump_phase": 1.0,   # jump FSM is the main signal
         "r_lin_vel_z": 0.1,   # heavily relax: jumping needs vertical velocity
         "r_ang_vel_xy": 0.5,  # relax wobble for aerial phase
@@ -738,7 +744,22 @@ class MiniCheetahEnv(gym.Env):
             yaw_rate_sq = float(base_angvel[2] ** 2)
             r_motion_penalty = body_speed_sq + 0.5 * yaw_rate_sq
 
-        # ── 6c. Velocity tracking penalty for walk/run (v10: stick for locomotion) ──
+        # ── 6c. Linear forward velocity bonus (v10b: locomotion bootstrap) ──
+        # The exp kernel gives near-zero reward when far from target (e.g., standing
+        # still with cmd=2.0). This linear term provides gradient at ALL distances,
+        # rewarding any motion in the commanded direction. Acts as exploration bonus
+        # that becomes less important as the policy gets closer to the target.
+        r_fwd_vel = 0.0
+        if mode in ("walk", "run"):
+            # Project actual velocity onto commanded direction
+            if abs(vx_cmd) > 0.05:
+                r_fwd_vel += base_linvel[0] * (1.0 if vx_cmd > 0 else -1.0)
+            if abs(vy_cmd) > 0.05:
+                r_fwd_vel += base_linvel[1] * (1.0 if vy_cmd > 0 else -1.0)
+            # Clip to prevent reward from velocity overshoot
+            r_fwd_vel = max(r_fwd_vel, 0.0)
+
+        # ── 6d. Velocity tracking penalty for walk/run (v10: stick for locomotion) ──
         # Without this, standing still in walk mode was more rewarding than walking.
         # This explicitly penalizes not following velocity commands.
         # Raw value is always ≥0; the REWARD_SCALES entry is negative.
@@ -800,6 +821,7 @@ class MiniCheetahEnv(gym.Env):
             "r_stillness":   r_stillness,
             "r_motion_penalty": r_motion_penalty,
             "r_vel_track_penalty": r_vel_track_penalty,
+            "r_fwd_vel":     r_fwd_vel,
             "r_jump_phase":  r_jump_phase,
             "r_alive":       r_alive,
             "r_orientation": r_orientation,
