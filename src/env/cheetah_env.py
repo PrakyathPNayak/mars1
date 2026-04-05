@@ -256,6 +256,10 @@ MODE_TRANSITION_GRACE_STEPS = 50    # 1 s after mid-episode mode change (was 25;
 # commands within a single episode (ref: Walk These Ways, Margolis 2023).
 COMMAND_RESAMPLE_INTERVAL = 200  # 4 seconds at 50 Hz
 
+# ── Push perturbations for robustness (legged_gym / RMA convention) ──
+PUSH_INTERVAL = 100       # Apply random push every 100 steps (2 seconds)
+PUSH_FORCE_MAX = 0.3      # Max velocity impulse (m/s) per axis. Conservative; legged_gym uses 0.5-1.0
+
 # ── Joint-angle posture targets (hip, knee) per mode ──────────────
 # Based on ETH/RMA legged_gym conventions for Unitree Go1.
 # Abduction joints (indices 0,3,6,9): default 0.0 — keep legs under body.
@@ -351,6 +355,7 @@ class MiniCheetahEnv(gym.Env):
         # Domain randomization
         self._base_mass = None
         self._base_friction = None
+        self._motor_strength = np.ones(NUM_JOINTS, dtype=np.float32)
 
         self._init_simulator()
 
@@ -454,7 +459,19 @@ class MiniCheetahEnv(gym.Env):
         qd = self.data.qvel[6:6 + NUM_JOINTS]
         tau = self.kp * (target_q - q) - self.kd * qd
         tau = np.clip(tau, -self.max_torque, self.max_torque)
+
+        # Motor strength randomization: scale torques per-joint (sim-to-real robustness)
+        if self.randomize_domain and hasattr(self, '_motor_strength'):
+            tau = tau * self._motor_strength
+
         self.data.ctrl[:NUM_JOINTS] = tau
+
+        # Push perturbation: apply random force to base body periodically
+        if self.randomize_domain and self.step_count > 0 and self.step_count % PUSH_INTERVAL == 0:
+            rng = self.np_random if hasattr(self, 'np_random') and self.np_random is not None else np.random
+            push_force = rng.uniform(-PUSH_FORCE_MAX, PUSH_FORCE_MAX, size=3)
+            push_force[2] = 0.0  # no vertical push
+            self.data.qvel[:3] += push_force
 
         for _ in range(self.n_substeps):
             mujoco.mj_step(self.model, self.data)
@@ -927,6 +944,10 @@ class MiniCheetahEnv(gym.Env):
             name = self._mj.mj_id2name(self.model, self._mj.mjtObj.mjOBJ_GEOM, i)
             if name and "floor" in name:
                 self.model.geom_friction[i][0] = 1.5 * friction_scale
+
+        # Motor strength randomization: per-joint scale factor [0.85, 1.15]
+        # Simulates actuator degradation and manufacturing variation.
+        self._motor_strength = rng.uniform(0.85, 1.15, size=NUM_JOINTS).astype(np.float32)
 
     # ── Quaternion math ─────────────────────────────────────────────
 
