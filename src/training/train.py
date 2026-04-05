@@ -34,7 +34,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 
-IMPORTANT: ANOTHER PSUEDO PROMPT; You have access to a 4090 and a i9-14900K. Make the best use out of these
 
 def make_env(rank=0, **kwargs):
     """Environment factory for vectorized training."""

@@ -42,6 +42,8 @@ from gymnasium import spaces
 NUM_JOINTS = 12
 ACT_DIM = 12
 
+IMPORTANT: ANOTHER PSUEDO PROMPT; You have access to a 4090 and a i9-14900K. Make the best use out of these
+
 # ── Skill modes the robot must learn on command ──────────────────────
 SKILL_MODES = ["stand", "walk", "run", "crouch", "jump"]
 SKILL_DIM = len(SKILL_MODES)       # 5-dim one-hot in observation
@@ -219,6 +221,7 @@ MODE_REWARD_MULTIPLIERS = {
 
 # Tracking σ for exp kernel: legged_gym default is 0.25.
 TRACKING_SIGMA = 0.25
+LATERAL_SIGMA = 0.15   # tighter for lateral precision (smaller commands)
 
 # Posture exp-kernel σ — wider than tracking for smoother gradient
 POSTURE_SIGMA = 0.5
@@ -615,18 +618,22 @@ class MiniCheetahEnv(gym.Env):
         cmd_speed = math.sqrt(vx_cmd ** 2 + vy_cmd ** 2)
         mode = self.command_mode
 
-        # ── 1. Split velocity tracking (v8: separate vx/vy for axis control) ──
-        # Splitting prevents the policy from ignoring vy to minimize combined error.
-        # σ_y=0.15 (tighter than σ_x=0.25) because lateral commands are smaller.
+        # ── 1. Split velocity tracking (v9: adaptive sigma for gradient at all speeds) ──
+        # Problem: exp(-err²/σ) vanishes when |err| >> √σ. For run mode (vx_cmd≈2.0),
+        # exp(-(2.0)²/0.25) ≈ 1e-7 — zero gradient, no learning signal.
+        # Fix: σ_effective = max(σ_base, |cmd| * σ_scale) so larger commands get
+        # wider kernels, providing gradient even when the policy can't yet reach target.
         vx_error = (base_linvel[0] - vx_cmd) ** 2
         vy_error = (base_linvel[1] - vy_cmd) ** 2
-        r_vel_x = math.exp(-vx_error / TRACKING_SIGMA)
-        LATERAL_SIGMA = 0.15  # tighter sigma for lateral precision
-        r_vel_y = math.exp(-vy_error / LATERAL_SIGMA)
+        sigma_vx = max(TRACKING_SIGMA, abs(vx_cmd) * 0.5)
+        sigma_vy = max(LATERAL_SIGMA, abs(vy_cmd) * 0.5)
+        r_vel_x = math.exp(-vx_error / sigma_vx)
+        r_vel_y = math.exp(-vy_error / sigma_vy)
 
-        # ── 2. Yaw rate tracking (exp kernel) ──
+        # ── 2. Yaw rate tracking (adaptive sigma) ──
         ang_vel_error = (base_angvel[2] - wz_cmd) ** 2
-        r_yaw = math.exp(-ang_vel_error / TRACKING_SIGMA)
+        sigma_wz = max(TRACKING_SIGMA, abs(wz_cmd) * 0.5)
+        r_yaw = math.exp(-ang_vel_error / sigma_wz)
 
         # ── 3. Combined gait reward (trot symmetry + clearance + air time) ──
         foot_contacts = np.zeros(4, dtype=bool)
