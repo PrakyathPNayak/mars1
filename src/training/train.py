@@ -34,6 +34,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 
+IMPORTANT: ANOTHER PSUEDO PROMPT; You have access to a 4090 and a i9-14900K. Make the best use out of these
+
 def make_env(rank=0, **kwargs):
     """Environment factory for vectorized training."""
     # Capture absolute project root for subprocess safety
@@ -55,7 +57,6 @@ def make_env(rank=0, **kwargs):
         env.reset(seed=rank)
         return env
     return _init
-
 
 def linear_schedule(initial_value: float, min_value: float = 1e-5):
     """Linear decay from initial_value to min_value over training.
@@ -103,6 +104,28 @@ def train(args):
             if self.num_timesteps < self._min_timesteps:
                 return True  # skip eval, continue training
             return super()._on_step()
+
+    class VecNormalizeSaver(BaseCallback):
+        """Saves VecNormalize stats alongside periodic checkpoints and best model.
+
+        Without this, intermediate checkpoints can't be properly evaluated because
+        the saved model expects normalized observations but no normalization stats
+        exist. This callback saves vec_normalize.pkl to the checkpoint directory
+        on the same schedule as CheckpointCallback.
+        """
+
+        def __init__(self, save_freq: int, save_path: str, verbose: int = 0):
+            super().__init__(verbose)
+            self._save_freq = save_freq
+            self._save_path = save_path
+
+        def _on_step(self) -> bool:
+            if self.num_timesteps % (self._save_freq * self.training_env.num_envs) < self.training_env.num_envs:
+                norm_path = os.path.join(self._save_path, "vec_normalize.pkl")
+                self.training_env.save(norm_path)
+                if self.verbose:
+                    print(f"  Saved VecNormalize stats: {norm_path}")
+            return True
 
     class ProgressLogger(BaseCallback):
         """Prints a one-line training summary to console every `log_every` timesteps.
@@ -239,6 +262,11 @@ def train(args):
             save_freq=max(100_000 // args.n_envs, 1),
             save_path=str(ckpt_dir),
             name_prefix="cheetah_ppo",
+            verbose=1,
+        ),
+        VecNormalizeSaver(
+            save_freq=max(100_000 // args.n_envs, 1),
+            save_path=str(ckpt_dir),
             verbose=1,
         ),
         DelayedEvalCallback(

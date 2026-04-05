@@ -47,7 +47,7 @@ SKILL_MODES = ["stand", "walk", "run", "crouch", "jump"]
 SKILL_DIM = len(SKILL_MODES)       # 5-dim one-hot in observation
 SKILL_TO_IDX = {m: i for i, m in enumerate(SKILL_MODES)}
 
-OBS_DIM = 54  # 49 (base) + 5 (skill one-hot)
+OBS_DIM = 59  # 49 (base) + 5 (augmented) + 5 (skill one-hot)
 #   [0:12]  joint positions
 #   [12:24] joint velocities
 #   [24:27] base linear velocity (body frame)
@@ -55,7 +55,9 @@ OBS_DIM = 54  # 49 (base) + 5 (skill one-hot)
 #   [30:33] projected gravity
 #   [33:45] previous action
 #   [45:49] command (vx, vy, wz, target_height)
-#   [49:54] skill one-hot encoding
+#   [49:50] base height (critical for crouch/jump/height tracking)
+#   [50:54] foot contacts (binary; critical for gait timing, standard in legged_gym)
+#   [54:59] skill one-hot encoding
 
 # Default standing pose: [abduct, hip, knee] × 4 legs (FR, FL, RR, RL)
 # Unitree Go1 home keyframe from mujoco_menagerie
@@ -548,6 +550,17 @@ class MiniCheetahEnv(gym.Env):
         base_angvel = self._quat_rotate_inv(quat, d.qvel[3:6]).astype(np.float32)
         gravity_body = self._quat_rotate_inv(quat, np.array([0.0, 0.0, -1.0]))
 
+        # Base height (critical for crouch/jump/height tracking; legged_gym standard)
+        base_height = np.array([float(d.qpos[2])], dtype=np.float32)
+
+        # Foot contact binary (4 dims; standard in legged_gym for gait control)
+        foot_contacts = np.zeros(4, dtype=np.float32)
+        if d.ncon > 0:
+            geom1 = d.contact.geom1[:d.ncon]
+            geom2 = d.contact.geom2[:d.ncon]
+            for j, fid in enumerate(self._foot_geom_ids):
+                foot_contacts[j] = float(np.any((geom1 == fid) | (geom2 == fid)))
+
         # Skill one-hot encoding (5 dims)
         skill_onehot = np.zeros(SKILL_DIM, dtype=np.float32)
         skill_idx = SKILL_TO_IDX.get(self.command_mode, 0)
@@ -557,13 +570,14 @@ class MiniCheetahEnv(gym.Env):
             qpos, qvel, base_linvel, base_angvel,
             gravity_body, self.prev_action,
             np.append(self.command, self.target_height),
+            base_height, foot_contacts,
             skill_onehot,
         ]).astype(np.float32)
 
         if self.randomize_domain:
-            # Add noise only to sensor dims (0:49), NOT to the skill encoding
+            # Add noise to sensor dims (0:54), NOT to skill encoding (54:59)
             noise = np.zeros(OBS_DIM, dtype=np.float32)
-            noise[:49] = self.np_random.standard_normal(49).astype(np.float32) * 0.02
+            noise[:54] = self.np_random.standard_normal(54).astype(np.float32) * 0.02
             obs += noise
 
         return obs

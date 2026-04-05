@@ -17,8 +17,8 @@ from collections import deque
 from typing import Callable, Optional, Tuple
 
 # Observation dimension produced by MiniCheetahEnv (single step, no history)
-# v5: 49 base sensor dims + 5 skill one-hot = 54
-_BASE_OBS_DIM = 54
+# v9: 49 base sensor + 1 base_height + 4 foot_contacts + 5 skill one-hot = 59
+_BASE_OBS_DIM = 59
 
 
 class HistoryAwarePolicy:
@@ -110,9 +110,21 @@ def load_policy_for_inference(
         print(f"[INFO] History-based policy detected (obs_dim={policy_obs_dim}, "
               f"history_len={history_len}, base_obs_dim={_BASE_OBS_DIM})")
 
-    # Load VecNormalize stats for observation normalization
-    norm_path = "checkpoints/vec_normalize.pkl"
-    if os.path.exists(norm_path):
+    # Load VecNormalize stats for observation normalization.
+    # Search in the same directory as the checkpoint first, then parent, then default.
+    ckpt_dir = os.path.dirname(ckpt) if ckpt else ""
+    ckpt_parent = os.path.dirname(ckpt_dir) if ckpt_dir else ""
+    norm_candidates = [
+        os.path.join(ckpt_dir, "vec_normalize.pkl"),
+        os.path.join(ckpt_parent, "vec_normalize.pkl"),
+        "checkpoints/vec_normalize.pkl",
+    ]
+    norm_path = None
+    for nc in norm_candidates:
+        if nc and os.path.exists(nc):
+            norm_path = nc
+            break
+    if norm_path:
         try:
             from stable_baselines3.common.vec_env import VecNormalize
             import pickle
