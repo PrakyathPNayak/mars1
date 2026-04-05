@@ -488,23 +488,22 @@ class MiniCheetahEnv(gym.Env):
         """Set velocity commands appropriate for the current command_mode.
 
         Velocity ranges based on quadruped locomotion literature:
-          - Walk: 0.3-0.8 m/s (Gait-heuristic 2024, Efficient multigait 2025)
-          - Run:  1.5-3.0 m/s (AMP 2021 Go1 up to 3.0, Tencent 3.2 gallop)
+          - Walk: 0.3-0.8 m/s forward (Gait-heuristic 2024)
+          - Run:  1.5-3.0 m/s forward (AMP 2021 Go1=3.0, Tencent 3.2 gallop)
           - Stand/Crouch: always zero (no random drift)
+        v8: Widened vy and wz ranges to ensure lateral/yaw tracking training.
         """
         mode = self.command_mode
         if mode == "stand":
-            # Stand ALWAYS means zero velocity — no random drift.
-            # The policy must learn to hold position with zero commanded motion.
             vx, vy, wz = 0.0, 0.0, 0.0
         elif mode == "walk":
-            vx = float(rng.uniform(0.3, 0.8))
-            vy = float(rng.uniform(-0.2, 0.2))
-            wz = float(rng.uniform(-0.3, 0.3))
+            vx = float(rng.uniform(0.2, 0.8))
+            vy = float(rng.uniform(-0.5, 0.5))   # v8: ±0.2 → ±0.5
+            wz = float(rng.uniform(-0.8, 0.8))   # v8: ±0.3 → ±0.8
         elif mode == "run":
             vx = float(rng.uniform(1.5, 3.0))
-            vy = float(rng.uniform(-0.3, 0.3))
-            wz = float(rng.uniform(-0.2, 0.2))
+            vy = float(rng.uniform(-0.5, 0.5))   # v8: ±0.3 → ±0.5
+            wz = float(rng.uniform(-0.5, 0.5))   # v8: ±0.2 → ±0.5
         elif mode == "crouch":
             # Crouch is stationary — zero velocity like stand
             vx, vy, wz = 0.0, 0.0, 0.0
