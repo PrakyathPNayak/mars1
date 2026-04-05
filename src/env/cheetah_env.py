@@ -855,7 +855,7 @@ class MiniCheetahEnv(gym.Env):
         scaled_components["r_total"] = total
         self._last_reward_components = scaled_components
 
-        return total
+        return float(total)
 
     # ── Terminal ────────────────────────────────────────────────────
 

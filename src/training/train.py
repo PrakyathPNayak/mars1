@@ -209,8 +209,12 @@ def train(args):
     )
 
     # ── Policy architecture ─────────────────────────────────────────
+    # v10b2: switch from [2048,1024,512] (3.1M params, too slow to converge)
+    # to [512,256,128] (~200K params). Standard locomotion RL (legged_gym,
+    # RMA, Walk These Ways) uses [256,256] or [512,256,128].
+    # Smaller network converges faster: fewer params per gradient step.
     policy_kwargs = dict(
-        net_arch=dict(pi=[2048, 1024, 512], vf=[2048, 1024, 512]),
+        net_arch=dict(pi=[512, 256, 128], vf=[512, 256, 128]),
         activation_fn=torch.nn.ELU,    # better gradient flow than Tanh for locomotion
         ortho_init=True,               # orthogonal weight init (PPO standard)
         log_std_init=-1.0,             # initial std ≈ 0.37 (tighter; -0.5 led to frozen std)
@@ -226,17 +230,17 @@ def train(args):
         print(f"Resuming from: {args.resume}")
         model = PPO.load(args.resume, env=vec_env, device=device)
     else:
-        n_epochs = getattr(args, "n_epochs", 10)
+        n_epochs = getattr(args, "n_epochs", 5)
         # n_steps=4096: long rollouts improve GAE advantage estimates for locomotion.
-        # batch_size=4096: 98304 samples / 4096 = 24 minibatches per epoch.
-        # n_epochs=10: 24 × 10 = 240 gradient steps per rollout update.
-        # With 24 envs (i9-14900K): 3× more samples per rollout than 8 envs.
+        # batch_size=512: 65536/512 = 128 minibatches per epoch.
+        # n_epochs=5: 128 × 5 = 640 gradient steps per rollout update.
+        # Smaller batch = more frequent updates, better for locomotion discovery.
         model = PPO(
             policy="MlpPolicy",
             env=vec_env,
             learning_rate=linear_schedule(3e-4),
             n_steps=4096,
-            batch_size=4096,
+            batch_size=512,
             n_epochs=n_epochs,
             gamma=0.99,
             gae_lambda=0.95,
