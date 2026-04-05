@@ -120,15 +120,16 @@ ROBOT_MASS = 12.74
 # Aligned with legged_gym (Rudin 2022) and RMA (Kumar 2021) conventions.
 # All positive rewards output [0,1] before scaling; penalties are raw squared.
 REWARD_SCALES = {
-    # Positive rewards — v8: split vx/vy, stronger yaw, motion penalty
-    "r_vel_x":          1.5,       # exp(-vx_err²/σ²), σ=0.25. Split from r_linvel for axis control
-    "r_vel_y":          1.5,       # exp(-vy_err²/σ_y²), σ_y=0.15. Tighter for lateral precision
-    "r_yaw":            2.0,       # exp(-ang_err²/σ²), σ=0.25. Increased from 0.5 (was too weak)
+    # Positive rewards — v10: command-proportional, adaptive sigma, tracking penalty
+    "r_vel_x":          1.5,       # exp(-vx_err²/σ²) * cmd_scale. Now 0 when cmd≈0
+    "r_vel_y":          1.5,       # exp(-vy_err²/σ_y²) * cmd_scale. Now 0 when cmd≈0
+    "r_yaw":            2.0,       # exp(-ang_err²/σ²) * cmd_scale. Now 0 when cmd≈0
     "r_gait":           1.0,       # combined: symmetry+clearance+airtime+stride_freq. legged_gym=1.0
     "r_posture":        1.0,       # exp(-joint_err/σ), mode-dependent targets
     "r_body_height":    1.0,       # exp(-(z-h)²/σ²), proper [0,1] reward
     "r_stillness":      1.5,       # 1/(1+motion) rational kernel for stand/crouch
-    "r_motion_penalty": -1.5,      # penalty for any motion in stand/crouch (NEW v8; was -3.0, too harsh early)
+    "r_motion_penalty": -1.5,      # penalty for any motion in stand/crouch
+    "r_vel_track_penalty": -2.0,   # v10: explicit penalty for not following velocity commands in walk/run
     "r_jump_phase":     3.0,       # jump FSM phase-specific rewards
     "r_alive":          0.5,       # constant per-step survival bonus (RMA=0.5, legged_gym standard)
     # Penalties (raw_value × scale)
@@ -155,12 +156,13 @@ MODE_REWARD_MULTIPLIERS = {
         "r_body_height": 2.0,  # high: maintain standing height
         "r_stillness": 3.0,    # high: stay perfectly still
         "r_motion_penalty": 1.0,  # active: penalize any motion
+        "r_vel_track_penalty": 0.0,  # disabled: no velocity commands to track
         "r_jump_phase": 0.0,
         "r_orientation": 2.0,  # strict: upright orientation critical for stand
         "r_ang_vel_xy": 2.0,  # strict: no wobbling when standing
         "r_lin_vel_z": 2.0,   # strict: no vertical bounce when standing
     },
-    # Walk: moderate speed, strong gait pattern, normal penalties
+    # Walk: moderate speed, strong gait pattern, velocity tracking penalty active
     "walk": {
         "r_vel_x": 1.5,        # amplified: track walking velocity closely
         "r_vel_y": 2.0,        # strongly amplified: lateral tracking critical
@@ -170,9 +172,10 @@ MODE_REWARD_MULTIPLIERS = {
         "r_body_height": 1.0,
         "r_stillness": 0.0,    # disabled: walking requires motion
         "r_motion_penalty": 0.0,  # disabled: walking requires motion
+        "r_vel_track_penalty": 1.5,  # v10: penalize not following velocity commands
         "r_jump_phase": 0.0,
     },
-    # Run: high speed priority, relaxed smoothness/posture for dynamic motion
+    # Run: high speed priority, strong tracking penalty, relaxed form penalties
     "run": {
         "r_vel_x": 2.5,        # strongly amplified: speed is the main goal
         "r_vel_y": 1.5,        # moderate: lateral control during running
@@ -182,6 +185,7 @@ MODE_REWARD_MULTIPLIERS = {
         "r_body_height": 0.5,  # relaxed: height varies during fast gaits
         "r_stillness": 0.0,    # disabled
         "r_motion_penalty": 0.0,  # disabled
+        "r_vel_track_penalty": 2.0,  # v10: strong penalty for not reaching run speed
         "r_jump_phase": 0.0,
         "r_smooth": 0.5,       # halve smoothness penalty for dynamic motion
         "r_lin_vel_z": 0.5,   # relax bounce penalty (bounding gait has vertical motion)
@@ -197,6 +201,7 @@ MODE_REWARD_MULTIPLIERS = {
         "r_body_height": 3.0,  # high: reach and hold crouch height
         "r_stillness": 2.0,    # mostly still
         "r_motion_penalty": 0.5,  # moderate penalty for motion
+        "r_vel_track_penalty": 0.0,  # disabled: no velocity commands to track
         "r_jump_phase": 0.0,
         "r_orientation": 2.0,  # strict: stay level when crouched
         "r_ang_vel_xy": 2.0,  # strict: no wobbling
@@ -211,6 +216,7 @@ MODE_REWARD_MULTIPLIERS = {
         "r_body_height": 1.0,  # tracks FSM phase height
         "r_stillness": 0.0,
         "r_motion_penalty": 0.0,  # disabled
+        "r_vel_track_penalty": 0.0,  # disabled
         "r_jump_phase": 1.0,   # jump FSM is the main signal
         "r_lin_vel_z": 0.1,   # heavily relax: jumping needs vertical velocity
         "r_ang_vel_xy": 0.5,  # relax wobble for aerial phase
@@ -616,11 +622,13 @@ class MiniCheetahEnv(gym.Env):
         cmd_speed = math.sqrt(vx_cmd ** 2 + vy_cmd ** 2)
         mode = self.command_mode
 
-        # ── 1. Split velocity tracking (v9: adaptive sigma for gradient at all speeds) ──
-        # Problem: exp(-err²/σ) vanishes when |err| >> √σ. For run mode (vx_cmd≈2.0),
-        # exp(-(2.0)²/0.25) ≈ 1e-7 — zero gradient, no learning signal.
-        # Fix: σ_effective = max(σ_base, |cmd| * σ_scale) so larger commands get
-        # wider kernels, providing gradient even when the policy can't yet reach target.
+        # ── 1. Split velocity tracking (v10: command-proportional + adaptive sigma) ──
+        # Two fixes combined:
+        #   a) Adaptive sigma: prevents gradient vanishing for large commands
+        #   b) Command-proportional scaling: prevents FREE reward for zero commands
+        #      Without this, walk mode with cmd=[0.5,0,0] gives r_vel_y=3.0/step
+        #      and r_yaw=3.0/step for standing still (trivial zero-command match).
+        #      This made standing more rewarding than walking.
         vx_error = (base_linvel[0] - vx_cmd) ** 2
         vy_error = (base_linvel[1] - vy_cmd) ** 2
         sigma_vx = max(TRACKING_SIGMA, abs(vx_cmd) * 0.5)
@@ -628,10 +636,26 @@ class MiniCheetahEnv(gym.Env):
         r_vel_x = math.exp(-vx_error / sigma_vx)
         r_vel_y = math.exp(-vy_error / sigma_vy)
 
-        # ── 2. Yaw rate tracking (adaptive sigma) ──
+        # Command-proportional: scale reward by min(|cmd|/threshold, 1.0)
+        # When cmd≈0, reward is near 0 (no free lunch for trivial matching).
+        # When |cmd|≥threshold, full reward. Threshold=0.1 for precision.
+        CMD_ACTIVE_THRESH = 0.1
+        vx_cmd_scale = min(abs(vx_cmd) / CMD_ACTIVE_THRESH, 1.0)
+        vy_cmd_scale = min(abs(vy_cmd) / CMD_ACTIVE_THRESH, 1.0)
+        wz_cmd_scale = min(abs(wz_cmd) / CMD_ACTIVE_THRESH, 1.0)
+
+        # In locomotion modes, scale tracking rewards by command magnitude.
+        # Stand/crouch modes already disable these via MODE_REWARD_MULTIPLIERS=0.
+        if mode in ("walk", "run"):
+            r_vel_x *= vx_cmd_scale
+            r_vel_y *= vy_cmd_scale
+
+        # ── 2. Yaw rate tracking (adaptive sigma + command-proportional) ──
         ang_vel_error = (base_angvel[2] - wz_cmd) ** 2
         sigma_wz = max(TRACKING_SIGMA, abs(wz_cmd) * 0.5)
         r_yaw = math.exp(-ang_vel_error / sigma_wz)
+        if mode in ("walk", "run"):
+            r_yaw *= wz_cmd_scale
 
         # ── 3. Combined gait reward (trot symmetry + clearance + air time) ──
         foot_contacts = np.zeros(4, dtype=bool)
@@ -714,6 +738,18 @@ class MiniCheetahEnv(gym.Env):
             yaw_rate_sq = float(base_angvel[2] ** 2)
             r_motion_penalty = body_speed_sq + 0.5 * yaw_rate_sq
 
+        # ── 6c. Velocity tracking penalty for walk/run (v10: stick for locomotion) ──
+        # Without this, standing still in walk mode was more rewarding than walking.
+        # This explicitly penalizes not following velocity commands.
+        # Raw value is always ≥0; the REWARD_SCALES entry is negative.
+        r_vel_track_penalty = 0.0
+        if mode in ("walk", "run") and cmd_speed > 0.05:
+            # Penalize squared error for each commanded axis that is non-zero
+            vx_track_err = vx_error if abs(vx_cmd) > 0.05 else 0.0
+            vy_track_err = vy_error if abs(vy_cmd) > 0.05 else 0.0
+            wz_track_err = ang_vel_error if abs(wz_cmd) > 0.05 else 0.0
+            r_vel_track_penalty = vx_track_err + vy_track_err + wz_track_err
+
         # ── 7. Jump FSM phase reward ──
         r_jump_phase = self._advance_jump_fsm(base_z, base_linvel, foot_contacts)
 
@@ -763,6 +799,7 @@ class MiniCheetahEnv(gym.Env):
             "r_body_height": r_body_height,
             "r_stillness":   r_stillness,
             "r_motion_penalty": r_motion_penalty,
+            "r_vel_track_penalty": r_vel_track_penalty,
             "r_jump_phase":  r_jump_phase,
             "r_alive":       r_alive,
             "r_orientation": r_orientation,
