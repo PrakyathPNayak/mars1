@@ -195,7 +195,7 @@ MODE_REWARD_MULTIPLIERS = {
         "r_body_height": 2.0,
         "r_stillness": 0.0,
         "r_motion_penalty": 0.0,
-        "r_vel_track_penalty": 3.0,  # v13: 3x stronger tracking penalty (was 1.5)
+        "r_vel_track_penalty": 4.0,  # v14: 4x (was 3x) — reduce overshoot and drift
         "r_fwd_vel": 0.0,      # v12c: DISABLED — was causing forward-only bias
         "r_jump_phase": 0.0,
         "r_smooth": 0.5,
@@ -204,18 +204,18 @@ MODE_REWARD_MULTIPLIERS = {
         "r_torque": 0.0,
         "r_dof_vel": 0.0,
     },
-    # Run: v13 — same balanced tracking as walk.
+    # Run: v14 — equalized vy/yaw tracking with walk, stronger penalty.
     "run": {
         "r_vel_x": 3.0,
-        "r_vel_y": 2.0,
-        "r_yaw": 2.0,
+        "r_vel_y": 3.0,        # v14: was 2.0 — equalize with walk to fix lateral drift
+        "r_yaw": 3.0,          # v14: was 2.0 — equalize with walk
         "r_gait": 0.0,
         "r_posture": 1.0,
         "r_body_height": 2.0,
         "r_stillness": 0.0,
         "r_motion_penalty": 0.0,
-        "r_vel_track_penalty": 3.0,  # v13: 3x stronger (was 1.5)
-        "r_fwd_vel": 0.0,      # v12c: DISABLED
+        "r_vel_track_penalty": 4.0,  # v14: 4x (was 3x) — run drift needs stronger correction
+        "r_fwd_vel": 0.0,
         "r_jump_phase": 0.0,
         "r_smooth": 0.5,
         "r_lin_vel_z": 0.0,
