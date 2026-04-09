@@ -186,9 +186,9 @@ def train(args):
         base_env = DummyVecEnv([make_env(i) for i in range(args.n_envs)])
     vec_env = VecMonitor(base_env, str(log_dir))
 
-    # VecNormalize: running observation normalization (critical for locomotion).
-    # norm_reward=False because the environment already uses only_positive_rewards
-    # clipping and exp-kernel tracking — further normalization would distort.
+    # VecNormalize: v11 — obs normalization moved INTO the env (fixed scales,
+    # no running stats) to prevent catastrophic forgetting. norm_obs=False.
+    # norm_reward=False because the env already uses carefully scaled rewards.
     norm_path = str(ckpt_dir / "vec_normalize.pkl")
     if args.resume and os.path.exists(norm_path):
         vec_env = VecNormalize.load(norm_path, vec_env)
@@ -196,7 +196,7 @@ def train(args):
         print(f"  Loaded VecNormalize stats from {norm_path}")
     else:
         vec_env = VecNormalize(
-            vec_env, norm_obs=True, norm_reward=False,
+            vec_env, norm_obs=False, norm_reward=False,
             clip_obs=100.0, gamma=0.99,
         )
 
@@ -204,7 +204,7 @@ def train(args):
     # automatically by EvalCallback via sync_envs_normalization)
     eval_base = VecMonitor(DummyVecEnv([make_env(999)]))
     eval_env = VecNormalize(
-        eval_base, norm_obs=True, norm_reward=False,
+        eval_base, norm_obs=False, norm_reward=False,
         training=False, clip_obs=100.0, gamma=0.99,
     )
 
@@ -217,7 +217,7 @@ def train(args):
         net_arch=dict(pi=[512, 256, 128], vf=[512, 256, 128]),
         activation_fn=torch.nn.ELU,    # better gradient flow than Tanh for locomotion
         ortho_init=True,               # orthogonal weight init (PPO standard)
-        log_std_init=-1.0,             # initial std ≈ 0.37 (tighter; -0.5 led to frozen std)
+        log_std_init=-1.0,             # v12: initial std ≈ 0.37 (tighter; action_scale=0.2 limits range)
     )
 
     # SB3 MLP PPO: CPU is typically faster for smaller networks due to
@@ -245,7 +245,7 @@ def train(args):
             gamma=0.99,
             gae_lambda=0.95,
             clip_range=0.2,
-            ent_coef=0.01,
+            ent_coef=0.0,               # v12: disabled — was causing action-std explosion (1.3 at 3.4M steps)
             vf_coef=0.5,
             max_grad_norm=1.0,
             policy_kwargs=policy_kwargs,

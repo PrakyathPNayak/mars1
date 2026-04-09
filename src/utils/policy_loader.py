@@ -18,7 +18,7 @@ from typing import Callable, Optional, Tuple
 
 # Observation dimension produced by MiniCheetahEnv (single step, no history)
 # v9: 49 base sensor + 1 base_height + 4 foot_contacts + 5 skill one-hot = 59
-_BASE_OBS_DIM = 59
+_BASE_OBS_DIM = 61
 
 
 class HistoryAwarePolicy:

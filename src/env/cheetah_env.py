@@ -11,7 +11,7 @@ Observation (49 dims):
   [33:45] previous action (rad)
   [45:49] command (vx, vy, wz, target_height)
 
-Action (12 dims): delta joint position targets, clipped +-0.5 rad
+Action (12 dims): delta joint position targets, scaled +-0.2 rad (v12)
 
 Reward v8 (based on ETH Zurich legged_gym, Walk These Ways, RMA):
   + exp tracking for vx velocity (σ=0.25)
@@ -47,7 +47,7 @@ SKILL_MODES = ["stand", "walk", "run", "crouch", "jump"]
 SKILL_DIM = len(SKILL_MODES)       # 5-dim one-hot in observation
 SKILL_TO_IDX = {m: i for i, m in enumerate(SKILL_MODES)}
 
-OBS_DIM = 59  # 49 (base) + 5 (augmented) + 5 (skill one-hot)
+OBS_DIM = 61  # 49 (base) + 5 (augmented) + 5 (skill one-hot) + 2 (cpg phase)
 #   [0:12]  joint positions
 #   [12:24] joint velocities
 #   [24:27] base linear velocity (body frame)
@@ -58,6 +58,26 @@ OBS_DIM = 59  # 49 (base) + 5 (augmented) + 5 (skill one-hot)
 #   [49:50] base height (critical for crouch/jump/height tracking)
 #   [50:54] foot contacts (binary; critical for gait timing, standard in legged_gym)
 #   [54:59] skill one-hot encoding
+#   [59:61] CPG phase [sin(phase), cos(phase)] — enables phase-dependent residuals
+
+# ── Manual observation normalization (replaces VecNormalize) ──────────
+# Fixed divisors so each observation dimension is roughly in [-1, 1].
+# This avoids VecNormalize's running-statistics drift that causes
+# catastrophic forgetting when normalization stats change mid-training.
+OBS_SCALES = np.array(
+    [1.0]*12        # joint positions: already ~[-1.5, 1.5]
+  + [10.0]*12       # joint velocities: ~[-10, 10] → [-1, 1]
+  + [2.0]*3         # base linear velocity: ~[-2, 2] → [-1, 1]
+  + [5.0]*3         # base angular velocity: ~[-5, 5] → [-1, 1]
+  + [1.0]*3         # gravity: already [-1, 1]
+  + [1.0]*12        # previous action: [-1, 1] → [-1, 1] (v12: action space is [-1,1])
+  + [2.0, 0.5, 0.8, 0.35]  # commands: vx/2, vy/0.5, wz/0.8, h/0.35
+  + [0.35]          # base height: ~0.3 → ~0.86
+  + [1.0]*4         # foot contacts: already [0, 1]
+  + [1.0]*5         # skill one-hot: already [0, 1]
+  + [1.0]*2,        # CPG phase [sin, cos]: already [-1, 1]
+  dtype=np.float32
+)
 
 # Default standing pose: [abduct, hip, knee] × 4 legs (FR, FL, RR, RL)
 # Unitree Go1 home keyframe from mujoco_menagerie
@@ -130,7 +150,7 @@ REWARD_SCALES = {
     "r_stillness":      1.5,       # 1/(1+motion) rational kernel for stand/crouch
     "r_motion_penalty": -1.5,      # penalty for any motion in stand/crouch
     "r_vel_track_penalty": -2.0,   # v10: explicit penalty for not following velocity commands in walk/run
-    "r_fwd_vel":        1.5,       # v10b: linear velocity bonus for locomotion bootstrap
+    "r_fwd_vel":        10.0,      # v11: strong linear velocity bonus (was 1.5; 6.7x increase)
     "r_jump_phase":     3.0,       # jump FSM phase-specific rewards
     "r_alive":          0.5,       # constant per-step survival bonus (RMA=0.5, legged_gym standard)
     # Penalties (raw_value × scale)
@@ -164,40 +184,44 @@ MODE_REWARD_MULTIPLIERS = {
         "r_ang_vel_xy": 2.0,  # strict: no wobbling when standing
         "r_lin_vel_z": 2.0,   # strict: no vertical bounce when standing
     },
-    # Walk: moderate speed, strong gait pattern, velocity tracking penalty active
+    # Walk: v13 — balanced multi-axis tracking. No command-proportional zeroing.
+    # Strong tracking penalty penalizes all axes including zero-commanded.
     "walk": {
-        "r_vel_x": 1.5,        # amplified: track walking velocity closely
-        "r_vel_y": 2.0,        # strongly amplified: lateral tracking critical
-        "r_yaw": 1.5,          # amplified: yaw tracking important for walk
-        "r_gait": 2.0,         # amplified: proper gait is key for walking
-        "r_posture": 0.5,      # relaxed: walking posture differs from standing
-        "r_body_height": 1.0,
-        "r_stillness": 0.0,    # disabled: walking requires motion
-        "r_motion_penalty": 0.0,  # disabled: walking requires motion
-        "r_vel_track_penalty": 1.5,  # v10: penalize not following velocity commands
-        "r_fwd_vel": 3.0,      # v10b: strong linear velocity bonus to bootstrap walking
+        "r_vel_x": 3.0,       # v12c: track vx (also penalizes unwanted forward when cmd=0)
+        "r_vel_y": 3.0,       # v12c: match vx weight for lateral
+        "r_yaw": 3.0,         # v12c: increased from 1.5 (yaw tracking)
+        "r_gait": 0.0,
+        "r_posture": 1.0,
+        "r_body_height": 2.0,
+        "r_stillness": 0.0,
+        "r_motion_penalty": 0.0,
+        "r_vel_track_penalty": 3.0,  # v13: 3x stronger tracking penalty (was 1.5)
+        "r_fwd_vel": 0.0,      # v12c: DISABLED — was causing forward-only bias
         "r_jump_phase": 0.0,
-        "r_smooth": 0.5,       # relaxed: walking involves periodic joint motion
-        "r_ang_vel_xy": 0.5,   # relaxed: walking naturally has some wobble
-        "r_lin_vel_z": 0.5,    # relaxed: walking has vertical COM motion
-        "r_torque": 0.5,       # relaxed: walking requires torque
+        "r_smooth": 0.5,
+        "r_ang_vel_xy": 0.0,
+        "r_lin_vel_z": 0.0,
+        "r_torque": 0.0,
+        "r_dof_vel": 0.0,
     },
-    # Run: high speed priority, strong tracking penalty, relaxed form penalties
+    # Run: v13 — same balanced tracking as walk.
     "run": {
-        "r_vel_x": 2.5,        # strongly amplified: speed is the main goal
-        "r_vel_y": 1.5,        # moderate: lateral control during running
-        "r_yaw": 1.0,
-        "r_gait": 1.5,
-        "r_posture": 0.5,      # relaxed: running posture differs from standing
-        "r_body_height": 0.5,  # relaxed: height varies during fast gaits
-        "r_stillness": 0.0,    # disabled
-        "r_motion_penalty": 0.0,  # disabled
-        "r_vel_track_penalty": 2.0,  # v10: strong penalty for not reaching run speed
-        "r_fwd_vel": 3.0,      # v10b: strong linear velocity bonus for running
+        "r_vel_x": 3.0,
+        "r_vel_y": 2.0,
+        "r_yaw": 2.0,
+        "r_gait": 0.0,
+        "r_posture": 1.0,
+        "r_body_height": 2.0,
+        "r_stillness": 0.0,
+        "r_motion_penalty": 0.0,
+        "r_vel_track_penalty": 3.0,  # v13: 3x stronger (was 1.5)
+        "r_fwd_vel": 0.0,      # v12c: DISABLED
         "r_jump_phase": 0.0,
-        "r_smooth": 0.5,       # halve smoothness penalty for dynamic motion
-        "r_lin_vel_z": 0.5,   # relax bounce penalty (bounding gait has vertical motion)
-        "r_ang_vel_xy": 0.5,  # relax wobble penalty for fast gaits
+        "r_smooth": 0.5,
+        "r_lin_vel_z": 0.0,
+        "r_ang_vel_xy": 0.0,
+        "r_torque": 0.0,
+        "r_dof_vel": 0.0,
     },
     # Crouch: low position, stillness, strict orientation
     "crouch": {
@@ -290,7 +314,7 @@ KNEE_JOINT_INDICES = np.array([2, 5, 8, 11], dtype=np.int32)
 # At ±5 cm: exp(-0.0025/0.02) = exp(-0.125) ≈ 0.88
 # At ±9 cm (crouch→stand): exp(-0.0081/0.02) = exp(-0.405) ≈ 0.67
 # The kernel is now centered at 0 (exp-1) so these become -0.12 and -0.33.
-BODY_HEIGHT_SIGMA = 0.02
+BODY_HEIGHT_SIGMA = 0.10  # v12: broadened from 0.02 — old value had zero gradient when >5cm from target
 
 # Hip flexion limit for non-crouch modes (rad).  Go1 default stance = 0.9.
 # Beyond this threshold, the robot is sitting on its belly.
@@ -331,7 +355,7 @@ class MiniCheetahEnv(gym.Env):
             low=-np.inf, high=np.inf, shape=(OBS_DIM,), dtype=np.float32
         )
         self.action_space = spaces.Box(
-            low=-0.5, high=0.5, shape=(ACT_DIM,), dtype=np.float32
+            low=-1.0, high=1.0, shape=(ACT_DIM,), dtype=np.float32
         )
 
         self.step_count = 0
@@ -358,6 +382,9 @@ class MiniCheetahEnv(gym.Env):
         self.prev_prev_action = np.zeros(ACT_DIM, dtype=np.float32)
         self._prev_base_linvel = np.zeros(3, dtype=np.float32)
         self._prev_foot_heights = np.zeros(4, dtype=np.float32)
+
+        # CPG phase (updated in step(), exposed in obs for phase-dependent residuals)
+        self._cpg_phase = 0.0
 
         # Grace period tracking for termination
         self._last_mode_change_step = 0
@@ -438,6 +465,7 @@ class MiniCheetahEnv(gym.Env):
         self.prev_prev_action = np.zeros(ACT_DIM, dtype=np.float32)
         self._prev_base_linvel = np.zeros(3, dtype=np.float32)
         self._prev_foot_heights = np.zeros(4, dtype=np.float32)
+        self._cpg_phase = 0.0
         self._last_mode_change_step = 0
 
         mujoco = self._mj
@@ -469,8 +497,72 @@ class MiniCheetahEnv(gym.Env):
         return self._get_obs(), {}
 
     def step(self, action: np.ndarray):
-        action = np.clip(action, -0.5, 0.5).astype(np.float32)
-        target_q = DEFAULT_STANCE + action
+        action = np.clip(action, -1.0, 1.0).astype(np.float32)
+        # v12: reduce action scale 0.5→0.2 rad so policy makes small corrections
+        # to CPG rather than overpowering it. Prevents action-std explosion.
+        action_scaled = action * 0.2
+
+        # ── CPG: base trot pattern for walk/run modes (v11) ──────────
+        # Without CPG, Gaussian noise on 12 independent joints CANNOT
+        # discover coordinated locomotion gaits. The CPG provides a base
+        # trotting rhythm; the policy learns residual adjustments on top.
+        # In stand/crouch/jump modes, cpg_scale=0 and only policy output acts.
+        cpg = np.zeros(NUM_JOINTS, dtype=np.float32)
+        if self.command_mode in ("walk", "run"):
+            t = self.step_count * self.dt
+            freq = 2.0  # Hz (standard trot frequency for Go1-scale robot)
+            phase = 2.0 * math.pi * freq * t
+            self._cpg_phase = phase  # store for observation
+            amp_hip = 0.12   # hip flexion amplitude (rad)
+            amp_knee = 0.15  # knee flexion amplitude (rad)
+            # Trot: diagonal pairs in anti-phase (FR+RL vs FL+RR)
+            # Joint order: [FR_abd, FR_hip, FR_knee, FL_abd, FL_hip, FL_knee,
+            #               RR_abd, RR_hip, RR_knee, RL_abd, RL_hip, RL_knee]
+            sin_p = math.sin(phase)
+            sin_p_pi = math.sin(phase + math.pi)
+            cpg[1]  = amp_hip * sin_p       # FR hip
+            cpg[2]  = amp_knee * sin_p       # FR knee
+            cpg[4]  = amp_hip * sin_p_pi     # FL hip
+            cpg[5]  = amp_knee * sin_p_pi    # FL knee
+            cpg[7]  = amp_hip * sin_p_pi     # RR hip
+            cpg[8]  = amp_knee * sin_p_pi    # RR knee
+            cpg[10] = amp_hip * sin_p        # RL hip
+            cpg[11] = amp_knee * sin_p       # RL knee
+
+            # v13: Add lateral CPG component — abductor modulation for vy tracking.
+            # Without this, lateral motion requires learning from scratch (hard).
+            amp_abd = 0.08 * min(abs(float(self.command[1])) / 0.3, 1.0)  # scale with |vy_cmd|
+            abd_sign = 1.0 if float(self.command[1]) > 0 else -1.0
+            # All four abductors lean in the commanded lateral direction
+            cpg[0]  = amp_abd * abd_sign   # FR abductor
+            cpg[3]  = amp_abd * abd_sign   # FL abductor
+            cpg[6]  = amp_abd * abd_sign   # RR abductor
+            cpg[9]  = amp_abd * abd_sign   # RL abductor
+
+            # v13c: Split CPG scaling — sagittal (fwd motion) primarily scales
+            # with |vx|, but a base floor ensures leg cycling whenever ANY
+            # command axis is active.  Without this floor the robot cannot
+            # step sideways for pure lateral commands because the legs don't
+            # cycle at all.
+            fwd_activity = abs(float(self.command[0])) + abs(float(self.command[2])) * 0.15
+            fwd_scale_raw = min(fwd_activity / 0.3, 1.0)
+            # Base CPG floor: 30% amplitude when any velocity is commanded
+            any_cmd = abs(float(self.command[0])) + abs(float(self.command[1])) + abs(float(self.command[2])) * 0.3
+            base_floor = 0.3 if any_cmd > 0.05 else 0.0
+            fwd_scale = max(base_floor, fwd_scale_raw)
+            for i in [1, 2, 4, 5, 7, 8, 10, 11]:  # sagittal joints (hip/knee)
+                cpg[i] *= fwd_scale
+            # Abductors already scaled by |vy_cmd| above; also activate for wz
+            wz_abd = 0.06 * min(abs(float(self.command[2])) / 0.5, 1.0)
+            if abs(float(self.command[2])) > 0.05:
+                # Differential drive: left/right lean differently for yaw
+                yaw_sign = 1.0 if float(self.command[2]) > 0 else -1.0
+                cpg[0]  += wz_abd * yaw_sign   # FR leans right for left turn
+                cpg[3]  -= wz_abd * yaw_sign   # FL leans left for left turn
+                cpg[6]  += wz_abd * yaw_sign   # RR
+                cpg[9]  -= wz_abd * yaw_sign   # RL
+
+        target_q = DEFAULT_STANCE + action_scaled + cpg
 
         mujoco = self._mj
         q = self.data.qpos[7:7 + NUM_JOINTS]
@@ -534,9 +626,11 @@ class MiniCheetahEnv(gym.Env):
         if mode == "stand":
             vx, vy, wz = 0.0, 0.0, 0.0
         elif mode == "walk":
-            vx = float(rng.uniform(0.2, 0.8))
-            vy = float(rng.uniform(-0.5, 0.5))   # v8: ±0.2 → ±0.5
-            wz = float(rng.uniform(-0.8, 0.8))   # v8: ±0.3 → ±0.8
+            # v13: Include zero/negative vx so policy learns to NOT always go forward.
+            # Previous [0.2, 0.8] range meant vx_cmd was always positive → forward bias.
+            vx = float(rng.uniform(-0.3, 0.8))
+            vy = float(rng.uniform(-0.5, 0.5))
+            wz = float(rng.uniform(-0.8, 0.8))
         elif mode == "run":
             vx = float(rng.uniform(1.5, 3.0))
             vy = float(rng.uniform(-0.5, 0.5))   # v8: ±0.3 → ±0.5
@@ -601,13 +695,29 @@ class MiniCheetahEnv(gym.Env):
         skill_idx = SKILL_TO_IDX.get(self.command_mode, 0)
         skill_onehot[skill_idx] = 1.0
 
+        # CPG phase signal (enables phase-dependent residual learning)
+        # Active in walk/run modes; zero in stand/crouch/jump (no rhythm needed)
+        if self.command_mode in ("walk", "run"):
+            cpg_phase_signal = np.array([
+                math.sin(self._cpg_phase),
+                math.cos(self._cpg_phase),
+            ], dtype=np.float32)
+        else:
+            cpg_phase_signal = np.zeros(2, dtype=np.float32)
+
         obs = np.concatenate([
             qpos, qvel, base_linvel, base_angvel,
             gravity_body, self.prev_action,
             np.append(self.command, self.target_height),
             base_height, foot_contacts,
             skill_onehot,
+            cpg_phase_signal,
         ]).astype(np.float32)
+
+        # Manual normalization: divide by fixed scales to get ~[-1, 1] range.
+        # Replaces VecNormalize running statistics (which drifted during training
+        # and caused catastrophic forgetting of learned locomotion gaits).
+        obs = obs / OBS_SCALES
 
         if self.randomize_domain:
             # Add noise to sensor dims (0:54), NOT to skill encoding (54:59)
@@ -647,21 +757,19 @@ class MiniCheetahEnv(gym.Env):
         r_vel_x = math.exp(-vx_error / sigma_vx)
         r_vel_y = math.exp(-vy_error / sigma_vy)
 
-        # Command-proportional: scale reward by min(|cmd|/threshold, 1.0)
-        # When cmd≈0, reward is near 0 (no free lunch for trivial matching).
-        # When |cmd|≥threshold, full reward. Threshold=0.1 for precision.
+        # v13b: Keep command-proportional scaling for tracking rewards.
+        # Without this, zero-cmd axes give free max reward for standing still.
+        # The tracking PENALTY (r_vel_track_penalty) handles zero-axis motion.
         CMD_ACTIVE_THRESH = 0.1
         vx_cmd_scale = min(abs(vx_cmd) / CMD_ACTIVE_THRESH, 1.0)
         vy_cmd_scale = min(abs(vy_cmd) / CMD_ACTIVE_THRESH, 1.0)
         wz_cmd_scale = min(abs(wz_cmd) / CMD_ACTIVE_THRESH, 1.0)
 
-        # In locomotion modes, scale tracking rewards by command magnitude.
-        # Stand/crouch modes already disable these via MODE_REWARD_MULTIPLIERS=0.
         if mode in ("walk", "run"):
             r_vel_x *= vx_cmd_scale
             r_vel_y *= vy_cmd_scale
 
-        # ── 2. Yaw rate tracking (adaptive sigma + command-proportional) ──
+        # ── 2. Yaw rate tracking (adaptive sigma) ──
         ang_vel_error = (base_angvel[2] - wz_cmd) ** 2
         sigma_wz = max(TRACKING_SIGMA, abs(wz_cmd) * 0.5)
         r_yaw = math.exp(-ang_vel_error / sigma_wz)
@@ -764,17 +872,12 @@ class MiniCheetahEnv(gym.Env):
             # Clip to prevent reward from velocity overshoot
             r_fwd_vel = max(r_fwd_vel, 0.0)
 
-        # ── 6d. Velocity tracking penalty for walk/run (v10: stick for locomotion) ──
-        # Without this, standing still in walk mode was more rewarding than walking.
-        # This explicitly penalizes not following velocity commands.
-        # Raw value is always ≥0; the REWARD_SCALES entry is negative.
+        # ── 6d. Velocity tracking penalty for walk/run (v13: always active) ──
+        # v13: Always penalize ALL velocity axes — no cmd_activity gate.
+        # The gate previously meant pure-zero commands got no penalty at all.
         r_vel_track_penalty = 0.0
-        if mode in ("walk", "run") and cmd_speed > 0.05:
-            # Penalize squared error for each commanded axis that is non-zero
-            vx_track_err = vx_error if abs(vx_cmd) > 0.05 else 0.0
-            vy_track_err = vy_error if abs(vy_cmd) > 0.05 else 0.0
-            wz_track_err = ang_vel_error if abs(wz_cmd) > 0.05 else 0.0
-            r_vel_track_penalty = vx_track_err + vy_track_err + wz_track_err
+        if mode in ("walk", "run"):
+            r_vel_track_penalty = vx_error + vy_error + ang_vel_error
 
         # ── 7. Jump FSM phase reward ──
         r_jump_phase = self._advance_jump_fsm(base_z, base_linvel, foot_contacts)
