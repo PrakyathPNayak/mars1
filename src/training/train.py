@@ -229,6 +229,11 @@ def train(args):
     if args.resume and os.path.exists(args.resume):
         print(f"Resuming from: {args.resume}")
         model = PPO.load(args.resume, env=vec_env, device=device)
+        # Override LR for fine-tuning: default linear schedule resets to 3e-4
+        # which destroys a converged policy. Use constant low LR instead.
+        if args.finetune_lr is not None:
+            model.learning_rate = args.finetune_lr
+            print(f"  Fine-tune LR: {args.finetune_lr}")
     else:
         n_epochs = getattr(args, "n_epochs", 5)
         # n_steps=4096: long rollouts improve GAE advantage estimates for locomotion.
@@ -344,6 +349,10 @@ def main():
     parser.add_argument("--n-epochs", type=int, default=10,
                         help="PPO gradient update epochs per rollout (default: 10)")
     parser.add_argument("--resume", type=str, default=None)
+    parser.add_argument("--finetune-lr", type=float, default=None,
+                        help="Constant LR for fine-tuning a resumed model (e.g., 5e-5). "
+                             "Without this, resume resets LR schedule to 3e-4 which is "
+                             "catastrophically high for a converged policy.")
     parser.add_argument("--device", type=str, default="cpu",
                         help="Device: cpu, cuda, or auto (auto uses GPU if available)")
     parser.add_argument("--ckpt-dir", type=str, default="checkpoints",

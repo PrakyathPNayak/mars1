@@ -7,7 +7,8 @@ without requiring viewer window focus.
 
 Key bindings (held-key style):
   W/↑: Forward   S/↓: Backward   A/←: Strafe left   D/→: Strafe right
-  Q: Turn left    E: Turn right    SPACE: Stop all    1/2/3: Walk/Trot/Run
+  Q: Turn left    E: Turn right    SPACE: Stop all
+  1: Walk (0.5 m/s)   2: Run (1.2 m/s)   3: Run (2.0 m/s)
   J: Jump          C: Toggle crouch
   ESC ESC: Quit (press twice quickly — single ESC ignored to prevent arrow-key misfires)
 """
@@ -18,8 +19,8 @@ import time
 import select
 from typing import Tuple
 
-# Speed presets
-SPEEDS = {"walk": 0.5, "trot": 1.5, "run": 3.0}
+# Speed presets (matched to training range: walk 0.3-0.8, run 1.0-2.0 m/s)
+SPEEDS = {"walk": 0.5, "run_med": 1.2, "run_fast": 2.0}
 STRAFE_SPEED = 0.8
 TURN_SPEED = 1.0
 
@@ -34,7 +35,7 @@ class TerminalKeyController:
         self._right = False
         self._turn_l = False
         self._turn_r = False
-        self.speed = SPEEDS["trot"]
+        self.speed = SPEEDS["run_med"]
         self.mode = "stand"
         self.crouching = False
         self.jumping = False
@@ -143,9 +144,9 @@ class TerminalKeyController:
             elif c == "1":
                 self.speed = SPEEDS["walk"]; self.mode = "walk"
             elif c == "2":
-                self.speed = SPEEDS["trot"]; self.mode = "trot"
+                self.speed = SPEEDS["run_med"]; self.mode = "run"
             elif c == "3":
-                self.speed = SPEEDS["run"]; self.mode = "run"
+                self.speed = SPEEDS["run_fast"]; self.mode = "run"
             elif c == "j":
                 self._pre_jump_mode = self.mode if self.mode != "jump" else self._pre_jump_mode
                 self.jumping = True
@@ -155,7 +156,7 @@ class TerminalKeyController:
             elif c == "c":
                 self.crouching = not self.crouching
                 self.jumping = False
-                self.mode = "crouch" if self.crouching else "trot"
+                self.mode = "crouch" if self.crouching else "walk"
             elif ch == "\x1b":  # ESC — handled in _read_loop (double-ESC required)
                 pass
 
@@ -195,7 +196,7 @@ class TerminalKeyController:
                     self.jumping = False
                     self.mode = self._pre_jump_mode
             if (vx != 0 or vy != 0 or wz != 0) and mode == "stand":
-                mode = "trot"
+                mode = "walk"
             return vx, vy, wz, mode
 
     def reset_motion(self):
@@ -222,7 +223,7 @@ def print_terminal_bindings():
 ║  E            : Turn right (exclusive)          ║
 ║  J            : Jump                            ║
 ║  C            : Toggle crouch                   ║
-║  1 / 2 / 3    : Walk / Trot / Run speed         ║
+║  1 / 2 / 3    : Walk / Run (1.2) / Run (2.0)    ║
 ║  SPACE        : Stop all motion                 ║
 ║  ESC ESC      : Quit (press ESC twice quickly)  ║
 ╠══════════════════════════════════════════════════╣

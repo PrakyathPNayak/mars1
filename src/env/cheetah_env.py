@@ -161,6 +161,8 @@ REWARD_SCALES = {
     "r_joint_limit":  -10.0,       # limit_proximity². legged_gym=-10.0 (hard constraint)
     "r_lin_vel_z":     -2.0,       # v_z². legged_gym=-2.0 (was -0.5; too lenient on bounce)
     "r_dof_vel":       -5e-5,      # Σq̇². Halved from -1e-4; was -0.16/step, now ~-0.08
+    "r_abd_symmetry":  -1.0,       # v15: penalize left-right abductor imbalance to fix run drift
+    "r_heading_drift": -3.0,       # v18: linear |wz-wz_cmd| penalty — 10x stronger gradient than squared for small drifts
 }
 
 # ── Per-mode reward multipliers (Walk These Ways / multi-skill style) ──
@@ -195,7 +197,7 @@ MODE_REWARD_MULTIPLIERS = {
         "r_body_height": 2.0,
         "r_stillness": 0.0,
         "r_motion_penalty": 0.0,
-        "r_vel_track_penalty": 4.0,  # v14: 4x (was 3x) — reduce overshoot and drift
+        "r_vel_track_penalty": 3.0,  # v15: reverted to v13 level (v14's 4x caused regression)
         "r_fwd_vel": 0.0,      # v12c: DISABLED — was causing forward-only bias
         "r_jump_phase": 0.0,
         "r_smooth": 0.5,
@@ -203,8 +205,10 @@ MODE_REWARD_MULTIPLIERS = {
         "r_lin_vel_z": 0.0,
         "r_torque": 0.0,
         "r_dof_vel": 0.0,
+        "r_abd_symmetry": 1.0,  # v15: gentle abductor symmetry for walk
+        "r_heading_drift": 1.0,  # v19: reduced from 2.0 to balance with yaw tracking
     },
-    # Run: v14 — equalized vy/yaw tracking with walk, stronger penalty.
+    # Run: v15 — equalized vy/yaw with walk, targeted abductor symmetry penalty.
     "run": {
         "r_vel_x": 3.0,
         "r_vel_y": 3.0,        # v14: was 2.0 — equalize with walk to fix lateral drift
@@ -214,7 +218,7 @@ MODE_REWARD_MULTIPLIERS = {
         "r_body_height": 2.0,
         "r_stillness": 0.0,
         "r_motion_penalty": 0.0,
-        "r_vel_track_penalty": 4.0,  # v14: 4x (was 3x) — run drift needs stronger correction
+        "r_vel_track_penalty": 3.0,  # v15: reverted to v13 level (v14's 4x caused regression)
         "r_fwd_vel": 0.0,
         "r_jump_phase": 0.0,
         "r_smooth": 0.5,
@@ -222,6 +226,8 @@ MODE_REWARD_MULTIPLIERS = {
         "r_ang_vel_xy": 0.0,
         "r_torque": 0.0,
         "r_dof_vel": 0.0,
+        "r_abd_symmetry": 2.0,  # v15: stronger for run — main drift fix
+        "r_heading_drift": 1.0,  # v18: heading correction for run (less needed than walk)
     },
     # Crouch: low position, stillness, strict orientation
     "crouch": {
@@ -260,6 +266,7 @@ MODE_REWARD_MULTIPLIERS = {
 # Tracking σ for exp kernel: legged_gym default is 0.25.
 TRACKING_SIGMA = 0.25
 LATERAL_SIGMA = 0.15   # tighter for lateral precision (smaller commands)
+HEADING_SIGMA = 0.08   # v17: tighter yaw sigma — 0.1 rad/s drift loses 12% reward (was 5% with 0.25)
 
 # Posture exp-kernel σ — wider than tracking for smoother gradient
 POSTURE_SIGMA = 0.5
@@ -529,21 +536,29 @@ class MiniCheetahEnv(gym.Env):
             cpg[10] = amp_hip * sin_p        # RL hip
             cpg[11] = amp_knee * sin_p       # RL knee
 
-            # v13: Add lateral CPG component — abductor modulation for vy tracking.
-            # Without this, lateral motion requires learning from scratch (hard).
-            amp_abd = 0.08 * min(abs(float(self.command[1])) / 0.3, 1.0)  # scale with |vy_cmd|
+            # v17: Oscillating lateral CPG — abductors alternate lean during
+            # trot cycle to create lateral weight-shift stepping (was static lean).
+            # In trot: FR+RL swing phase vs FL+RR swing phase.
+            # For vy>0 (move left): lean left when FR+RL swing, push right when FL+RR swing
+            # Phase-shifted by 90° from sagittal to avoid interference.
+            amp_abd = 0.10 * min(abs(float(self.command[1])) / 0.3, 1.0)  # scale with |vy_cmd|
             abd_sign = 1.0 if float(self.command[1]) > 0 else -1.0
-            # All four abductors lean in the commanded lateral direction
-            cpg[0]  = amp_abd * abd_sign   # FR abductor
-            cpg[3]  = amp_abd * abd_sign   # FL abductor
-            cpg[6]  = amp_abd * abd_sign   # RR abductor
-            cpg[9]  = amp_abd * abd_sign   # RL abductor
+            cos_p = math.cos(phase)  # 90° shifted from sin_p sagittal
+            cos_p_pi = math.cos(phase + math.pi)
+            # Diagonal pairs: FR+RL get cos_p, FL+RR get cos_p_pi
+            cpg[0]  = amp_abd * abd_sign * cos_p     # FR abductor
+            cpg[3]  = amp_abd * abd_sign * cos_p_pi  # FL abductor
+            cpg[6]  = amp_abd * abd_sign * cos_p_pi  # RR abductor
+            cpg[9]  = amp_abd * abd_sign * cos_p     # RL abductor
 
             # v13c: Split CPG scaling — sagittal (fwd motion) primarily scales
             # with |vx|, but a base floor ensures leg cycling whenever ANY
             # command axis is active.  Without this floor the robot cannot
             # step sideways for pure lateral commands because the legs don't
             # cycle at all.
+            # v13c: Split CPG scaling — sagittal (fwd motion) primarily scales
+            # with |vx|, but a base floor ensures leg cycling whenever ANY
+            # command axis is active.
             fwd_activity = abs(float(self.command[0])) + abs(float(self.command[2])) * 0.15
             fwd_scale_raw = min(fwd_activity / 0.3, 1.0)
             # Base CPG floor: 30% amplitude when any velocity is commanded
@@ -752,7 +767,10 @@ class MiniCheetahEnv(gym.Env):
         #      This made standing more rewarding than walking.
         vx_error = (base_linvel[0] - vx_cmd) ** 2
         vy_error = (base_linvel[1] - vy_cmd) ** 2
-        sigma_vx = max(TRACKING_SIGMA, abs(vx_cmd) * 0.5)
+        # v20: tighter vx sigma for walk mode — enables speed discrimination
+        # Walk sigma floor 0.12 (was 0.25): 0.1 m/s error loses 8% not 4%
+        vx_sigma_floor = 0.12 if mode == "walk" else TRACKING_SIGMA
+        sigma_vx = max(vx_sigma_floor, abs(vx_cmd) * 0.5)
         sigma_vy = max(LATERAL_SIGMA, abs(vy_cmd) * 0.5)
         r_vel_x = math.exp(-vx_error / sigma_vx)
         r_vel_y = math.exp(-vy_error / sigma_vy)
@@ -765,16 +783,25 @@ class MiniCheetahEnv(gym.Env):
         vy_cmd_scale = min(abs(vy_cmd) / CMD_ACTIVE_THRESH, 1.0)
         wz_cmd_scale = min(abs(wz_cmd) / CMD_ACTIVE_THRESH, 1.0)
 
+        # v16: Cross-axis stability — when ANY command is active, reward tracking
+        # on ALL axes. Prevents heading drift (wz) and lateral drift (vy) during
+        # forward walking. Without this, r_yaw=0 when wz_cmd=0, causing heading
+        # drift of ~45° over 500 steps. Does NOT cause exploitation: walking at
+        # target is still strictly better than standing (tracking penalty enforces).
+        any_cmd_active = max(vx_cmd_scale, vy_cmd_scale, wz_cmd_scale)
+
         if mode in ("walk", "run"):
-            r_vel_x *= vx_cmd_scale
-            r_vel_y *= vy_cmd_scale
+            r_vel_x *= max(vx_cmd_scale, any_cmd_active)
+            r_vel_y *= max(vy_cmd_scale, any_cmd_active)
 
         # ── 2. Yaw rate tracking (adaptive sigma) ──
         ang_vel_error = (base_angvel[2] - wz_cmd) ** 2
-        sigma_wz = max(TRACKING_SIGMA, abs(wz_cmd) * 0.5)
+        # v17: use tighter HEADING_SIGMA for yaw — prevents heading drift
+        # during forward walk/run where wz_cmd=0
+        sigma_wz = max(HEADING_SIGMA, abs(wz_cmd) * 0.5)
         r_yaw = math.exp(-ang_vel_error / sigma_wz)
         if mode in ("walk", "run"):
-            r_yaw *= wz_cmd_scale
+            r_yaw *= max(wz_cmd_scale, any_cmd_active)
 
         # ── 3. Combined gait reward (trot symmetry + clearance + air time) ──
         foot_contacts = np.zeros(4, dtype=bool)
@@ -914,6 +941,23 @@ class MiniCheetahEnv(gym.Env):
         # ── 15. Joint velocity penalty (anti-shake) ──
         r_dof_vel = float(np.sum(joint_vel ** 2))
 
+        # ── 16. Abductor symmetry penalty (v15: fix run lateral drift) ──
+        # Penalize left-right abductor imbalance: (FL_abd + RL_abd - FR_abd - RR_abd)²
+        # Root cause of run drift was asymmetric abductor bias (FL=+0.24, RR/RL=-0.12)
+        # Modulate by (1 - vy_cmd_scale) so lateral commands can still use asymmetry
+        abd_left = action[3] + action[9]    # FL_abd + RL_abd
+        abd_right = action[0] + action[6]   # FR_abd + RR_abd
+        abd_imbalance = (abd_left - abd_right) ** 2
+        vy_symmetry_gate = 1.0 - min(abs(vy_cmd) / 0.3, 1.0)  # reduce penalty when vy commanded
+        r_abd_symmetry = abd_imbalance * vy_symmetry_gate
+
+        # ── 17. Heading drift penalty (v18: linear |wz - wz_cmd|) ──
+        # Linear error gives 10x stronger gradient than squared for small drifts.
+        # Fixes persistent walk heading drift of -0.093 rad/s (-26° over 10s).
+        r_heading_drift = 0.0
+        if mode in ("walk", "run"):
+            r_heading_drift = abs(base_angvel[2] - wz_cmd)
+
         # ── Update tracking state ──
         self._prev_base_linvel = base_linvel.copy()
         self._prev_foot_heights = foot_heights.copy()
@@ -939,6 +983,8 @@ class MiniCheetahEnv(gym.Env):
             "r_joint_limit": r_joint_limit,
             "r_lin_vel_z":   r_lin_vel_z,
             "r_dof_vel":     r_dof_vel,
+            "r_abd_symmetry": r_abd_symmetry,
+            "r_heading_drift": r_heading_drift,
         }
 
         # Apply base scales, then mode-specific multipliers
