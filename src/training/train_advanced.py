@@ -67,16 +67,16 @@ def train(args):
 
     # Learning rate schedule with warmup (inspired by TERT, SET papers)
     def lr_schedule_with_warmup(progress_remaining: float) -> float:
-        """Linear warmup for first 5% of training, then cosine decay."""
+        """Linear warmup for first 1% of training, then cosine decay to 10% of peak."""
         progress = 1.0 - progress_remaining
-        warmup_frac = 0.05
+        warmup_frac = 0.01
         if progress < warmup_frac:
-            # Linear warmup
-            return progress / warmup_frac
+            # Linear warmup (fast — 1% of training)
+            return max(progress / warmup_frac, 0.01)  # floor at 1% of peak
         else:
-            # Cosine decay
+            # Cosine decay to 10% of peak
             decay_progress = (progress - warmup_frac) / (1.0 - warmup_frac)
-            return 0.5 * (1.0 + np.cos(np.pi * decay_progress))
+            return 0.1 + 0.9 * 0.5 * (1.0 + np.cos(np.pi * decay_progress))
 
 
     log_dir = Path("logs/training_advanced")
@@ -153,8 +153,8 @@ def train(args):
             policy=TransformerActorCriticPolicy,
             env=vec_env,
             learning_rate=lambda p: 3e-4 * lr_schedule_with_warmup(p),
-            n_steps=2048,
-            batch_size=256,
+            n_steps=4096,
+            batch_size=512,
             n_epochs=10,
             gamma=0.99,
             gae_lambda=0.95,
@@ -245,8 +245,8 @@ def main():
     parser = argparse.ArgumentParser(
         description="Train Unitree Go1 with Hierarchical Transformer + MoE"
     )
-    parser.add_argument("--total-steps", type=int, default=5_000_000)
-    parser.add_argument("--n-envs", type=int, default=8)
+    parser.add_argument("--total-steps", type=int, default=50_000_000)
+    parser.add_argument("--n-envs", type=int, default=24)
     parser.add_argument("--d-model", type=int, default=256)
     parser.add_argument("--n-layers", type=int, default=4)
     parser.add_argument("--n-experts", type=int, default=6)

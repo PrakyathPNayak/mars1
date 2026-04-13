@@ -154,32 +154,32 @@ POSTURE_TARGETS = {
 # ── Reward scales (legged_gym / RMA aligned) ─────────────────────
 REWARD_SCALES = {
     # Positive tracking rewards
-    "r_vel_x":          1.5,
-    "r_vel_y":          1.5,
-    "r_yaw":            2.0,
-    "r_gait":           2.5,       # v23: stronger gait signal
+    "r_vel_x":          2.0,
+    "r_vel_y":          2.0,
+    "r_yaw":            2.5,
+    "r_gait":           2.5,
     "r_posture":        1.0,
-    "r_body_height":    1.5,       # v23: increased for height control precision
+    "r_body_height":    1.5,
     "r_stillness":      1.5,
     "r_motion_penalty": -1.5,
-    "r_vel_track_penalty": -2.0,
-    "r_fwd_vel":        10.0,
+    "r_vel_track_penalty": 0.0,    # DISABLED — unbounded, use exp() tracking instead
+    "r_fwd_vel":        5.0,       # Forward velocity bonus
     "r_jump_phase":     3.0,
-    "r_alive":          0.5,
-    "r_terrain_progress": 1.0,     # v23: NEW — reward forward progress on terrain
-    "r_foot_clearance":  0.5,      # v23: NEW — proper foot clearance on terrain
-    "r_energy":         -0.001,    # v23: NEW — energy efficiency (cost of transport)
-    # Penalties
+    "r_alive":          2.0,       # Increased — anchor rewards positive
+    "r_terrain_progress": 1.0,
+    "r_foot_clearance":  0.5,
+    "r_energy":         -0.0005,   # Light energy penalty
+    # Penalties (all bounded or small)
     "r_orientation":   -2.0,
     "r_torque":        -1e-5,
-    "r_smooth":        -0.02,      # v23: stronger smoothness for precise teleoperation
+    "r_smooth":        -0.02,
     "r_ang_vel_xy":    -0.05,
     "r_joint_limit":  -10.0,
     "r_lin_vel_z":     -2.0,
     "r_dof_vel":       -5e-5,
     "r_abd_symmetry":  -1.0,
-    "r_heading_drift": -3.0,
-    "r_stumble":       -0.5,       # v23: NEW — penalize foot lateral contact
+    "r_heading_drift": -1.0,       # Reduced from -3.0
+    "r_stumble":       -0.2,       # Reduced from -0.5 — only terrain contacts
 }
 
 # ── Per-mode reward multipliers ──────────────────────────────────
@@ -196,8 +196,8 @@ MODE_REWARD_MULTIPLIERS = {
     "walk": {
         "r_vel_x": 3.0, "r_vel_y": 3.0, "r_yaw": 3.0, "r_gait": 2.5,
         "r_posture": 1.0, "r_body_height": 2.0, "r_stillness": 0.0,
-        "r_motion_penalty": 0.0, "r_vel_track_penalty": 3.0,
-        "r_fwd_vel": 0.0, "r_jump_phase": 0.0,
+        "r_motion_penalty": 0.0, "r_vel_track_penalty": 0.0,
+        "r_fwd_vel": 1.0, "r_jump_phase": 0.0,
         "r_terrain_progress": 1.0, "r_foot_clearance": 1.0,
         "r_smooth": 1.0, "r_ang_vel_xy": 0.3, "r_lin_vel_z": 0.3,
         "r_torque": 0.3, "r_dof_vel": 0.3,
@@ -207,8 +207,8 @@ MODE_REWARD_MULTIPLIERS = {
     "run": {
         "r_vel_x": 3.0, "r_vel_y": 3.0, "r_yaw": 3.0, "r_gait": 2.5,
         "r_posture": 1.0, "r_body_height": 2.0, "r_stillness": 0.0,
-        "r_motion_penalty": 0.0, "r_vel_track_penalty": 3.0,
-        "r_fwd_vel": 0.0, "r_jump_phase": 0.0,
+        "r_motion_penalty": 0.0, "r_vel_track_penalty": 0.0,
+        "r_fwd_vel": 1.5, "r_jump_phase": 0.0,
         "r_terrain_progress": 1.5, "r_foot_clearance": 1.5,
         "r_smooth": 0.5, "r_lin_vel_z": 0.3, "r_ang_vel_xy": 0.3,
         "r_torque": 0.3, "r_dof_vel": 0.3,
@@ -394,6 +394,7 @@ class TerrainGenerator:
 
         Returns (rows*cols,) flat array of heights relative to base position.
         Grid is oriented with rows along robot's forward direction.
+        Vectorized with numpy for performance.
 
         Args:
             x, y: robot world position
@@ -410,24 +411,21 @@ class TerrainGenerator:
         cos_yaw = math.cos(yaw)
         sin_yaw = math.sin(yaw)
 
-        result = np.zeros(rows * cols, dtype=np.float32)
-        half_r = (rows - 1) / 2.0
-        half_c = (cols - 1) / 2.0
+        # Build local grid offsets (vectorized)
+        r_offsets = (np.arange(rows) - (rows - 1) / 2.0) * resolution
+        c_offsets = (np.arange(cols) - (cols - 1) / 2.0) * resolution
+        dx_local, dy_local = np.meshgrid(r_offsets, c_offsets, indexing='ij')
 
-        for r in range(rows):
-            for c in range(cols):
-                # Local offset (forward = +x, left = +y)
-                dx_local = (r - half_r) * resolution
-                dy_local = (c - half_c) * resolution
-                # Rotate to world frame
-                dx_world = cos_yaw * dx_local - sin_yaw * dy_local
-                dy_world = sin_yaw * dx_local + cos_yaw * dy_local
-                # World position
-                wx = x + dx_world
-                wy = y + dy_world
-                result[r * cols + c] = self.get_height_at(wx, wy)
+        # Rotate to world frame (vectorized)
+        wx = x + cos_yaw * dx_local - sin_yaw * dy_local
+        wy = y + sin_yaw * dx_local + cos_yaw * dy_local
 
-        return result
+        # Convert to grid indices (vectorized)
+        n = self.resolution
+        xi = np.clip(((wx / self.size + 0.5) * n).astype(np.int32), 0, n - 1)
+        yi = np.clip(((wy / self.size + 0.5) * n).astype(np.int32), 0, n - 1)
+
+        return self._heightfield[xi, yi].flatten().astype(np.float32)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1185,12 +1183,17 @@ class MiniCheetahEnv(gym.Env):
         # ── 21. Stumble penalty (v23) ───────────────────────────
         r_stumble = 0.0
         # Detect foot collisions with lateral forces (hitting stairs/edges)
+        # Only count contacts between foot geoms and terrain/floor, not self-collisions
         if self.data.ncon > 0:
+            floor_id = self._floor_geom_id
             for i in range(self.data.ncon):
                 c = self.data.contact[i]
-                # Check if contact involves a foot geom
-                if c.geom1 in self._foot_geom_ids or c.geom2 in self._foot_geom_ids:
-                    # Check for large lateral contact normal
+                g1, g2 = c.geom1, c.geom2
+                # Check if contact involves a foot geom AND the floor/terrain
+                foot_involved = g1 in self._foot_geom_ids or g2 in self._foot_geom_ids
+                floor_involved = (g1 == floor_id) or (g2 == floor_id)
+                if foot_involved and floor_involved:
+                    # Large lateral normal = foot hitting edge/side of terrain
                     if abs(c.frame[0]) > 0.5 or abs(c.frame[1]) > 0.5:
                         r_stumble += 1.0
 
