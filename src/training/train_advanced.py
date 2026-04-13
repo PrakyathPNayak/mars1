@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 
-def make_env(rank=0, history_len=32, **kwargs):
+def make_env(rank=0, history_len=32, terrain_type="random", terrain_difficulty=0.3, **kwargs):
     """Environment factory with history wrapper for vectorized training."""
     project_root = str(Path(__file__).resolve().parent.parent.parent)
     def _init():
@@ -38,8 +38,8 @@ def make_env(rank=0, history_len=32, **kwargs):
         env = MiniCheetahEnv(
             render_mode="none",
             use_terrain=True,
-            terrain_type="random",
-            terrain_difficulty=0.3,
+            terrain_type=terrain_type,
+            terrain_difficulty=terrain_difficulty,
             episode_length=2000,
             **kwargs
         )
@@ -122,16 +122,23 @@ def train(args):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"  Device: {device}")
 
+    # v23h: Train on flat terrain first for clean learning signal
+    # Random terrain causes most episodes to terminate early from falls,
+    # masking the reward gradient between good and bad locomotion
+    train_terrain = "flat"
     print(f"\nCreating {args.n_envs} parallel environments with history...")
+    print(f"  Training terrain: {train_terrain}")
     try:
         vec_env = SubprocVecEnv(
-            [make_env(i, history_len=history_len) for i in range(args.n_envs)]
+            [make_env(i, history_len=history_len, terrain_type=train_terrain)
+             for i in range(args.n_envs)]
         )
         print("  Using SubprocVecEnv (parallel)")
     except Exception as e:
         print(f"  SubprocVecEnv failed ({e}), falling back to DummyVecEnv")
         vec_env = DummyVecEnv(
-            [make_env(i, history_len=history_len) for i in range(args.n_envs)]
+            [make_env(i, history_len=history_len, terrain_type=train_terrain)
+             for i in range(args.n_envs)]
         )
     vec_env = VecMonitor(vec_env, str(log_dir))
     # Normalize rewards to keep value targets small (~1/step)
@@ -144,8 +151,9 @@ def train(args):
         gamma=0.99,
     )
 
-    eval_env = DummyVecEnv([make_env(999, history_len=history_len)])
-    eval_env = VecMonitor(eval_env)  # Match training wrapper structure
+    # Eval on FLAT terrain for consistent, comparable metrics
+    eval_env = DummyVecEnv([make_env(999, history_len=history_len, terrain_type="flat")])
+    eval_env = VecMonitor(eval_env)
     eval_env = VecNormalize(
         eval_env,
         norm_obs=False,
@@ -166,6 +174,15 @@ def train(args):
     if args.resume and os.path.exists(args.resume):
         print(f"Resuming from: {args.resume}")
         model = PPO.load(args.resume, env=vec_env, device=device)
+        # v23f: Override hyperparams for resumed model
+        model.ent_coef = 0.001
+        model.target_kl = 0.02
+        # Reset log_std to reduce exploration noise (was 0.61, way too high)
+        with torch.no_grad():
+            old_std = model.policy.log_std.data.exp().mean().item()
+            model.policy.log_std.data.fill_(-1.0)  # std=0.37, back to initial
+            new_std = model.policy.log_std.data.exp().mean().item()
+            print(f"  Reset log_std: {old_std:.3f} -> {new_std:.3f}")
     else:
         model = PPO(
             policy=TransformerActorCriticPolicy,
@@ -178,7 +195,7 @@ def train(args):
             gae_lambda=0.95,
             clip_range=0.2,
             target_kl=0.02,    # Early stop epoch if KL exceeds target
-            ent_coef=0.01,     # Moderate exploration (0.02 caused runaway std)
+            ent_coef=0.001,    # v23f: near-zero to prevent std inflation
             vf_coef=0.05,     # 10x reduction: prevent value grad dominating policy
             max_grad_norm=1.0, # Relaxed: allows more policy gradient through
             policy_kwargs=policy_kwargs,
@@ -196,6 +213,25 @@ def train(args):
     # Adaptive curriculum
     curriculum = AdaptiveCurriculum(n_envs=args.n_envs)
 
+    # v23f: Clamp log_std to prevent unbounded growth from entropy bonus
+    class StdClampCallback(BaseCallback):
+        """Clamp policy log_std after each rollout to bound exploration noise."""
+        LOG_STD_MIN = -3.0   # std >= 0.05
+        LOG_STD_MAX = -0.7   # std <= 0.50
+
+        def __init__(self):
+            super().__init__(verbose=0)
+            self._last_std_log = 0
+
+        def _on_step(self) -> bool:
+            return True
+
+        def _on_rollout_end(self) -> None:
+            with torch.no_grad():
+                self.model.policy.log_std.data.clamp_(
+                    self.LOG_STD_MIN, self.LOG_STD_MAX
+                )
+
     callbacks = [
         CheckpointCallback(
             save_freq=max(100_000 // args.n_envs, 1),
@@ -208,7 +244,7 @@ def train(args):
             best_model_save_path=str(ckpt_dir / "best"),
             log_path=str(log_dir / "eval"),
             eval_freq=max(50_000 // args.n_envs, 1),
-            n_eval_episodes=5,
+            n_eval_episodes=10,   # v23f: more episodes for reliable eval
             verbose=1,
         ),
         WorldModelCallback(
@@ -218,6 +254,7 @@ def train(args):
             verbose=1 if args.verbose else 0,
         ),
         CurriculumCallback(curriculum, verbose=1 if args.verbose else 0),
+        StdClampCallback(),
         ProgressLogger(),
     ]
 

@@ -163,7 +163,7 @@ REWARD_SCALES = {
     "r_stillness":      1.5,
     "r_motion_penalty": -1.5,
     "r_vel_track_penalty": 0.0,    # DISABLED — unbounded, use exp() tracking instead
-    "r_fwd_vel":        5.0,       # Forward velocity bonus
+    "r_fwd_vel":        10.0,      # v23h: boosted forward velocity incentive
     "r_jump_phase":     3.0,
     "r_alive":          2.0,       # Increased — anchor rewards positive
     "r_terrain_progress": 1.0,
@@ -194,10 +194,11 @@ MODE_REWARD_MULTIPLIERS = {
         "r_energy": 0.5, "r_stumble": 0.0,
     },
     "walk": {
-        "r_vel_x": 3.0, "r_vel_y": 3.0, "r_yaw": 3.0, "r_gait": 2.5,
-        "r_posture": 1.0, "r_body_height": 2.0, "r_stillness": 0.0,
+        "r_vel_x": 3.0, "r_vel_y": 1.5, "r_yaw": 3.0, "r_gait": 2.5,
+        "r_posture": 1.0, "r_body_height": 1.0, "r_stillness": 0.0,
         "r_motion_penalty": 0.0, "r_vel_track_penalty": 0.0,
-        "r_fwd_vel": 1.0, "r_jump_phase": 0.0,
+        "r_fwd_vel": 2.0, "r_jump_phase": 0.0,
+        "r_alive": 0.5,
         "r_terrain_progress": 1.0, "r_foot_clearance": 1.0,
         "r_smooth": 1.0, "r_ang_vel_xy": 0.3, "r_lin_vel_z": 0.3,
         "r_torque": 0.3, "r_dof_vel": 0.3,
@@ -205,10 +206,11 @@ MODE_REWARD_MULTIPLIERS = {
         "r_energy": 1.0, "r_stumble": 1.0,
     },
     "run": {
-        "r_vel_x": 3.0, "r_vel_y": 3.0, "r_yaw": 3.0, "r_gait": 2.5,
-        "r_posture": 1.0, "r_body_height": 2.0, "r_stillness": 0.0,
+        "r_vel_x": 3.0, "r_vel_y": 1.5, "r_yaw": 3.0, "r_gait": 2.5,
+        "r_posture": 1.0, "r_body_height": 1.0, "r_stillness": 0.0,
         "r_motion_penalty": 0.0, "r_vel_track_penalty": 0.0,
-        "r_fwd_vel": 1.5, "r_jump_phase": 0.0,
+        "r_fwd_vel": 2.0, "r_jump_phase": 0.0,
+        "r_alive": 0.5,
         "r_terrain_progress": 1.5, "r_foot_clearance": 1.5,
         "r_smooth": 0.5, "r_lin_vel_z": 0.3, "r_ang_vel_xy": 0.3,
         "r_torque": 0.3, "r_dof_vel": 0.3,
@@ -703,13 +705,19 @@ class MiniCheetahEnv(gym.Env):
             self._effective_target_height = self._compute_jump_trajectory(self._jump_traj_step)
         self.target_height = self._effective_target_height
 
-        # Scale action (small corrections to CPG base)
-        action_scaled = action * 0.2
+        # Scale action (corrections to posture-centered base)
+        action_scaled = action * 0.25  # v23g: increased from 0.2 for more range
 
         # CPG trot pattern for walk/run
         cpg = self._compute_cpg()
 
-        target_q = DEFAULT_STANCE + action_scaled + cpg
+        # v23g: Action center adapts to target height (crouch/stand/jump)
+        # Without this, action scale 0.2 cannot reach crouch posture (requires ±0.6 rad)
+        posture = self._get_height_posture(self._effective_target_height)
+        center = DEFAULT_STANCE.copy()
+        center[HIP_JOINT_INDICES] = posture["hip"]
+        center[KNEE_JOINT_INDICES] = posture["knee"]
+        target_q = center + action_scaled + cpg
 
         # PD control (perfect actuators)
         q = self.data.qpos[7:7 + NUM_JOINTS]
@@ -733,15 +741,14 @@ class MiniCheetahEnv(gym.Env):
         self.prev_action = action.copy()
         self.step_count += 1
 
-        # Mid-episode command re-randomization
+        # Mid-episode command re-randomization (velocity/height only, keep mode)
+        # v23h: mode persists for entire episode — switching modes every 4s was
+        # too hard and prevented the policy from learning any single mode well
         if (self.randomize_commands
                 and self.step_count % COMMAND_RESAMPLE_INTERVAL == 0):
             rng = self.np_random if hasattr(self, 'np_random') and self.np_random is not None else np.random
-            mode_weights = [0.08, 0.42, 0.25, 0.25]
-            self.command_mode = str(rng.choice(SKILL_MODES, p=mode_weights))
-            self._randomize_command_for_mode(rng)
+            self._randomize_command_for_mode(rng)  # re-randomize vel/height
             self.target_height = self._effective_target_height
-            self._last_mode_change_step = self.step_count
 
         # Report to curriculum on episode end
         if (terminated or truncated) and self.curriculum is not None:
