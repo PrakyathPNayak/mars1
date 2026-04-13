@@ -47,19 +47,25 @@ SKILL_MODES = ["stand", "walk", "run", "crouch", "jump"]
 SKILL_DIM = len(SKILL_MODES)       # 5-dim one-hot in observation
 SKILL_TO_IDX = {m: i for i, m in enumerate(SKILL_MODES)}
 
-OBS_DIM = 67  # 49 (base) + 5 (augmented) + 5 (skill one-hot) + 2 (cpg phase) + 6 (cmd decomposition)
+OBS_DIM = 72  # v22: 67 (v21) + 5 (height control vector)
 #   [0:12]  joint positions
 #   [12:24] joint velocities
 #   [24:27] base linear velocity (body frame)
 #   [27:30] base angular velocity (body frame)
 #   [30:33] projected gravity
 #   [33:45] previous action
-#   [45:49] command (vx, vy, wz, target_height)
-#   [49:50] base height (critical for crouch/jump/height tracking)
-#   [50:54] foot contacts (binary; critical for gait timing, standard in legged_gym)
+#   [45:49] command (vx, vy, wz, target_height) — target_height now continuous/dynamic
+#   [49:50] base height
+#   [50:54] foot contacts (binary)
 #   [54:59] skill one-hot encoding
-#   [59:61] CPG phase [sin(phase), cos(phase)] — enables phase-dependent residuals
-#   [61:67] v21 command decomposition (speed, direction sin/cos, lateral_frac, turn_frac, lateral_sign)
+#   [59:61] CPG phase [sin(phase), cos(phase)]
+#   [61:67] command decomposition (speed, direction sin/cos, lateral_frac, turn_frac, lateral_sign)
+#   [67:72] v22 height control vector:
+#           [67] height_error (target - current, positive = need to go up)
+#           [68] vertical_velocity (body-frame vz)
+#           [69] jump_phase_progress (0 outside jump, 0→1 during trajectory)
+#           [70] height_ramp_active (1.0 during transition, 0.0 when settled)
+#           [71] target_height_offset ((target - 0.27) / 0.20, normalized from default)
 
 # ── Manual observation normalization (replaces VecNormalize) ──────────
 # Fixed divisors so each observation dimension is roughly in [-1, 1].
@@ -77,7 +83,8 @@ OBS_SCALES = np.array(
   + [1.0]*4         # foot contacts: already [0, 1]
   + [1.0]*5         # skill one-hot: already [0, 1]
   + [1.0]*2         # CPG phase [sin, cos]: already [-1, 1]
-  + [2.0, 1.0, 1.0, 1.0, 1.0, 1.0],  # v21: cmd_speed/2, sin/cos heading, lateral_frac, turn_frac, lateral_sign
+  + [2.0, 1.0, 1.0, 1.0, 1.0, 1.0]  # v21: cmd_speed/2, sin/cos heading, lateral_frac, turn_frac, lateral_sign
+  + [0.2, 1.0, 1.0, 1.0, 1.0],        # v22: h_error/0.2, vz/1.0, jump_phase/1.0, ramp/1.0, h_offset/1.0
   dtype=np.float32
 )
 
@@ -146,7 +153,7 @@ REWARD_SCALES = {
     "r_vel_x":          1.5,       # exp(-vx_err²/σ²) * cmd_scale. Now 0 when cmd≈0
     "r_vel_y":          1.5,       # exp(-vy_err²/σ_y²) * cmd_scale. Now 0 when cmd≈0
     "r_yaw":            2.0,       # exp(-ang_err²/σ²) * cmd_scale. Now 0 when cmd≈0
-    "r_gait":           1.0,       # combined: symmetry+clearance+airtime+stride_freq. legged_gym=1.0
+    "r_gait":           2.0,       # v22: doubled from 1.0 — fix limping (gait was only 2% of reward signal)
     "r_posture":        1.0,       # exp(-joint_err/σ), mode-dependent targets
     "r_body_height":    1.0,       # exp(-(z-h)²/σ²), proper [0,1] reward
     "r_stillness":      1.5,       # 1/(1+motion) rational kernel for stand/crouch
@@ -194,42 +201,42 @@ MODE_REWARD_MULTIPLIERS = {
         "r_vel_x": 3.0,       # v12c: track vx (also penalizes unwanted forward when cmd=0)
         "r_vel_y": 3.0,       # v12c: match vx weight for lateral
         "r_yaw": 3.0,         # v12c: increased from 1.5 (yaw tracking)
-        "r_gait": 1.0,        # v21: ENABLED — trot symmetry + airtime + clearance (was 0.0 → caused limping)
+        "r_gait": 2.0,        # v22: doubled — was 2% of reward signal, caused limping
         "r_posture": 1.0,
         "r_body_height": 2.0,
         "r_stillness": 0.0,
         "r_motion_penalty": 0.0,
-        "r_vel_track_penalty": 3.0,  # v15: reverted to v13 level (v14's 4x caused regression)
-        "r_fwd_vel": 0.0,      # v12c: DISABLED — was causing forward-only bias
+        "r_vel_track_penalty": 3.0,
+        "r_fwd_vel": 0.0,
         "r_jump_phase": 0.0,
         "r_smooth": 0.5,
-        "r_ang_vel_xy": 0.3,  # v21: light roll/pitch penalty (was 0.0 → wobble unpunished)
-        "r_lin_vel_z": 0.3,   # v21: light vertical bounce penalty
-        "r_torque": 0.3,      # v21: light torque penalty (was 0.0)
-        "r_dof_vel": 0.3,     # v21: light joint velocity penalty (was 0.0)
-        "r_abd_symmetry": 1.0,  # v15: gentle abductor symmetry for walk
-        "r_heading_drift": 1.0,  # v19: reduced from 2.0 to balance with yaw tracking
+        "r_ang_vel_xy": 0.3,
+        "r_lin_vel_z": 0.3,
+        "r_torque": 0.3,
+        "r_dof_vel": 0.3,
+        "r_abd_symmetry": 1.0,
+        "r_heading_drift": 1.0,
     },
     # Run: v15 — equalized vy/yaw with walk, targeted abductor symmetry penalty.
     "run": {
         "r_vel_x": 3.0,
         "r_vel_y": 3.0,        # v14: was 2.0 — equalize with walk to fix lateral drift
         "r_yaw": 3.0,          # v14: was 2.0 — equalize with walk
-        "r_gait": 1.0,         # v21: ENABLED — trot symmetry + airtime + clearance (was 0.0 → caused limping)
+        "r_gait": 2.0,         # v22: doubled — fix limping
         "r_posture": 1.0,
         "r_body_height": 2.0,
         "r_stillness": 0.0,
         "r_motion_penalty": 0.0,
-        "r_vel_track_penalty": 3.0,  # v15: reverted to v13 level (v14's 4x caused regression)
+        "r_vel_track_penalty": 3.0,
         "r_fwd_vel": 0.0,
         "r_jump_phase": 0.0,
         "r_smooth": 0.5,
-        "r_lin_vel_z": 0.3,   # v21: light vertical bounce penalty (was 0.0)
-        "r_ang_vel_xy": 0.3,  # v21: light roll/pitch penalty (was 0.0 → wobble unpunished)
-        "r_torque": 0.3,      # v21: light torque penalty (was 0.0)
-        "r_dof_vel": 0.3,     # v21: light joint velocity penalty (was 0.0)
-        "r_abd_symmetry": 2.0,  # v15: stronger for run — main drift fix
-        "r_heading_drift": 1.0,  # v18: heading correction for run (less needed than walk)
+        "r_lin_vel_z": 0.3,
+        "r_ang_vel_xy": 0.3,
+        "r_torque": 0.3,
+        "r_dof_vel": 0.3,
+        "r_abd_symmetry": 2.0,
+        "r_heading_drift": 1.0,
     },
     # Crouch: low position, stillness, strict orientation
     "crouch": {
@@ -254,7 +261,7 @@ MODE_REWARD_MULTIPLIERS = {
         "r_yaw": 0.2,
         "r_gait": 0.0,
         "r_posture": 0.5,
-        "r_body_height": 1.0,  # tracks FSM phase height
+        "r_body_height": 3.0,  # v22: boost — trajectory tracking is primary jump signal
         "r_stillness": 0.0,
         "r_motion_penalty": 0.0,  # disabled
         "r_vel_track_penalty": 0.0,  # disabled
@@ -291,6 +298,12 @@ JUMP_CROUCH_STEPS = 10    # 0.2s at 50 Hz
 JUMP_LAUNCH_STEPS = 8     # 0.16s
 JUMP_LANDING_STEPS = 15   # 0.3s
 JUMP_AIRBORNE_MAX = 50    # 1s max airborne before forced landing
+
+# v22: Continuous height control
+HEIGHT_RAMP_STEPS = 25         # 0.5s at 50Hz for gradual height transitions
+JUMP_TRAJECTORY_STEPS = 60     # 1.2s total jump duration
+CROUCH_HEIGHT_MIN = 0.10       # minimum random crouch height for training
+CROUCH_HEIGHT_MAX = 0.25       # maximum random crouch height for training
 
 # ── Termination grace periods (legged_gym convention) ─────────────
 # Don't terminate early while the robot is settling or adapting to a
@@ -395,6 +408,14 @@ class MiniCheetahEnv(gym.Env):
         # CPG phase (updated in step(), exposed in obs for phase-dependent residuals)
         self._cpg_phase = 0.0
 
+        # v22: Height control state
+        self._effective_target_height = 0.27
+        self._height_ramp_from = 0.27
+        self._height_ramp_to = 0.27
+        self._height_ramp_counter = HEIGHT_RAMP_STEPS  # start as complete
+        self._jump_traj_step = 0
+        self._jump_traj_active = False
+
         # Grace period tracking for termination
         self._last_mode_change_step = 0
 
@@ -477,6 +498,14 @@ class MiniCheetahEnv(gym.Env):
         self._cpg_phase = 0.0
         self._last_mode_change_step = 0
 
+        # v22: Reset height control to standing height
+        self._effective_target_height = 0.27
+        self._height_ramp_from = 0.27
+        self._height_ramp_to = 0.27
+        self._height_ramp_counter = HEIGHT_RAMP_STEPS
+        self._jump_traj_step = 0
+        self._jump_traj_active = False
+
         mujoco = self._mj
         mujoco.mj_resetData(self.model, self.data)
 
@@ -496,17 +525,24 @@ class MiniCheetahEnv(gym.Env):
         # Randomize velocity command for training diversity
         if self.randomize_commands:
             rng = self.np_random if hasattr(self, 'np_random') and self.np_random is not None else np.random
-            # v10b: heavily favor locomotion modes to accelerate walk/run discovery
-            # Stand/crouch are easy (just be still); walk/run need concentrated experience
-            mode_weights = [0.10, 0.40, 0.30, 0.05, 0.15]
+            # v22: increased crouch weight (5%→12%) for continuous height training
+            mode_weights = [0.08, 0.35, 0.25, 0.12, 0.20]
             self.command_mode = str(rng.choice(SKILL_MODES, p=mode_weights))
-            self.target_height = HEIGHT_TARGETS.get(self.command_mode, 0.27)
             self._randomize_command_for_mode(rng)
+            # v22: target_height managed by height ramp/trajectory
+            self.target_height = self._effective_target_height
 
         return self._get_obs(), {}
 
     def step(self, action: np.ndarray):
         action = np.clip(action, -1.0, 1.0).astype(np.float32)
+
+        # v22: Advance height control (before obs/reward computation)
+        self._update_height_ramp()
+        if self._jump_traj_active:
+            self._effective_target_height = self._compute_jump_trajectory(self._jump_traj_step)
+        self.target_height = self._effective_target_height
+
         # v12: reduce action scale 0.5→0.2 rad so policy makes small corrections
         # to CPG rather than overpowering it. Prevents action-std explosion.
         action_scaled = action * 0.2
@@ -543,7 +579,7 @@ class MiniCheetahEnv(gym.Env):
             # In trot: FR+RL swing phase vs FL+RR swing phase.
             # For vy>0 (move left): lean left when FR+RL swing, push right when FL+RR swing
             # Phase-shifted by 90° from sagittal to avoid interference.
-            amp_abd = 0.15 * min(abs(float(self.command[1])) / 0.3, 1.0)  # v21: 0.10→0.15 for stronger lateral guidance
+            amp_abd = 0.25 * min(abs(float(self.command[1])) / 0.3, 1.0)  # v22: 0.15→0.25 stronger lateral CPG
             abd_sign = 1.0 if float(self.command[1]) > 0 else -1.0
             cos_p = math.cos(phase)  # 90° shifted from sin_p sagittal
             cos_p_pi = math.cos(phase + math.pi)
@@ -553,19 +589,14 @@ class MiniCheetahEnv(gym.Env):
             cpg[6]  = amp_abd * abd_sign * cos_p_pi  # RR abductor
             cpg[9]  = amp_abd * abd_sign * cos_p     # RL abductor
 
-            # v13c: Split CPG scaling — sagittal (fwd motion) primarily scales
-            # with |vx|, but a base floor ensures leg cycling whenever ANY
-            # command axis is active.  Without this floor the robot cannot
-            # step sideways for pure lateral commands because the legs don't
-            # cycle at all.
-            # v13c: Split CPG scaling — sagittal (fwd motion) primarily scales
-            # with |vx|, but a base floor ensures leg cycling whenever ANY
-            # command axis is active.
+            # v22: Stronger sagittal floor for lateral commands — legs must cycle to step sideways
             fwd_activity = abs(float(self.command[0])) + abs(float(self.command[2])) * 0.15
             fwd_scale_raw = min(fwd_activity / 0.3, 1.0)
-            # Base CPG floor: 30% amplitude when any velocity is commanded
             any_cmd = abs(float(self.command[0])) + abs(float(self.command[1])) + abs(float(self.command[2])) * 0.3
+            lat_cmd = abs(float(self.command[1]))
             base_floor = 0.3 if any_cmd > 0.05 else 0.0
+            if lat_cmd > 0.1:
+                base_floor = max(base_floor, min(lat_cmd / 0.3, 1.0) * 0.6)
             fwd_scale = max(base_floor, fwd_scale_raw)
             for i in [1, 2, 4, 5, 7, 8, 10, 11]:  # sagittal joints (hip/knee)
                 cpg[i] *= fwd_scale
@@ -618,11 +649,11 @@ class MiniCheetahEnv(gym.Env):
         if (self.randomize_commands
                 and self.step_count % COMMAND_RESAMPLE_INTERVAL == 0):
             rng = self.np_random if hasattr(self, 'np_random') and self.np_random is not None else np.random
-            # v10b: heavily favor locomotion modes (same weights as reset)
-            mode_weights = [0.10, 0.40, 0.30, 0.05, 0.15]
+            # v22: increased crouch weight
+            mode_weights = [0.08, 0.35, 0.25, 0.12, 0.20]
             self.command_mode = str(rng.choice(SKILL_MODES, p=mode_weights))
-            self.target_height = HEIGHT_TARGETS.get(self.command_mode, 0.27)
             self._randomize_command_for_mode(rng)
+            self.target_height = self._effective_target_height
             self._last_mode_change_step = self.step_count
 
         if self.render_mode == "human":
@@ -631,39 +662,43 @@ class MiniCheetahEnv(gym.Env):
         return obs, reward, terminated, truncated, self._get_info()
 
     def _randomize_command_for_mode(self, rng):
-        """Set velocity commands appropriate for the current command_mode.
+        """Set velocity commands and height target for the current command_mode.
 
-        Velocity ranges based on quadruped locomotion literature:
-          - Walk: 0.3-0.8 m/s forward (Gait-heuristic 2024)
-          - Run:  1.5-3.0 m/s forward (AMP 2021 Go1=3.0, Tencent 3.2 gallop)
-          - Stand/Crouch: always zero (no random drift)
-        v8: Widened vy and wz ranges to ensure lateral/yaw tracking training.
+        v22: Each mode now handles its own height target via _start_height_ramp.
+        Crouch uses continuous random heights instead of fixed 0.18.
+        Jump starts the parabolic trajectory.
         """
         mode = self.command_mode
         if mode == "stand":
             vx, vy, wz = 0.0, 0.0, 0.0
+            self._start_height_ramp(HEIGHT_TARGETS["stand"])
         elif mode == "walk":
-            # v13: Include zero/negative vx so policy learns to NOT always go forward.
-            # Previous [0.2, 0.8] range meant vx_cmd was always positive → forward bias.
             vx = float(rng.uniform(-0.3, 0.8))
             vy = float(rng.uniform(-0.5, 0.5))
             wz = float(rng.uniform(-0.8, 0.8))
+            self._start_height_ramp(HEIGHT_TARGETS["walk"])
         elif mode == "run":
             vx = float(rng.uniform(1.5, 3.0))
-            vy = float(rng.uniform(-0.5, 0.5))   # v8: ±0.3 → ±0.5
-            wz = float(rng.uniform(-0.5, 0.5))   # v8: ±0.2 → ±0.5
+            vy = float(rng.uniform(-0.5, 0.5))
+            wz = float(rng.uniform(-0.5, 0.5))
+            self._start_height_ramp(HEIGHT_TARGETS["run"])
         elif mode == "crouch":
-            # Crouch is stationary — zero velocity like stand
+            # v22: Zero velocity, random continuous height target
             vx, vy, wz = 0.0, 0.0, 0.0
+            new_height = float(rng.uniform(CROUCH_HEIGHT_MIN, CROUCH_HEIGHT_MAX))
+            self._start_height_ramp(new_height)
         elif mode == "jump":
-            # Mostly forward, small lateral
             vx = float(rng.uniform(0.0, 0.5))
             vy = float(rng.uniform(-0.1, 0.1))
             wz = float(rng.uniform(-0.1, 0.1))
+            # v22: Start parabolic jump trajectory
+            self._jump_traj_active = True
+            self._jump_traj_step = 0
         else:
             vx = float(rng.uniform(-0.5, 2.0))
             vy = float(rng.uniform(-0.5, 0.5))
             wz = float(rng.uniform(-0.5, 0.5))
+            self._start_height_ramp(0.27)
         self.command = np.array([vx, vy, wz], dtype=np.float32)
 
     def render(self):
@@ -737,14 +772,30 @@ class MiniCheetahEnv(gym.Env):
             (1.0 if vy_c > 0.05 else (-1.0 if vy_c < -0.05 else 0.0)),  # [66] signed lateral direction
         ], dtype=np.float32)
 
+        # v22: Height control vector (5 dims appended — keeps v21 layout intact)
+        height_error = self._effective_target_height - float(d.qpos[2])
+        vertical_velocity = float(base_linvel[2])
+        jump_phase_progress = (self._jump_traj_step / JUMP_TRAJECTORY_STEPS
+                                if self._jump_traj_active else 0.0)
+        height_ramp_active = 1.0 if self._height_ramp_counter < HEIGHT_RAMP_STEPS else 0.0
+        target_height_offset = (self._effective_target_height - 0.27) / 0.20
+        height_control = np.array([
+            height_error,            # [67] positive = need to go up
+            vertical_velocity,       # [68] current vz
+            jump_phase_progress,     # [69] 0 outside jump, 0→1 during traj
+            height_ramp_active,      # [70] 1.0 during transition
+            target_height_offset,    # [71] normalized offset from default 0.27
+        ], dtype=np.float32)
+
         obs = np.concatenate([
             qpos, qvel, base_linvel, base_angvel,
             gravity_body, self.prev_action,
-            np.append(self.command, self.target_height),
+            np.append(self.command, self._effective_target_height),
             base_height, foot_contacts,
             skill_onehot,
             cpg_phase_signal,
             cmd_decomp,
+            height_control,
         ]).astype(np.float32)
 
         # Manual normalization: divide by fixed scales to get ~[-1, 1] range.
@@ -872,15 +923,18 @@ class MiniCheetahEnv(gym.Env):
         hip_q = q[HIP_JOINT_INDICES]
         knee_q = q[KNEE_JOINT_INDICES]
         posture_key = mode if mode in POSTURE_TARGETS else "stand"
-        p_target = POSTURE_TARGETS[posture_key]
+        # v22: Interpolate crouch posture based on continuous height target
+        if posture_key == "crouch":
+            p_target = self._get_crouch_posture(self._effective_target_height)
+        else:
+            p_target = POSTURE_TARGETS[posture_key]
         posture_err = (float(np.sum((hip_q - p_target["hip"]) ** 2))
                        + float(np.sum((knee_q - p_target["knee"]) ** 2)))
         r_posture = math.exp(-posture_err / POSTURE_SIGMA)
 
         # ── 5. Body height tracking (exp kernel, proper [0,1] reward) ──
-        # v6 bug: had "-1.0" offset making this always ≤0 (penalty).
-        # v7: pure exp kernel like velocity tracking — 1.0 at target, →0 away.
-        r_body_height = math.exp(-(base_z - self.target_height) ** 2 / BODY_HEIGHT_SIGMA)
+        # v22: uses _effective_target_height (includes ramp and trajectory)
+        r_body_height = math.exp(-(base_z - self._effective_target_height) ** 2 / BODY_HEIGHT_SIGMA)
         self._height_history.append(base_z)
 
         # ── 6. Stillness reward (stand/crouch, rational kernel for gradient) ──
@@ -1058,106 +1112,142 @@ class MiniCheetahEnv(gym.Env):
             info["reward_components"] = self._last_reward_components
         return info
 
-    # ── Jump finite state machine ──────────────────────────────────
+    # ── Jump trajectory controller (v22) ──────────────────────────────
 
     def _advance_jump_fsm(self, base_z, base_linvel, foot_contacts):
-        """Advance jump FSM through crouch->launch->airborne->land phases.
+        """v22: Simplified jump using parabolic trajectory following.
 
-        v8 changes: Behavior-based transitions with timer fallbacks.
-        Crouch phase transitions when body is actually low enough, not just
-        after N steps. Launch rewards scale with upward velocity squared.
-        Airborne bonus for all-feet-off-ground state.
-
-        Returns a phase-specific reward scalar. The FSM dynamically
-        adjusts self.target_height so the policy sees the current phase
-        target in its observation.
+        Instead of complex 5-phase FSM, the jump is driven by a smooth
+        parabolic trajectory. The policy sees the trajectory target height
+        in its observation and learns to track it. r_body_height provides
+        the primary reward signal; this method adds phase-specific bonuses.
         """
-        # Reset FSM if not in jump mode
         if self.command_mode != "jump":
-            if self._jump_phase != JUMP_PHASE_IDLE:
-                self._jump_phase = JUMP_PHASE_IDLE
-                self._jump_step_counter = 0
+            if self._jump_traj_active:
+                self._jump_traj_active = False
+                self._jump_traj_step = 0
             return 0.0
 
-        r = 0.0
-        n_contacts = int(np.sum(foot_contacts))
-
-        if self._jump_phase == JUMP_PHASE_IDLE:
-            # Enter crouch preparation
-            self._jump_phase = JUMP_PHASE_CROUCH
-            self._jump_step_counter = 0
+        if not self._jump_traj_active:
+            self._jump_traj_active = True
+            self._jump_traj_step = 0
             self._jump_max_height = base_z
-            self.target_height = 0.18
+            return 0.0
 
-        elif self._jump_phase == JUMP_PHASE_CROUCH:
-            self.target_height = 0.18
-            self._jump_step_counter += 1
-            # Reward lowering body toward crouch height (shaped)
-            crouch_depth = max(0.0, 0.27 - base_z)
-            r = crouch_depth * 3.0
-            # Extra reward for all 4 feet on ground (ready to push)
-            if n_contacts >= 4:
-                r += 0.3
-            # Behavior-based transition: actually crouched, OR timer fallback
-            crouched = base_z < 0.22
-            if (crouched and self._jump_step_counter >= 5) or self._jump_step_counter >= JUMP_CROUCH_STEPS:
-                self._jump_phase = JUMP_PHASE_LAUNCH
-                self._jump_step_counter = 0
+        # Track max height achieved
+        self._jump_max_height = max(self._jump_max_height, base_z)
 
-        elif self._jump_phase == JUMP_PHASE_LAUNCH:
-            self.target_height = 0.45
-            self._jump_step_counter += 1
-            # Reward upward velocity (squared for stronger gradient at high vz)
+        # Trajectory target (already set in step() for obs/reward consistency)
+        traj_h = self._compute_jump_trajectory(self._jump_traj_step)
+        phase = self._jump_traj_step / JUMP_TRAJECTORY_STEPS
+
+        # Reward: trajectory tracking + phase bonuses
+        r = 0.0
+        height_err_sq = (base_z - traj_h) ** 2
+        r += math.exp(-height_err_sq / 0.02) * 0.5  # tight tracking
+
+        # Launch phase (15-50%): bonus for upward velocity
+        if 0.15 < phase < 0.50:
             vz = float(base_linvel[2])
-            r = max(0.0, vz) * 4.0 + max(0.0, vz) ** 2 * 2.0
-            # Behavior-based transition: actually going up, OR timer
-            if (vz > 0.5 and self._jump_step_counter >= 3) or self._jump_step_counter >= JUMP_LAUNCH_STEPS:
-                self._jump_phase = JUMP_PHASE_AIRBORNE
-                self._jump_step_counter = 0
+            r += max(0.0, vz) * 2.0
 
-        elif self._jump_phase == JUMP_PHASE_AIRBORNE:
-            self.target_height = 0.40
-            self._jump_step_counter += 1
-            self._jump_max_height = max(self._jump_max_height, base_z)
-            # Reward height achieved above standing
-            r = max(0.0, base_z - 0.27) * 3.0
-            # Bonus for all feet off ground (true airborne)
+        # Airborne phase (30-65%): bonus for height above standing
+        if 0.30 < phase < 0.65:
+            r += max(0.0, base_z - 0.27) * 3.0
+            n_contacts = int(np.sum(foot_contacts))
             if n_contacts == 0:
                 r += 1.0
-            # Transition to landing: descending + feet touching, or timeout
-            descending = float(base_linvel[2]) < -0.1
-            if (descending and n_contacts >= 2) or self._jump_step_counter > JUMP_AIRBORNE_MAX:
-                self._jump_phase = JUMP_PHASE_LANDING
-                self._jump_step_counter = 0
 
-        elif self._jump_phase == JUMP_PHASE_LANDING:
-            self.target_height = 0.27
-            self._jump_step_counter += 1
-            # Reward stability: height near normal + low velocity
-            height_err = (base_z - 0.27) ** 2
-            vel_err = float(np.sum(base_linvel ** 2))
-            r = math.exp(-(height_err + 0.1 * vel_err) / 0.2)
-            if self._jump_step_counter >= JUMP_LANDING_STEPS:
-                # Bonus for maximum height achieved
-                r += max(0.0, self._jump_max_height - 0.30) * 5.0
-                self._jump_phase = JUMP_PHASE_IDLE
-                self._jump_step_counter = 0
-                self.target_height = HEIGHT_TARGETS.get("stand", 0.27)
+        # Advance trajectory
+        self._jump_traj_step += 1
+        if self._jump_traj_step >= JUMP_TRAJECTORY_STEPS:
+            # Trajectory complete: peak height bonus
+            r += max(0.0, self._jump_max_height - 0.30) * 5.0
+            self._jump_traj_active = False
+            self._jump_traj_step = 0
+            self._jump_max_height = base_z
+            self._start_height_ramp(0.27)
 
         return float(r)
+
+    def _compute_jump_trajectory(self, step):
+        """Parabolic jump height trajectory.
+
+        Phase breakdown (60 steps = 1.2s total at 50Hz):
+          [0, 12):   Preparation — smooth descent from 0.27m to 0.18m
+          [12, 48):  Ballistic arc — parabola peaking at 0.45m
+          [48, 60]:  Landing — stabilize at 0.27m
+
+        The parabola passes through three points:
+          t=0: h=0.18 (crouched), t=0.5: h=0.45 (peak), t=1: h=0.27 (standing)
+        Solved: h(t) = -0.90t² + 0.99t + 0.18
+        """
+        h_stand, h_crouch = 0.27, 0.18
+        prep_end, arc_end = 12, 48
+
+        if step < 0:
+            return h_stand
+        elif step < prep_end:
+            # Smooth descent: h_stand → h_crouch
+            t = step / prep_end
+            s = 3 * t * t - 2 * t * t * t  # smooth step
+            return h_stand + (h_crouch - h_stand) * s
+        elif step < arc_end:
+            # Parabolic arc: peaks at 0.45m
+            t = (step - prep_end) / (arc_end - prep_end)
+            return -0.90 * t * t + 0.99 * t + h_crouch
+        elif step < JUMP_TRAJECTORY_STEPS:
+            return h_stand
+        else:
+            return h_stand
+
+    # ── Height control helpers (v22) ────────────────────────────────
+
+    def _start_height_ramp(self, new_target):
+        """Begin gradual transition to a new target height."""
+        if abs(new_target - self._effective_target_height) > 0.005:
+            self._height_ramp_from = self._effective_target_height
+            self._height_ramp_to = new_target
+            self._height_ramp_counter = 0
+        else:
+            self._height_ramp_to = new_target
+            self._effective_target_height = new_target
+
+    def _update_height_ramp(self):
+        """Advance the height ramp by one step (smooth interpolation)."""
+        if self._jump_traj_active:
+            return  # trajectory overrides ramp
+        if self._height_ramp_counter < HEIGHT_RAMP_STEPS:
+            self._height_ramp_counter += 1
+            t = self._height_ramp_counter / HEIGHT_RAMP_STEPS
+            s = 3 * t * t - 2 * t * t * t  # smooth step
+            self._effective_target_height = (
+                self._height_ramp_from + (self._height_ramp_to - self._height_ramp_from) * s
+            )
+
+    def _get_crouch_posture(self, target_height):
+        """Interpolate crouch posture targets based on continuous height."""
+        stand_h, deep_h = 0.27, 0.10
+        t = max(0.0, min(1.0, (stand_h - target_height) / (stand_h - deep_h)))
+        return {
+            "hip": 0.9 + (1.5 - 0.9) * t,
+            "knee": -1.8 + (-2.5 - (-1.8)) * t,
+        }
 
     # ── Command interface ───────────────────────────────────────────
 
     def set_command(self, vx: float, vy: float, wz: float, mode: str = "walk"):
         self.command = np.array([vx, vy, wz], dtype=np.float32)
         new_mode = mode if mode in SKILL_MODES else "walk"
-        # Grant mode-transition grace period when mode actually changes.
-        # Without this, interactive control had no grace period on mode
-        # switches (e.g. crouch→stand terminated instantly at height 0.18).
         if new_mode != self.command_mode:
             self._last_mode_change_step = self.step_count
         self.command_mode = new_mode
-        self.target_height = HEIGHT_TARGETS.get(self.command_mode, 0.27)
+        new_target = HEIGHT_TARGETS.get(self.command_mode, 0.27)
+        self._start_height_ramp(new_target)
+        # v22: Start jump trajectory when entering jump mode
+        if new_mode == "jump" and not self._jump_traj_active:
+            self._jump_traj_active = True
+            self._jump_traj_step = 0
 
     def set_exploration_heading(self, heading_rad: float, speed: float = 1.5):
         vx = speed * math.cos(heading_rad)

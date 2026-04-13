@@ -16,24 +16,25 @@ from stable_baselines3 import PPO
 
 
 SCENARIOS = [
-    # (name,     mode, [vx, vy, wz])
-    ("Stand",          0, [0, 0, 0]),
-    ("Walk fwd 0.5",   1, [0.5, 0, 0]),
-    ("Walk fwd 0.3",   1, [0.3, 0, 0]),
-    ("Walk lat 0,0.3", 1, [0, 0.3, 0]),
-    ("Walk yaw +0.5",  1, [0, 0, 0.5]),
-    ("Walk yaw -0.5",  1, [0, 0, -0.5]),
-    ("Walk combo",     1, [0.3, 0.2, 0.3]),
-    ("Run 1.0",        2, [1.0, 0, 0]),
-    ("Run 2.0",        2, [2.0, 0, 0]),
-    ("Run 1.0 lat",    2, [1.0, 0.3, 0]),
-    ("Run 1.0 yaw",    2, [1.0, 0, 0.3]),
-    ("Crouch",         3, [0, 0, 0]),
+    # (name,     mode_str, [vx, vy, wz])
+    ("Stand",          "stand",  [0, 0, 0]),
+    ("Walk fwd 0.5",   "walk",   [0.5, 0, 0]),
+    ("Walk fwd 0.3",   "walk",   [0.3, 0, 0]),
+    ("Walk lat +0.3",  "walk",   [0, 0.3, 0]),
+    ("Walk lat -0.3",  "walk",   [0, -0.3, 0]),
+    ("Walk yaw +0.5",  "walk",   [0, 0, 0.5]),
+    ("Walk yaw -0.5",  "walk",   [0, 0, -0.5]),
+    ("Walk combo",     "walk",   [0.3, 0.2, 0.3]),
+    ("Run 1.0",        "run",    [1.0, 0, 0]),
+    ("Run 2.0",        "run",    [2.0, 0, 0]),
+    ("Run 1.0 lat",    "run",    [1.0, 0.3, 0]),
+    ("Run 1.0 yaw",    "run",    [1.0, 0, 0.3]),
+    ("Crouch",         "crouch", [0, 0, 0]),
+    ("Jump",           "jump",   [0, 0, 0]),
 ]
 
 
 SKILL_MODES = ["stand", "walk", "run", "crouch", "jump"]
-HEIGHT_TARGETS = {"stand": 0.28, "walk": 0.28, "run": 0.28, "crouch": 0.15, "jump": 0.28}
 
 
 def evaluate(model_path: str, n_trials: int = 10, episode_len: int = 500):
@@ -44,18 +45,13 @@ def evaluate(model_path: str, n_trials: int = 10, episode_len: int = 500):
     print(f"{'Scenario':20s} | {'avg_vx':>8s} {'avg_vy':>8s} {'avg_wz':>8s} {'avg_h':>7s} {'dist':>6s} {'hdg°':>6s} {'surv':>5s}")
     print("-" * 80)
 
-    for name, mode, cmd in SCENARIOS:
+    for name, mode_str, cmd in SCENARIOS:
         all_vx, all_vy, all_wz, all_h, all_surv, all_dist, all_heading = [], [], [], [], [], [], []
-        mode_str = SKILL_MODES[mode]
-        target_h = HEIGHT_TARGETS[mode_str]
 
         for trial in range(n_trials):
             obs, _ = env.reset()
-            # Set the env's internal command state BEFORE getting obs
-            env.unwrapped.command_mode = mode_str
-            env.unwrapped.command = np.array(cmd, dtype=np.float32)
-            env.unwrapped.target_height = target_h
-            # Re-get obs with correct internal state
+            # v22: Use set_command API (handles height ramp, jump trajectory, etc.)
+            env.unwrapped.set_command(float(cmd[0]), float(cmd[1]), float(cmd[2]), mode_str)
             obs = env.unwrapped._get_obs()
 
             vx_hist, vy_hist, wz_hist, h_hist = [], [], [], []
