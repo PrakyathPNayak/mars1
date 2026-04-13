@@ -71,6 +71,7 @@ def linear_schedule(initial_value: float, min_value: float = 1e-5):
 
 def train(args):
     import torch
+    import torch.nn as nn
     from stable_baselines3 import PPO
     from stable_baselines3.common.vec_env import (
         SubprocVecEnv, DummyVecEnv, VecMonitor, VecNormalize,
@@ -190,11 +191,16 @@ def train(args):
     # no running stats) to prevent catastrophic forgetting. norm_obs=False.
     # norm_reward=False because the env already uses carefully scaled rewards.
     norm_path = str(ckpt_dir / "vec_normalize.pkl")
+    loaded_vec_norm = False
     if args.resume and os.path.exists(norm_path):
-        vec_env = VecNormalize.load(norm_path, vec_env)
-        vec_env.training = True
-        print(f"  Loaded VecNormalize stats from {norm_path}")
-    else:
+        try:
+            vec_env = VecNormalize.load(norm_path, vec_env)
+            vec_env.training = True
+            loaded_vec_norm = True
+            print(f"  Loaded VecNormalize stats from {norm_path}")
+        except (AssertionError, Exception) as e:
+            print(f"  VecNormalize shape mismatch ({e}), creating fresh (norm_obs=False anyway)")
+    if not loaded_vec_norm:
         vec_env = VecNormalize(
             vec_env, norm_obs=False, norm_reward=False,
             clip_obs=100.0, gamma=0.99,
@@ -228,12 +234,50 @@ def train(args):
 
     if args.resume and os.path.exists(args.resume):
         print(f"Resuming from: {args.resume}")
-        model = PPO.load(args.resume, env=vec_env, device=device)
-        # Override LR for fine-tuning: default linear schedule resets to 3e-4
-        # which destroys a converged policy. Use constant low LR instead.
-        if args.finetune_lr is not None:
-            model.learning_rate = args.finetune_lr
-            print(f"  Fine-tune LR: {args.finetune_lr}")
+        # Load model without env first to check obs dim compatibility
+        old_model = PPO.load(args.resume, device=device)
+        old_obs_dim = old_model.observation_space.shape[0]
+        new_obs_dim = vec_env.observation_space.shape[0]
+
+        if old_obs_dim != new_obs_dim:
+            print(f"  OBS DIM EXPANSION: {old_obs_dim} → {new_obs_dim} (expanding first-layer weights)")
+            # Extract state dict and expand first-layer weights with zeros
+            state_dict = old_model.policy.state_dict()
+            for key in list(state_dict.keys()):
+                if key.endswith('.weight') and state_dict[key].shape[1] == old_obs_dim:
+                    old_w = state_dict[key]
+                    new_w = torch.zeros(old_w.shape[0], new_obs_dim, device=old_w.device, dtype=old_w.dtype)
+                    new_w[:, :old_obs_dim] = old_w
+                    state_dict[key] = new_w
+                    print(f"    Expanded {key}: {old_w.shape} → {new_w.shape}")
+            # Create fresh model with new env, then load expanded weights
+            model = PPO(
+                policy="MlpPolicy",
+                env=vec_env,
+                learning_rate=args.finetune_lr if args.finetune_lr else linear_schedule(3e-4),
+                n_steps=old_model.n_steps,
+                batch_size=old_model.batch_size,
+                n_epochs=old_model.n_epochs,
+                gamma=old_model.gamma,
+                gae_lambda=old_model.gae_lambda,
+                clip_range=old_model.clip_range,
+                ent_coef=old_model.ent_coef,
+                vf_coef=old_model.vf_coef,
+                max_grad_norm=old_model.max_grad_norm,
+                policy_kwargs=policy_kwargs,
+                tensorboard_log=str(log_dir),
+                verbose=1,
+                device=device,
+            )
+            model.policy.load_state_dict(state_dict)
+            print(f"  Loaded expanded weights successfully")
+            del old_model
+        else:
+            model = PPO.load(args.resume, env=vec_env, device=device)
+            # Override LR for fine-tuning
+            if args.finetune_lr is not None:
+                model.learning_rate = args.finetune_lr
+                print(f"  Fine-tune LR: {args.finetune_lr}")
     else:
         n_epochs = getattr(args, "n_epochs", 5)
         # n_steps=4096: long rollouts improve GAE advantage estimates for locomotion.

@@ -47,7 +47,7 @@ SKILL_MODES = ["stand", "walk", "run", "crouch", "jump"]
 SKILL_DIM = len(SKILL_MODES)       # 5-dim one-hot in observation
 SKILL_TO_IDX = {m: i for i, m in enumerate(SKILL_MODES)}
 
-OBS_DIM = 61  # 49 (base) + 5 (augmented) + 5 (skill one-hot) + 2 (cpg phase)
+OBS_DIM = 67  # 49 (base) + 5 (augmented) + 5 (skill one-hot) + 2 (cpg phase) + 6 (cmd decomposition)
 #   [0:12]  joint positions
 #   [12:24] joint velocities
 #   [24:27] base linear velocity (body frame)
@@ -59,6 +59,7 @@ OBS_DIM = 61  # 49 (base) + 5 (augmented) + 5 (skill one-hot) + 2 (cpg phase)
 #   [50:54] foot contacts (binary; critical for gait timing, standard in legged_gym)
 #   [54:59] skill one-hot encoding
 #   [59:61] CPG phase [sin(phase), cos(phase)] — enables phase-dependent residuals
+#   [61:67] v21 command decomposition (speed, direction sin/cos, lateral_frac, turn_frac, lateral_sign)
 
 # ── Manual observation normalization (replaces VecNormalize) ──────────
 # Fixed divisors so each observation dimension is roughly in [-1, 1].
@@ -75,7 +76,8 @@ OBS_SCALES = np.array(
   + [0.35]          # base height: ~0.3 → ~0.86
   + [1.0]*4         # foot contacts: already [0, 1]
   + [1.0]*5         # skill one-hot: already [0, 1]
-  + [1.0]*2,        # CPG phase [sin, cos]: already [-1, 1]
+  + [1.0]*2         # CPG phase [sin, cos]: already [-1, 1]
+  + [2.0, 1.0, 1.0, 1.0, 1.0, 1.0],  # v21: cmd_speed/2, sin/cos heading, lateral_frac, turn_frac, lateral_sign
   dtype=np.float32
 )
 
@@ -192,7 +194,7 @@ MODE_REWARD_MULTIPLIERS = {
         "r_vel_x": 3.0,       # v12c: track vx (also penalizes unwanted forward when cmd=0)
         "r_vel_y": 3.0,       # v12c: match vx weight for lateral
         "r_yaw": 3.0,         # v12c: increased from 1.5 (yaw tracking)
-        "r_gait": 0.0,
+        "r_gait": 1.0,        # v21: ENABLED — trot symmetry + airtime + clearance (was 0.0 → caused limping)
         "r_posture": 1.0,
         "r_body_height": 2.0,
         "r_stillness": 0.0,
@@ -201,10 +203,10 @@ MODE_REWARD_MULTIPLIERS = {
         "r_fwd_vel": 0.0,      # v12c: DISABLED — was causing forward-only bias
         "r_jump_phase": 0.0,
         "r_smooth": 0.5,
-        "r_ang_vel_xy": 0.0,
-        "r_lin_vel_z": 0.0,
-        "r_torque": 0.0,
-        "r_dof_vel": 0.0,
+        "r_ang_vel_xy": 0.3,  # v21: light roll/pitch penalty (was 0.0 → wobble unpunished)
+        "r_lin_vel_z": 0.3,   # v21: light vertical bounce penalty
+        "r_torque": 0.3,      # v21: light torque penalty (was 0.0)
+        "r_dof_vel": 0.3,     # v21: light joint velocity penalty (was 0.0)
         "r_abd_symmetry": 1.0,  # v15: gentle abductor symmetry for walk
         "r_heading_drift": 1.0,  # v19: reduced from 2.0 to balance with yaw tracking
     },
@@ -213,7 +215,7 @@ MODE_REWARD_MULTIPLIERS = {
         "r_vel_x": 3.0,
         "r_vel_y": 3.0,        # v14: was 2.0 — equalize with walk to fix lateral drift
         "r_yaw": 3.0,          # v14: was 2.0 — equalize with walk
-        "r_gait": 0.0,
+        "r_gait": 1.0,         # v21: ENABLED — trot symmetry + airtime + clearance (was 0.0 → caused limping)
         "r_posture": 1.0,
         "r_body_height": 2.0,
         "r_stillness": 0.0,
@@ -222,10 +224,10 @@ MODE_REWARD_MULTIPLIERS = {
         "r_fwd_vel": 0.0,
         "r_jump_phase": 0.0,
         "r_smooth": 0.5,
-        "r_lin_vel_z": 0.0,
-        "r_ang_vel_xy": 0.0,
-        "r_torque": 0.0,
-        "r_dof_vel": 0.0,
+        "r_lin_vel_z": 0.3,   # v21: light vertical bounce penalty (was 0.0)
+        "r_ang_vel_xy": 0.3,  # v21: light roll/pitch penalty (was 0.0 → wobble unpunished)
+        "r_torque": 0.3,      # v21: light torque penalty (was 0.0)
+        "r_dof_vel": 0.3,     # v21: light joint velocity penalty (was 0.0)
         "r_abd_symmetry": 2.0,  # v15: stronger for run — main drift fix
         "r_heading_drift": 1.0,  # v18: heading correction for run (less needed than walk)
     },
@@ -541,7 +543,7 @@ class MiniCheetahEnv(gym.Env):
             # In trot: FR+RL swing phase vs FL+RR swing phase.
             # For vy>0 (move left): lean left when FR+RL swing, push right when FL+RR swing
             # Phase-shifted by 90° from sagittal to avoid interference.
-            amp_abd = 0.10 * min(abs(float(self.command[1])) / 0.3, 1.0)  # scale with |vy_cmd|
+            amp_abd = 0.15 * min(abs(float(self.command[1])) / 0.3, 1.0)  # v21: 0.10→0.15 for stronger lateral guidance
             abd_sign = 1.0 if float(self.command[1]) > 0 else -1.0
             cos_p = math.cos(phase)  # 90° shifted from sin_p sagittal
             cos_p_pi = math.cos(phase + math.pi)
@@ -720,6 +722,21 @@ class MiniCheetahEnv(gym.Env):
         else:
             cpg_phase_signal = np.zeros(2, dtype=np.float32)
 
+        # v21: Command decomposition — 6 extra dims to help policy distinguish
+        # lateral vs yaw, forward vs diagonal, pure-translate vs pure-turn.
+        vx_c, vy_c, wz_c = float(self.command[0]), float(self.command[1]), float(self.command[2])
+        cmd_speed = math.sqrt(vx_c ** 2 + vy_c ** 2)
+        cmd_heading = math.atan2(vy_c, vx_c) if cmd_speed > 0.01 else 0.0
+        total_cmd = cmd_speed + abs(wz_c)
+        cmd_decomp = np.array([
+            cmd_speed,                                          # [61] overall ground speed
+            math.sin(cmd_heading),                              # [62] movement direction sin
+            math.cos(cmd_heading),                              # [63] movement direction cos
+            abs(vy_c) / max(abs(vx_c) + abs(vy_c), 0.01),     # [64] lateral fraction (0=fwd, 1=pure lateral)
+            abs(wz_c) / max(total_cmd, 0.01),                  # [65] turn fraction (0=translate, 1=pure turn)
+            (1.0 if vy_c > 0.05 else (-1.0 if vy_c < -0.05 else 0.0)),  # [66] signed lateral direction
+        ], dtype=np.float32)
+
         obs = np.concatenate([
             qpos, qvel, base_linvel, base_angvel,
             gravity_body, self.prev_action,
@@ -727,6 +744,7 @@ class MiniCheetahEnv(gym.Env):
             base_height, foot_contacts,
             skill_onehot,
             cpg_phase_signal,
+            cmd_decomp,
         ]).astype(np.float32)
 
         # Manual normalization: divide by fixed scales to get ~[-1, 1] range.
