@@ -177,7 +177,8 @@ def train(args):
             gamma=0.99,
             gae_lambda=0.95,
             clip_range=0.2,
-            ent_coef=0.02,     # 2x increase: encourage exploration
+            target_kl=0.02,    # Early stop epoch if KL exceeds target
+            ent_coef=0.01,     # Moderate exploration (0.02 caused runaway std)
             vf_coef=0.05,     # 10x reduction: prevent value grad dominating policy
             max_grad_norm=1.0, # Relaxed: allows more policy gradient through
             policy_kwargs=policy_kwargs,
