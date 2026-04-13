@@ -29,21 +29,25 @@ from typing import Dict, List, Optional, Tuple
 
 # ── Constants ─────────────────────────────────────────────────────────
 
-OBS_DIM = 54
+OBS_DIM = 196
 ACT_DIM = 12
-HISTORY_LEN = 16  # Number of past observations to keep
+HISTORY_LEN = 32  # Number of past observations to keep
 
 # Sensory groups for structured attention
-# Must match cheetah_env.py observation layout exactly (54 dims).
+# Must match cheetah_env.py v23 observation layout exactly (196 dims).
 SENSORY_GROUPS = {
-    "joint_pos":   (0,  12),   # 12 joint positions
-    "joint_vel":   (12, 24),   # 12 joint velocities
-    "base_linvel": (24, 27),   # 3 base linear velocity
-    "base_angvel": (27, 30),   # 3 base angular velocity
-    "gravity":     (30, 33),   # 3 projected gravity
-    "prev_action": (33, 45),   # 12 previous action
-    "command":     (45, 49),   # 4: vx, vy, wz, target_height
-    "skill_cmd":   (49, 54),   # 5: one-hot skill encoding
+    "joint_pos":      (0,  12),    # 12 joint positions
+    "joint_vel":      (12, 24),    # 12 joint velocities
+    "base_linvel":    (24, 27),    # 3 base linear velocity (body frame)
+    "base_angvel":    (27, 30),    # 3 base angular velocity (body frame)
+    "gravity":        (30, 33),    # 3 projected gravity (body frame)
+    "prev_action":    (33, 45),    # 12 previous action
+    "command":        (45, 49),    # 4: vx, vy, wz, target_height
+    "skill_cmd":      (49, 53),    # 4: skill one-hot (stand, walk, run, jump)
+    "cmd_decomp":     (53, 59),    # 6: speed, dir_sin, dir_cos, lat_frac, turn_frac, lat_sign
+    "state":          (59, 71),    # 12: base_h(1), contacts(4), CPG(2), height_ctrl(5)
+    "foot_heights":   (71, 75),    # 4: foot height above terrain
+    "heightmap":      (75, 196),   # 121: 11x11 local heightmap (body frame)
 }
 
 # Leg symmetry mapping: FR<->FL, RR<->RL (3 joints per leg)
@@ -179,7 +183,7 @@ class SymmetryAugmenter(nn.Module):
     Instead, uses a lightweight symmetry projection on the raw reflected obs.
     """
 
-    def __init__(self, d_model: int = 128, obs_dim: int = OBS_DIM):
+    def __init__(self, d_model: int = 256, obs_dim: int = OBS_DIM):
         super().__init__()
         # Lightweight encoder for reflected obs (much cheaper than full sensory encoder)
         self.reflect_encoder = nn.Sequential(
@@ -404,10 +408,10 @@ class HierarchicalTransformerPolicy(nn.Module):
         self,
         obs_dim: int = OBS_DIM,
         action_dim: int = ACT_DIM,
-        d_model: int = 128,
-        n_transformer_layers: int = 3,
-        n_heads: int = 4,
-        n_experts: int = 4,
+        d_model: int = 256,
+        n_transformer_layers: int = 4,
+        n_heads: int = 8,
+        n_experts: int = 6,
         history_len: int = HISTORY_LEN,
         dropout: float = 0.05,
     ):
@@ -599,7 +603,7 @@ class TransformerFeaturesExtractor(nn.Module):
     Manages observation history buffer internally.
     """
 
-    def __init__(self, observation_space, d_model: int = 128,
+    def __init__(self, observation_space, d_model: int = 256,
                  history_len: int = HISTORY_LEN):
         super().__init__()
         self.d_model = d_model
@@ -611,8 +615,8 @@ class TransformerFeaturesExtractor(nn.Module):
         self.symmetry_aug = SymmetryAugmenter(d_model)
         self.pos_encoding = SinusoidalPositionalEncoding(d_model, max_len=history_len)
         self.temporal_layers = nn.ModuleList([
-            TemporalTransformerBlock(d_model, 4, d_model * 2, 0.05)
-            for _ in range(3)
+            TemporalTransformerBlock(d_model, 8, d_model * 2, 0.05)
+            for _ in range(4)
         ])
 
         # History buffer

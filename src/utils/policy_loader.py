@@ -17,8 +17,9 @@ from collections import deque
 from typing import Callable, Optional, Tuple
 
 # Observation dimension produced by MiniCheetahEnv (single step, no history)
-# v22: 49 base + 1 height + 4 foot_contacts + 5 skill + 2 cpg + 6 cmd_decomp + 5 height_control = 72
-_BASE_OBS_DIM = 72
+# v23: 45 proprioception + 4 cmd + 4 skill + 6 cmd_decomp + 1 h + 4 contacts
+#      + 2 cpg + 5 h_ctrl + 4 foot_h + 121 heightmap = 196
+_BASE_OBS_DIM = 196
 
 
 class HistoryAwarePolicy:

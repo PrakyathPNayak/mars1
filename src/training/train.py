@@ -49,7 +49,7 @@ def make_env(rank=0, **kwargs):
         from src.env.cheetah_env import MiniCheetahEnv
         env = MiniCheetahEnv(
             render_mode="none",
-            randomize_domain=True,
+            use_terrain=False,
             episode_length=2000,
             **kwargs
         )

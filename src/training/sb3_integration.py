@@ -120,9 +120,9 @@ class TransformerExtractor(BaseFeaturesExtractor):
     def __init__(
         self,
         observation_space: spaces.Box,
-        d_model: int = 128,
-        n_heads: int = 4,
-        n_layers: int = 3,
+        d_model: int = 256,
+        n_heads: int = 8,
+        n_layers: int = 4,
         dropout: float = 0.05,
         history_len: int = HISTORY_LEN,
         obs_dim: int = OBS_DIM,
@@ -297,10 +297,10 @@ class TransformerActorCriticPolicy(ActorCriticPolicy):
         observation_space: spaces.Space,
         action_space: spaces.Space,
         lr_schedule: Schedule,
-        d_model: int = 128,
-        n_heads: int = 4,
-        n_layers: int = 3,
-        n_experts: int = 4,
+        d_model: int = 256,
+        n_heads: int = 8,
+        n_layers: int = 4,
+        n_experts: int = 6,
         history_len: int = HISTORY_LEN,
         obs_dim: int = OBS_DIM,
         **kwargs,
@@ -371,7 +371,7 @@ class _MoEExtractor(nn.Module):
     """
 
     def __init__(self, feature_dim: int, action_dim: int = ACT_DIM,
-                 n_experts: int = 4):
+                 n_experts: int = 6):
         super().__init__()
         self.moe = MixtureOfExperts(
             feature_dim, action_dim, n_experts=n_experts, d_hidden=256

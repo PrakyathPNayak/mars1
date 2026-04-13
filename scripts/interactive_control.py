@@ -47,7 +47,7 @@ def run(checkpoint_path=None, use_policy=True):
     # Create env with render_mode="none" — we manage the viewer ourselves
     env = MiniCheetahEnv(
         render_mode="none",
-        randomize_domain=False,
+        use_terrain=False,
         episode_length=100_000,
     )
     env.randomize_commands = False

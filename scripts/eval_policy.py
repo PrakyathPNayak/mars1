@@ -29,16 +29,16 @@ SCENARIOS = [
     ("Run 2.0",        "run",    [2.0, 0, 0]),
     ("Run 1.0 lat",    "run",    [1.0, 0.3, 0]),
     ("Run 1.0 yaw",    "run",    [1.0, 0, 0.3]),
-    ("Crouch",         "crouch", [0, 0, 0]),
+    ("Walk crouch",    "walk",   [0.3, 0, 0]),  # height set low in eval
     ("Jump",           "jump",   [0, 0, 0]),
 ]
 
 
-SKILL_MODES = ["stand", "walk", "run", "crouch", "jump"]
+SKILL_MODES = ["stand", "walk", "run", "jump"]
 
 
 def evaluate(model_path: str, n_trials: int = 10, episode_len: int = 500):
-    env = MiniCheetahEnv(render_mode=None, randomize_domain=False)
+    env = MiniCheetahEnv(render_mode=None, use_terrain=False)
     env.randomize_commands = False  # Prevent mid-episode re-randomization
     model = PPO.load(model_path, device="cpu")
     print(f"Model: {model_path}")

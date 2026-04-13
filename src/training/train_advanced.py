@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 
-def make_env(rank=0, history_len=16, **kwargs):
+def make_env(rank=0, history_len=32, **kwargs):
     """Environment factory with history wrapper for vectorized training."""
     project_root = str(Path(__file__).resolve().parent.parent.parent)
     def _init():
@@ -37,7 +37,9 @@ def make_env(rank=0, history_len=16, **kwargs):
         from src.training.sb3_integration import HistoryWrapper, ActionSmoothingWrapper
         env = MiniCheetahEnv(
             render_mode="none",
-            randomize_domain=True,
+            use_terrain=True,
+            terrain_type="random",
+            terrain_difficulty=0.3,
             episode_length=2000,
             **kwargs
         )
@@ -136,11 +138,11 @@ def train(args):
     # Policy kwargs for the transformer
     policy_kwargs = dict(
         d_model=d_model,
-        n_heads=4,
+        n_heads=8,
         n_layers=n_layers,
         n_experts=n_experts,
         history_len=history_len,
-        obs_dim=54,
+        obs_dim=196,
     )
 
     if args.resume and os.path.exists(args.resume):
@@ -246,9 +248,9 @@ def main():
     parser.add_argument("--total-steps", type=int, default=5_000_000)
     parser.add_argument("--n-envs", type=int, default=8)
     parser.add_argument("--d-model", type=int, default=256)
-    parser.add_argument("--n-layers", type=int, default=3)
-    parser.add_argument("--n-experts", type=int, default=4)
-    parser.add_argument("--history-len", type=int, default=16)
+    parser.add_argument("--n-layers", type=int, default=4)
+    parser.add_argument("--n-experts", type=int, default=6)
+    parser.add_argument("--history-len", type=int, default=32)
     parser.add_argument("--resume", type=str, default=None)
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()

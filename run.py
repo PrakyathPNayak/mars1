@@ -94,7 +94,7 @@ def main():
         heading_rad = math.radians(args.heading)
         print(f"Exploration demo: heading={args.heading} degrees")
 
-        env = MiniCheetahEnv(render_mode="human", randomize_domain=False)
+        env = MiniCheetahEnv(render_mode="human", use_terrain=False)
         ctrl = ExplorationPolicy()
         ctrl.set_target_heading(heading_rad)
         env.set_exploration_heading(heading_rad)
