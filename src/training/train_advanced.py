@@ -54,7 +54,9 @@ def train(args):
     import torch
     import numpy as np
     from stable_baselines3 import PPO
-    from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv, VecMonitor
+    from stable_baselines3.common.vec_env import (
+        SubprocVecEnv, DummyVecEnv, VecMonitor, VecNormalize
+    )
     from stable_baselines3.common.callbacks import (
         EvalCallback, CheckpointCallback, BaseCallback
     )
@@ -132,8 +134,24 @@ def train(args):
             [make_env(i, history_len=history_len) for i in range(args.n_envs)]
         )
     vec_env = VecMonitor(vec_env, str(log_dir))
+    # Normalize rewards to keep value targets small (~1/step)
+    # This prevents value gradient from dominating policy gradient
+    vec_env = VecNormalize(
+        vec_env,
+        norm_obs=False,    # obs already manually normalized in env
+        norm_reward=True,  # critical: normalize rewards to ~1/step
+        clip_reward=10.0,
+        gamma=0.99,
+    )
 
     eval_env = DummyVecEnv([make_env(999, history_len=history_len)])
+    eval_env = VecMonitor(eval_env)  # Match training wrapper structure
+    eval_env = VecNormalize(
+        eval_env,
+        norm_obs=False,
+        norm_reward=False,  # don't normalize eval rewards (raw for comparison)
+        gamma=0.99,
+    )
 
     # Policy kwargs for the transformer
     policy_kwargs = dict(
@@ -159,9 +177,9 @@ def train(args):
             gamma=0.99,
             gae_lambda=0.95,
             clip_range=0.2,
-            ent_coef=0.01,
-            vf_coef=0.5,
-            max_grad_norm=0.5,
+            ent_coef=0.02,     # 2x increase: encourage exploration
+            vf_coef=0.05,     # 10x reduction: prevent value grad dominating policy
+            max_grad_norm=1.0, # Relaxed: allows more policy gradient through
             policy_kwargs=policy_kwargs,
             tensorboard_log=str(log_dir),
             verbose=1,

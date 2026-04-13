@@ -146,3 +146,10 @@ Root causes identified:
 - Transformer policy forward pass OK with obs_dim=54
 - Reward components returned correctly for all 5 modes
 
+[08:04:57] Step   10,000 | timesteps=80,000
+[08:27:58] Step   10,000 | timesteps=240,000
+[08:42:10] Step   20,000 | timesteps=480,000
+[08:57:11] Step   30,000 | timesteps=720,000
+[09:11:04] Step   40,000 | timesteps=960,000
+[09:26:43] Step   50,000 | timesteps=1,200,000
+[09:51:46] Step   10,000 | timesteps=240,000

@@ -179,7 +179,7 @@ REWARD_SCALES = {
     "r_dof_vel":       -5e-5,
     "r_abd_symmetry":  -1.0,
     "r_heading_drift": -1.0,       # Reduced from -3.0
-    "r_stumble":       -0.2,       # Reduced from -0.5 — only terrain contacts
+    "r_stumble":        0.0,       # Disabled — heightfield produces non-vertical normals on flat terrain
 }
 
 # ── Per-mode reward multipliers ──────────────────────────────────
@@ -1194,7 +1194,9 @@ class MiniCheetahEnv(gym.Env):
                 floor_involved = (g1 == floor_id) or (g2 == floor_id)
                 if foot_involved and floor_involved:
                     # Large lateral normal = foot hitting edge/side of terrain
-                    if abs(c.frame[0]) > 0.5 or abs(c.frame[1]) > 0.5:
+                    # Threshold 0.85: only steep lateral contacts count
+                    # (heightfield triangulation can produce small normal tilts)
+                    if abs(c.frame[0]) > 0.85 or abs(c.frame[1]) > 0.85:
                         r_stumble += 1.0
 
         # Update state
