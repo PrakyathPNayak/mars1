@@ -834,8 +834,9 @@ class MiniCheetahEnv(gym.Env):
         phase = 2.0 * math.pi * freq * t
         self._cpg_phase = phase
 
-        amp_hip = 0.20  # v23i8: larger amplitude with softer PD (kp=60) for stronger oscillation
-        amp_knee = 0.25  # v23i8: matched to hip
+        amp_hip = 0.0   # v23i9: CPG DISABLED — policy learns gait from scratch
+        amp_knee = 0.0  # v23i9: (phase still ticks for timing obs)
+        return cpg      # v23i9: all zeros — no CPG offsets, only phase for obs
 
         sin_p = math.sin(phase)
         sin_p_pi = math.sin(phase + math.pi)
@@ -1272,28 +1273,29 @@ class MiniCheetahEnv(gym.Env):
         total = 0.0
         scaled_components = {}
 
-        # v23i7b: HYBRID VELOCITY REWARD for walk/run mode
-        # Pure exp tracking (v23i7) failed: gradient too flat far from target.
-        # Pure linear (v23i6) failed: no tracking signal, free CPG reward.
-        # Hybrid combines: linear term (constant gradient everywhere) +
-        # exp tracking bonus (peaks at target) on EMA velocity (filters CPG noise).
+        # v23i9: NO-CPG LEGGED-GYM-STYLE REWARD for walk/run mode
+        # CPG disabled — policy must learn gait from scratch.
+        # Reward: velocity tracking (sharp exp) + linear vx + air_time + foot clearance.
+        # Standing gives ~0.7/step; walking at target gives ~2.5/step.
         if mode in ("walk", "run"):
-            vx_ema = self._vx_ema   # EMA-smoothed (filters CPG oscillation)
-            vy_ema = self._vy_ema
+            vx = float(base_linvel[0])    # instantaneous (no EMA — no CPG noise)
+            vy = float(base_linvel[1])
             wz = float(base_angvel[2])
 
-            # Linear velocity: constant gradient even far from target
-            r_vx_lin = vx_ema * (1.0 if vx_cmd > 0 else (-1.0 if vx_cmd < 0 else 0.0))
-            # Exp tracking bonus: peaks when EMA matches command
-            r_vx_track = math.exp(-4.0 * (vx_ema - vx_cmd)**2)
-            r_vy_track = math.exp(-4.0 * (vy_ema - vy_cmd)**2)
-            r_wz_track = math.exp(-4.0 * (wz - wz_cmd)**2)
+            # Linear velocity: constant gradient everywhere
+            r_vx_lin = vx * (1.0 if vx_cmd > 0 else (-1.0 if vx_cmd < 0 else 0.0))
+            # Sharp exp tracking (sigma=0.25 like legged_gym)
+            r_vx_track = math.exp(-16.0 * (vx - vx_cmd)**2)
+            r_vy_track = math.exp(-16.0 * (vy - vy_cmd)**2)
+            r_wz_track = math.exp(-16.0 * (wz - wz_cmd)**2)
 
             total = (
-                5.0 * r_vx_lin           # linear velocity (constant gradient)
-                + 3.0 * r_vx_track       # exp tracking bonus at target
+                2.0 * r_vx_lin           # linear velocity (constant gradient)
+                + 1.0 * r_vx_track       # sharp exp tracking at target (sigma=0.25)
                 + 0.5 * r_vy_track       # lateral tracking
                 + 0.5 * r_wz_track       # yaw tracking
+                + 0.5 * foot_clearance        # v23i9: lift swing feet (always ≥ 0)
+                + 0.3 * stride_freq_reward    # v23i9: encourage ~2 touchdowns per step
                 - 2.0 * r_orientation    # stay upright
                 - 5e-5 * r_torque        # energy
                 - 0.005 * r_smooth       # smooth actions
@@ -1301,10 +1303,12 @@ class MiniCheetahEnv(gym.Env):
                 - 0.02 * r_ang_vel_xy    # don't wobble
             )
             scaled_components = {
-                "r_vx_lin": 5.0 * r_vx_lin,
-                "r_vx_track": 3.0 * r_vx_track,
+                "r_vx_lin": 2.0 * r_vx_lin,
+                "r_vx_track": 1.0 * r_vx_track,
                 "r_vy_track": 0.5 * r_vy_track,
                 "r_wz_track": 0.5 * r_wz_track,
+                "r_foot_clearance": 0.5 * foot_clearance,
+                "r_stride_freq": 0.3 * stride_freq_reward,
                 "r_orientation": -2.0 * r_orientation,
                 "r_torque": -5e-5 * r_torque,
                 "r_smooth": -0.005 * r_smooth,
