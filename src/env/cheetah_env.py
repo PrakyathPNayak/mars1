@@ -1273,29 +1273,25 @@ class MiniCheetahEnv(gym.Env):
         total = 0.0
         scaled_components = {}
 
-        # v23i9: NO-CPG LEGGED-GYM-STYLE REWARD for walk/run mode
-        # CPG disabled — policy must learn gait from scratch.
-        # Reward: velocity tracking (sharp exp) + linear vx + air_time + foot clearance.
-        # Standing gives ~0.7/step; walking at target gives ~2.5/step.
+        # v23i9b: NO-CPG, NO-FREE-REWARD walk reward
+        # v23i9 failed: vy/wz tracking gave 0.9/step free reward (77% of total).
+        # Policy had no incentive to discover forward motion.
+        # Fix: remove vy/wz tracking, add standstill penalty, pure forward walk.
+        # Standing gives ~0.02/step; walking at 0.3 gives ~1.7/step.
         if mode in ("walk", "run"):
-            vx = float(base_linvel[0])    # instantaneous (no EMA — no CPG noise)
-            vy = float(base_linvel[1])
-            wz = float(base_angvel[2])
+            vx = float(base_linvel[0])    # instantaneous
 
             # Linear velocity: constant gradient everywhere
             r_vx_lin = vx * (1.0 if vx_cmd > 0 else (-1.0 if vx_cmd < 0 else 0.0))
             # Sharp exp tracking (sigma=0.25 like legged_gym)
             r_vx_track = math.exp(-16.0 * (vx - vx_cmd)**2)
-            r_vy_track = math.exp(-16.0 * (vy - vy_cmd)**2)
-            r_wz_track = math.exp(-16.0 * (wz - wz_cmd)**2)
 
             total = (
-                2.0 * r_vx_lin           # linear velocity (constant gradient)
-                + 1.0 * r_vx_track       # sharp exp tracking at target (sigma=0.25)
-                + 0.5 * r_vy_track       # lateral tracking
-                + 0.5 * r_wz_track       # yaw tracking
-                + 0.5 * foot_clearance        # v23i9: lift swing feet (always ≥ 0)
-                + 0.3 * stride_freq_reward    # v23i9: encourage ~2 touchdowns per step
+                2.0 * r_vx_lin           # forward velocity (constant gradient)
+                + 1.0 * r_vx_track       # sharp tracking bonus at target
+                + 0.5 * foot_clearance        # lift swing feet
+                + 0.3 * stride_freq_reward    # encourage stepping cadence
+                - 0.3 * r_standstill          # v23i9b: penalize standing still
                 - 2.0 * r_orientation    # stay upright
                 - 5e-5 * r_torque        # energy
                 - 0.005 * r_smooth       # smooth actions
@@ -1305,9 +1301,9 @@ class MiniCheetahEnv(gym.Env):
             scaled_components = {
                 "r_vx_lin": 2.0 * r_vx_lin,
                 "r_vx_track": 1.0 * r_vx_track,
-                "r_vy_track": 0.5 * r_vy_track,
-                "r_wz_track": 0.5 * r_wz_track,
                 "r_foot_clearance": 0.5 * foot_clearance,
+                "r_stride_freq": 0.3 * stride_freq_reward,
+                "r_standstill": -0.3 * r_standstill,
                 "r_stride_freq": 0.3 * stride_freq_reward,
                 "r_orientation": -2.0 * r_orientation,
                 "r_torque": -5e-5 * r_torque,
@@ -1490,8 +1486,8 @@ class MiniCheetahEnv(gym.Env):
             self._start_height_ramp(height)
         elif mode == "walk":
             vx = float(rng.uniform(0.15, 0.5))   # v23i7b: lower range for achievable targets
-            vy = float(rng.uniform(-0.1, 0.1))  # v23i4: minimal lateral
-            wz = float(rng.uniform(-0.2, 0.2))  # v23i4: minimal turning
+            vy = 0.0   # v23i9b: pure forward walk first — no lateral confusion
+            wz = 0.0   # v23i9b: no yaw — learn forward walking first
             # Random height during walking (tests crouched walking)
             height = float(rng.uniform(HEIGHT_MIN + 0.05, HEIGHT_MAX))
             self._start_height_ramp(height)
