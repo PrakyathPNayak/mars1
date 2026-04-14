@@ -180,6 +180,7 @@ REWARD_SCALES = {
     "r_abd_symmetry":  -1.0,
     "r_heading_drift": -1.0,       # Reduced from -3.0
     "r_stumble":        0.0,       # Disabled — heightfield produces non-vertical normals on flat terrain
+    "r_standstill":    -3.0,       # v23i: reduced from -8.0 (too harsh with speed gating)
 }
 
 # ── Per-mode reward multipliers ──────────────────────────────────
@@ -191,19 +192,19 @@ MODE_REWARD_MULTIPLIERS = {
         "r_fwd_vel": 0.0, "r_jump_phase": 0.0,
         "r_terrain_progress": 0.0, "r_foot_clearance": 0.0,
         "r_orientation": 2.0, "r_ang_vel_xy": 2.0, "r_lin_vel_z": 2.0,
-        "r_energy": 0.5, "r_stumble": 0.0,
+        "r_energy": 0.5, "r_stumble": 0.0, "r_standstill": 0.0,
     },
     "walk": {
         "r_vel_x": 3.0, "r_vel_y": 1.5, "r_yaw": 3.0, "r_gait": 2.5,
         "r_posture": 1.0, "r_body_height": 1.0, "r_stillness": 0.0,
         "r_motion_penalty": 0.0, "r_vel_track_penalty": 0.0,
         "r_fwd_vel": 2.0, "r_jump_phase": 0.0,
-        "r_alive": 0.5,
+        "r_alive": 1.5,  # v23i5: ungated alive offsets standstill (3.0 vs -3.0)
         "r_terrain_progress": 1.0, "r_foot_clearance": 1.0,
         "r_smooth": 1.0, "r_ang_vel_xy": 0.3, "r_lin_vel_z": 0.3,
         "r_torque": 0.3, "r_dof_vel": 0.3,
         "r_abd_symmetry": 1.0, "r_heading_drift": 1.0,
-        "r_energy": 1.0, "r_stumble": 1.0,
+        "r_energy": 1.0, "r_stumble": 1.0, "r_standstill": 1.0,
     },
     "run": {
         "r_vel_x": 3.0, "r_vel_y": 1.5, "r_yaw": 3.0, "r_gait": 2.5,
@@ -215,7 +216,7 @@ MODE_REWARD_MULTIPLIERS = {
         "r_smooth": 0.5, "r_lin_vel_z": 0.3, "r_ang_vel_xy": 0.3,
         "r_torque": 0.3, "r_dof_vel": 0.3,
         "r_abd_symmetry": 2.0, "r_heading_drift": 1.0,
-        "r_energy": 0.5, "r_stumble": 1.0,
+        "r_energy": 0.5, "r_stumble": 1.0, "r_standstill": 1.0,
     },
     "jump": {
         "r_vel_x": 0.2, "r_vel_y": 0.2, "r_yaw": 0.2, "r_gait": 0.0,
@@ -224,7 +225,7 @@ MODE_REWARD_MULTIPLIERS = {
         "r_vel_track_penalty": 0.0, "r_fwd_vel": 0.0,
         "r_jump_phase": 1.0, "r_terrain_progress": 0.0,
         "r_foot_clearance": 0.0, "r_lin_vel_z": 0.1,
-        "r_ang_vel_xy": 0.5, "r_energy": 0.0, "r_stumble": 0.0,
+        "r_ang_vel_xy": 0.5, "r_energy": 0.0, "r_stumble": 0.0, "r_standstill": 0.0,
     },
 }
 
@@ -515,6 +516,7 @@ class MiniCheetahEnv(gym.Env):
         physics_dt: float = 0.002,
         curriculum: Optional[TerrainCurriculum] = None,
         env_id: int = 0,
+        forced_mode: Optional[str] = None,
     ):
         super().__init__()
         self.render_mode = render_mode
@@ -542,6 +544,7 @@ class MiniCheetahEnv(gym.Env):
         self.command = np.zeros(3, dtype=np.float32)
         self.command_mode = "stand"
         self.randomize_commands = True
+        self.forced_mode = forced_mode  # override random mode selection
         self.target_height = HEIGHT_DEFAULT
 
         # Feet tracking
@@ -549,6 +552,8 @@ class MiniCheetahEnv(gym.Env):
         self._last_contacts = np.zeros(4, dtype=bool)
         self._prev_base_linvel = np.zeros(3, dtype=np.float32)
         self._prev_foot_heights = np.zeros(4, dtype=np.float32)
+        self._vx_ema = 0.0  # v23i5: smoothed forward velocity for reward
+        self._vy_ema = 0.0
 
         # CPG phase
         self._cpg_phase = 0.0
@@ -569,7 +574,7 @@ class MiniCheetahEnv(gym.Env):
 
         # PD gains (Go1 specs — no randomization)
         self.kp = 100.0
-        self.kd = 0.0
+        self.kd = 0.0  # v23i5: no PD damping (kd=1.0 killed CPG momentum, kd=2.0 worse)
         self.max_torque = 33.5
 
         # Terrain
@@ -651,6 +656,8 @@ class MiniCheetahEnv(gym.Env):
         self._last_contacts = np.zeros(4, dtype=bool)
         self._prev_base_linvel = np.zeros(3, dtype=np.float32)
         self._prev_foot_heights = np.zeros(4, dtype=np.float32)
+        self._vx_ema = 0.0
+        self._vy_ema = 0.0
         self._cpg_phase = 0.0
         self._last_mode_change_step = 0
         self._ep_reward_sum = 0.0
@@ -689,8 +696,11 @@ class MiniCheetahEnv(gym.Env):
         # Randomize command for training
         if self.randomize_commands:
             # Mode weights: train all modes, walk most common
-            mode_weights = [0.08, 0.42, 0.25, 0.25]  # stand, walk, run, jump
-            self.command_mode = str(rng.choice(SKILL_MODES, p=mode_weights))
+            if self.forced_mode and self.forced_mode in SKILL_MODES:
+                self.command_mode = self.forced_mode
+            else:
+                mode_weights = [0.08, 0.42, 0.25, 0.25]  # stand, walk, run, jump
+                self.command_mode = str(rng.choice(SKILL_MODES, p=mode_weights))
             self._randomize_command_for_mode(rng)
             self.target_height = self._effective_target_height
 
@@ -706,7 +716,7 @@ class MiniCheetahEnv(gym.Env):
         self.target_height = self._effective_target_height
 
         # Scale action (corrections to posture-centered base)
-        action_scaled = action * 0.25  # v23g: increased from 0.2 for more range
+        action_scaled = action * 0.5  # v23i: increased from 0.25 for walking authority
 
         # CPG trot pattern for walk/run
         cpg = self._compute_cpg()
@@ -824,8 +834,8 @@ class MiniCheetahEnv(gym.Env):
         phase = 2.0 * math.pi * freq * t
         self._cpg_phase = phase
 
-        amp_hip = 0.12
-        amp_knee = 0.15
+        amp_hip = 0.12  # v23i5: moderate (bootstrap momentum, not chaotic)
+        amp_knee = 0.15  # v23i5: moderate
 
         sin_p = math.sin(phase)
         sin_p_pi = math.sin(phase + math.pi)
@@ -1024,15 +1034,17 @@ class MiniCheetahEnv(gym.Env):
         any_cmd_active = max(vx_cmd_scale, vy_cmd_scale, wz_cmd_scale)
 
         if mode in ("walk", "run"):
-            r_vel_x *= max(vx_cmd_scale, any_cmd_active)
-            r_vel_y *= max(vy_cmd_scale, any_cmd_active)
+            # v23i: Only reward tracking when that specific direction is commanded.
+            # Old code used any_cmd_active which gave free reward for tracking vy=0/wz=0.
+            r_vel_x *= vx_cmd_scale
+            r_vel_y *= vy_cmd_scale
 
         # ── 2. Yaw tracking ────────────────────────────────────
         ang_vel_error = (base_angvel[2] - wz_cmd)**2
         sigma_wz = max(HEADING_SIGMA, abs(wz_cmd) * 0.5)
         r_yaw = math.exp(-ang_vel_error / sigma_wz)
         if mode in ("walk", "run"):
-            r_yaw *= max(wz_cmd_scale, any_cmd_active)
+            r_yaw *= wz_cmd_scale
 
         # ── 3. Gait reward ──────────────────────────────────────
         foot_contacts = np.zeros(4, dtype=bool)
@@ -1112,12 +1124,17 @@ class MiniCheetahEnv(gym.Env):
             r_motion_penalty = body_speed_sq + 0.5 * yaw_rate_sq
 
         # ── 6c. Forward velocity bonus ──────────────────────────
+        # v23i5: Use EMA-smoothed velocity to prevent symmetric CPG oscillation
+        # from getting free reward via max(0) on instantaneous velocity peaks.
+        _EMA_ALPHA = 0.05  # ~20-step window at 50Hz = 0.4s (smooths 1 CPG cycle)
+        self._vx_ema = (1 - _EMA_ALPHA) * self._vx_ema + _EMA_ALPHA * float(base_linvel[0])
+        self._vy_ema = (1 - _EMA_ALPHA) * self._vy_ema + _EMA_ALPHA * float(base_linvel[1])
         r_fwd_vel = 0.0
         if mode in ("walk", "run"):
             if abs(vx_cmd) > 0.05:
-                r_fwd_vel += float(base_linvel[0]) * (1.0 if vx_cmd > 0 else -1.0)
+                r_fwd_vel += self._vx_ema * (1.0 if vx_cmd > 0 else -1.0)
             if abs(vy_cmd) > 0.05:
-                r_fwd_vel += float(base_linvel[1]) * (1.0 if vy_cmd > 0 else -1.0)
+                r_fwd_vel += self._vy_ema * (1.0 if vy_cmd > 0 else -1.0)
             r_fwd_vel = max(r_fwd_vel, 0.0)
 
         # ── 6d. Velocity tracking penalty ───────────────────────
@@ -1206,6 +1223,17 @@ class MiniCheetahEnv(gym.Env):
                     if abs(c.frame[0]) > 0.85 or abs(c.frame[1]) > 0.85:
                         r_stumble += 1.0
 
+        # ── 22. Standstill penalty (v23h) ───────────────────────
+        # Break the "standing is safe" local minimum during locomotion modes.
+        # Without this, the policy gets 7.5/step for standing during walk,
+        # which is higher than the 3-5/step from failed walking attempts.
+        r_standstill = 0.0
+        if mode in ("walk", "run") and cmd_speed > 0.1:
+            actual_speed = math.sqrt(float(base_linvel[0])**2 + float(base_linvel[1])**2)
+            speed_frac = min(actual_speed / cmd_speed, 1.0)
+            # Quadratic penalty peaks at standstill, zero at full speed
+            r_standstill = (1.0 - speed_frac) ** 2
+
         # Update state
         self._prev_base_linvel = base_linvel.copy()
         self._prev_foot_heights = foot_site_heights.copy()
@@ -1237,17 +1265,60 @@ class MiniCheetahEnv(gym.Env):
             "r_abd_symmetry": r_abd_symmetry,
             "r_heading_drift": r_heading_drift,
             "r_stumble": r_stumble,
+            "r_standstill": r_standstill,
         }
 
         mode_mults = MODE_REWARD_MULTIPLIERS.get(mode, {})
         total = 0.0
         scaled_components = {}
-        for k, raw_val in raw_components.items():
-            base_scale = REWARD_SCALES.get(k, 0.0)
-            mode_mult = mode_mults.get(k, 1.0)
-            scaled = base_scale * mode_mult * raw_val
-            scaled_components[k] = scaled
-            total += scaled
+
+        # v23i6: SIMPLIFIED REWARD for walk/run mode
+        # The complex 26-component reward with speed gating consistently fails:
+        # train reward goes up while eval (deterministic) declines — the policy
+        # learns to exploit stochastic noise instead of walking deterministically.
+        # Simple reward: directly reward forward velocity + survival, penalize instability.
+        if mode in ("walk", "run"):
+            # Direct signed velocity (no EMA — CPG oscillation averages out in GAE returns)
+            r_vel = float(base_linvel[0]) * (1.0 if vx_cmd > 0 else -1.0) if abs(vx_cmd) > 0.05 else 0.0
+            if abs(vy_cmd) > 0.05:
+                r_vel += float(base_linvel[1]) * (1.0 if vy_cmd > 0 else -1.0)
+
+            total = (
+                10.0 * r_vel             # forward velocity (main driver)
+                + 1.0                    # alive bonus each step
+                - 2.0 * r_orientation    # stay upright
+                - 1e-4 * r_torque        # energy efficiency
+                - 0.02 * r_smooth        # smooth actions
+                - 2.0 * r_lin_vel_z      # don't bounce
+                - 0.05 * r_ang_vel_xy    # don't wobble
+            )
+            scaled_components = {
+                "r_fwd_vel": 10.0 * r_vel,
+                "r_alive": 1.0,
+                "r_orientation": -2.0 * r_orientation,
+                "r_torque": -1e-4 * r_torque,
+                "r_smooth": -0.02 * r_smooth,
+                "r_lin_vel_z": -2.0 * r_lin_vel_z,
+                "r_ang_vel_xy": -0.05 * r_ang_vel_xy,
+                "r_total": total,
+            }
+        else:
+            # Original complex reward for stand/jump modes
+            _UNGATED = {"r_standstill", "r_heading_drift", "r_fwd_vel", "r_alive"}
+            if mode in ("walk", "run") and cmd_speed > 0.1:
+                actual_speed = math.sqrt(float(base_linvel[0])**2 + float(base_linvel[1])**2)
+                _speed_gate = min(actual_speed / cmd_speed, 1.0)
+            else:
+                _speed_gate = 1.0
+
+            for k, raw_val in raw_components.items():
+                base_scale = REWARD_SCALES.get(k, 0.0)
+                mode_mult = mode_mults.get(k, 1.0)
+                scaled = base_scale * mode_mult * raw_val
+                if k not in _UNGATED:
+                    scaled *= _speed_gate
+                scaled_components[k] = scaled
+                total += scaled
 
         scaled_components["r_total"] = total
         self._last_reward_components = scaled_components
@@ -1404,9 +1475,9 @@ class MiniCheetahEnv(gym.Env):
             height = float(rng.uniform(HEIGHT_MIN, HEIGHT_MAX))
             self._start_height_ramp(height)
         elif mode == "walk":
-            vx = float(rng.uniform(-0.3, 0.8))
-            vy = float(rng.uniform(-0.5, 0.5))
-            wz = float(rng.uniform(-0.8, 0.8))
+            vx = float(rng.uniform(0.3, 0.7))   # v23i4: always forward, narrow range
+            vy = float(rng.uniform(-0.1, 0.1))  # v23i4: minimal lateral
+            wz = float(rng.uniform(-0.2, 0.2))  # v23i4: minimal turning
             # Random height during walking (tests crouched walking)
             height = float(rng.uniform(HEIGHT_MIN + 0.05, HEIGHT_MAX))
             self._start_height_ramp(height)

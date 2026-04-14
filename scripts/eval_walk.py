@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+"""Quick evaluation of the best model for walking behavior."""
+import numpy as np
+import sys
+sys.path.insert(0, '/workspace/mars1')
+from src.env.cheetah_env import MiniCheetahEnv
+from stable_baselines3 import PPO
+
+env = MiniCheetahEnv(render_mode=None, terrain_type='flat', forced_mode='walk')
+model = PPO.load('checkpoints/advanced/best/best_model')
+
+print("=== DETERMINISTIC ===")
+for ep in range(6):
+    obs, _ = env.reset()
+    r = 0; vxs = []; s = 0
+    while s < 400:
+        a, _ = model.predict(obs, deterministic=True)
+        obs, rew, t, tr, _ = env.step(a)
+        r += rew; vxs.append(float(env.data.qvel[0])); s += 1
+        if t or tr: break
+    print(f"D{ep} s={s} r={r:.0f} vx={np.mean(vxs):.3f} ema={env._vx_ema:.3f} cmd={env.command[0]:.2f} fell={t}")
+
+print("\n=== STOCHASTIC ===")
+for ep in range(6):
+    obs, _ = env.reset()
+    r = 0; vxs = []; s = 0
+    while s < 400:
+        a, _ = model.predict(obs, deterministic=False)
+        obs, rew, t, tr, _ = env.step(a)
+        r += rew; vxs.append(float(env.data.qvel[0])); s += 1
+        if t or tr: break
+    print(f"S{ep} s={s} r={r:.0f} vx={np.mean(vxs):.3f} ema={env._vx_ema:.3f} cmd={env.command[0]:.2f} fell={t}")
+
+env.close()

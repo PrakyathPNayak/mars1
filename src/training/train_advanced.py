@@ -24,8 +24,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 
-def make_env(rank=0, history_len=32, terrain_type="random", terrain_difficulty=0.3, **kwargs):
-    """Environment factory with history wrapper for vectorized training."""
+def make_env(rank=0, history_len=32, terrain_type="random", terrain_difficulty=0.3, use_history=True, forced_mode=None, **kwargs):
+    """Environment factory with optional history wrapper for vectorized training."""
     project_root = str(Path(__file__).resolve().parent.parent.parent)
     def _init():
         import sys
@@ -41,10 +41,12 @@ def make_env(rank=0, history_len=32, terrain_type="random", terrain_difficulty=0
             terrain_type=terrain_type,
             terrain_difficulty=terrain_difficulty,
             episode_length=2000,
+            forced_mode=forced_mode,
             **kwargs
         )
         env = ActionSmoothingWrapper(env, alpha=0.8)
-        env = HistoryWrapper(env, history_len=history_len)
+        if use_history:
+            env = HistoryWrapper(env, history_len=history_len)
         env.reset(seed=rank)
         return env
     return _init
@@ -123,21 +125,25 @@ def train(args):
     print(f"  Device: {device}")
 
     # v23h: Train on flat terrain first for clean learning signal
-    # Random terrain causes most episodes to terminate early from falls,
-    # masking the reward gradient between good and bad locomotion
     train_terrain = "flat"
-    print(f"\nCreating {args.n_envs} parallel environments with history...")
+    use_history = (args.policy == "transformer")
+    forced_mode = args.mode
+    print(f"\nCreating {args.n_envs} parallel environments...")
     print(f"  Training terrain: {train_terrain}")
+    print(f"  Policy: {args.policy} ({'history=' + str(history_len) if use_history else 'no history'})")
+    print(f"  Mode: {forced_mode or 'all (random mix)'}")
     try:
         vec_env = SubprocVecEnv(
-            [make_env(i, history_len=history_len, terrain_type=train_terrain)
+            [make_env(i, history_len=history_len, terrain_type=train_terrain,
+                      use_history=use_history, forced_mode=forced_mode)
              for i in range(args.n_envs)]
         )
         print("  Using SubprocVecEnv (parallel)")
     except Exception as e:
         print(f"  SubprocVecEnv failed ({e}), falling back to DummyVecEnv")
         vec_env = DummyVecEnv(
-            [make_env(i, history_len=history_len, terrain_type=train_terrain)
+            [make_env(i, history_len=history_len, terrain_type=train_terrain,
+                      use_history=use_history, forced_mode=forced_mode)
              for i in range(args.n_envs)]
         )
     vec_env = VecMonitor(vec_env, str(log_dir))
@@ -152,7 +158,9 @@ def train(args):
     )
 
     # Eval on FLAT terrain for consistent, comparable metrics
-    eval_env = DummyVecEnv([make_env(999, history_len=history_len, terrain_type="flat")])
+    eval_env = DummyVecEnv([make_env(999, history_len=history_len,
+                                     terrain_type="flat", use_history=use_history,
+                                     forced_mode=forced_mode)])
     eval_env = VecMonitor(eval_env)
     eval_env = VecNormalize(
         eval_env,
@@ -174,16 +182,39 @@ def train(args):
     if args.resume and os.path.exists(args.resume):
         print(f"Resuming from: {args.resume}")
         model = PPO.load(args.resume, env=vec_env, device=device)
-        # v23f: Override hyperparams for resumed model
-        model.ent_coef = 0.001
+        model.ent_coef = 0.003
         model.target_kl = 0.02
-        # Reset log_std to reduce exploration noise (was 0.61, way too high)
         with torch.no_grad():
             old_std = model.policy.log_std.data.exp().mean().item()
-            model.policy.log_std.data.fill_(-1.0)  # std=0.37, back to initial
+            model.policy.log_std.data.fill_(-1.0)
             new_std = model.policy.log_std.data.exp().mean().item()
             print(f"  Reset log_std: {old_std:.3f} -> {new_std:.3f}")
+    elif args.policy == "mlp":
+        # MLP policy: ~200K params, fast to train, good for reward validation
+        model = PPO(
+            policy="MlpPolicy",
+            env=vec_env,
+            learning_rate=3e-4,
+            n_steps=2048,
+            batch_size=256,   # v23i5b: larger batches for stable gradients (was 64)
+            n_epochs=10,
+            gamma=0.99,
+            gae_lambda=0.95,
+            clip_range=0.2,
+            target_kl=0.05,   # v23i4: allow more epochs (was 0.02, only got 1/10)
+            ent_coef=0.001,   # v23i5b: low entropy to discourage noise-exploitation (was 0.005)
+            vf_coef=0.5,
+            max_grad_norm=0.5,
+            policy_kwargs=dict(
+                net_arch=dict(pi=[256, 256], vf=[256, 256]),
+                log_std_init=-1.0,
+            ),
+            tensorboard_log=str(log_dir),
+            verbose=1,
+            device=device,
+        )
     else:
+        # Transformer policy: 3.4M params, full architecture
         model = PPO(
             policy=TransformerActorCriticPolicy,
             env=vec_env,
@@ -194,10 +225,10 @@ def train(args):
             gamma=0.99,
             gae_lambda=0.95,
             clip_range=0.2,
-            target_kl=0.02,    # Early stop epoch if KL exceeds target
-            ent_coef=0.001,    # v23f: near-zero to prevent std inflation
-            vf_coef=0.05,     # 10x reduction: prevent value grad dominating policy
-            max_grad_norm=1.0, # Relaxed: allows more policy gradient through
+            target_kl=0.02,
+            ent_coef=0.003,
+            vf_coef=0.05,
+            max_grad_norm=1.0,
             policy_kwargs=policy_kwargs,
             tensorboard_log=str(log_dir),
             verbose=1,
@@ -244,19 +275,21 @@ def train(args):
             best_model_save_path=str(ckpt_dir / "best"),
             log_path=str(log_dir / "eval"),
             eval_freq=max(50_000 // args.n_envs, 1),
-            n_eval_episodes=10,   # v23f: more episodes for reliable eval
+            n_eval_episodes=10,
             verbose=1,
-        ),
-        WorldModelCallback(
-            wm_lr=1e-4,
-            wm_coeff=0.1,
-            update_freq=2048,
-            verbose=1 if args.verbose else 0,
         ),
         CurriculumCallback(curriculum, verbose=1 if args.verbose else 0),
         StdClampCallback(),
         ProgressLogger(),
     ]
+    # WorldModelCallback only works with transformer architecture
+    if args.policy == "transformer":
+        callbacks.insert(2, WorldModelCallback(
+            wm_lr=1e-4,
+            wm_coeff=0.1,
+            update_freq=2048,
+            verbose=1 if args.verbose else 0,
+        ))
 
     print(f"\nStarting training for {args.total_steps:,} steps...")
     print(f"  Logging: {log_dir}")
@@ -307,6 +340,12 @@ def main():
     parser.add_argument("--n-layers", type=int, default=4)
     parser.add_argument("--n-experts", type=int, default=6)
     parser.add_argument("--history-len", type=int, default=32)
+    parser.add_argument("--policy", type=str, default="transformer",
+                        choices=["transformer", "mlp"],
+                        help="Policy architecture: mlp (fast iteration) or transformer")
+    parser.add_argument("--mode", type=str, default=None,
+                        choices=["stand", "walk", "run", "jump"],
+                        help="Force a single locomotion mode (default: random mix)")
     parser.add_argument("--resume", type=str, default=None)
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
