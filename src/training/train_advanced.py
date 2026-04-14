@@ -147,12 +147,12 @@ def train(args):
              for i in range(args.n_envs)]
         )
     vec_env = VecMonitor(vec_env, str(log_dir))
-    # Normalize rewards to keep value targets small (~1/step)
-    # This prevents value gradient from dominating policy gradient
+    # v23i8: Disable reward normalization — adaptive VecNormalize mask
+    # improvement. v23i7b reward scale is 1-5/step, appropriate for PPO directly.
     vec_env = VecNormalize(
         vec_env,
         norm_obs=False,    # obs already manually normalized in env
-        norm_reward=True,  # critical: normalize rewards to ~1/step
+        norm_reward=False,  # v23i8: raw rewards, no adaptive normalization
         clip_reward=10.0,
         gamma=0.99,
     )
@@ -202,7 +202,7 @@ def train(args):
             gae_lambda=0.95,
             clip_range=0.2,
             target_kl=0.05,   # v23i4: allow more epochs (was 0.02, only got 1/10)
-            ent_coef=0.001,   # v23i5b: low entropy to discourage noise-exploitation (was 0.005)
+            ent_coef=0.005,   # v23i8: moderate entropy for gait exploration (was 0.001)
             vf_coef=0.5,
             max_grad_norm=0.5,
             policy_kwargs=dict(

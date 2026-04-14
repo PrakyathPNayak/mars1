@@ -572,9 +572,9 @@ class MiniCheetahEnv(gym.Env):
         # Grace periods
         self._last_mode_change_step = 0
 
-        # PD gains (Go1 specs — no randomization)
-        self.kp = 100.0
-        self.kd = 0.0  # v23i5: no PD damping (kd=1.0 killed CPG momentum, kd=2.0 worse)
+        # PD gains (v23i8: softer PD for natural ground contacts)
+        self.kp = 60.0   # was 100.0 — too stiff, kills compliance needed for walking
+        self.kd = 0.5    # was 0.0 — damping smooths contact dynamics
         self.max_torque = 33.5
 
         # Terrain
@@ -834,8 +834,8 @@ class MiniCheetahEnv(gym.Env):
         phase = 2.0 * math.pi * freq * t
         self._cpg_phase = phase
 
-        amp_hip = 0.12  # v23i5: moderate (bootstrap momentum, not chaotic)
-        amp_knee = 0.15  # v23i5: moderate
+        amp_hip = 0.20  # v23i8: larger amplitude with softer PD (kp=60) for stronger oscillation
+        amp_knee = 0.25  # v23i8: matched to hip
 
         sin_p = math.sin(phase)
         sin_p_pi = math.sin(phase + math.pi)
