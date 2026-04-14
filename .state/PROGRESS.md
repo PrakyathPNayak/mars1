@@ -287,3 +287,8 @@ Root causes identified:
 [15:59:22] Step   30,000 | timesteps=1,440,000
 [16:25:07] Step   10,000 | timesteps=480,000
 [16:38:18] Step   20,000 | timesteps=960,000
+[16:50:54] Step   30,000 | timesteps=1,440,000
+[17:04:09] Step   40,000 | timesteps=1,920,000
+[17:18:39] Step   50,000 | timesteps=2,400,000
+[17:32:42] Step   60,000 | timesteps=2,880,000
+[17:49:24] Step   10,000 | timesteps=480,000

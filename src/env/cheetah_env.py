@@ -1126,7 +1126,7 @@ class MiniCheetahEnv(gym.Env):
         # ── 6c. Forward velocity bonus ──────────────────────────
         # v23i5: Use EMA-smoothed velocity to prevent symmetric CPG oscillation
         # from getting free reward via max(0) on instantaneous velocity peaks.
-        _EMA_ALPHA = 0.05  # ~20-step window at 50Hz = 0.4s (smooths 1 CPG cycle)
+        _EMA_ALPHA = 0.1  # v23i7b: ~10-step window (faster response, still filters CPG cycle)
         self._vx_ema = (1 - _EMA_ALPHA) * self._vx_ema + _EMA_ALPHA * float(base_linvel[0])
         self._vy_ema = (1 - _EMA_ALPHA) * self._vy_ema + _EMA_ALPHA * float(base_linvel[1])
         r_fwd_vel = 0.0
@@ -1272,34 +1272,44 @@ class MiniCheetahEnv(gym.Env):
         total = 0.0
         scaled_components = {}
 
-        # v23i6: SIMPLIFIED REWARD for walk/run mode
-        # The complex 26-component reward with speed gating consistently fails:
-        # train reward goes up while eval (deterministic) declines — the policy
-        # learns to exploit stochastic noise instead of walking deterministically.
-        # Simple reward: directly reward forward velocity + survival, penalize instability.
+        # v23i7b: HYBRID VELOCITY REWARD for walk/run mode
+        # Pure exp tracking (v23i7) failed: gradient too flat far from target.
+        # Pure linear (v23i6) failed: no tracking signal, free CPG reward.
+        # Hybrid combines: linear term (constant gradient everywhere) +
+        # exp tracking bonus (peaks at target) on EMA velocity (filters CPG noise).
         if mode in ("walk", "run"):
-            # Direct signed velocity (no EMA — CPG oscillation averages out in GAE returns)
-            r_vel = float(base_linvel[0]) * (1.0 if vx_cmd > 0 else -1.0) if abs(vx_cmd) > 0.05 else 0.0
-            if abs(vy_cmd) > 0.05:
-                r_vel += float(base_linvel[1]) * (1.0 if vy_cmd > 0 else -1.0)
+            vx_ema = self._vx_ema   # EMA-smoothed (filters CPG oscillation)
+            vy_ema = self._vy_ema
+            wz = float(base_angvel[2])
+
+            # Linear velocity: constant gradient even far from target
+            r_vx_lin = vx_ema * (1.0 if vx_cmd > 0 else (-1.0 if vx_cmd < 0 else 0.0))
+            # Exp tracking bonus: peaks when EMA matches command
+            r_vx_track = math.exp(-4.0 * (vx_ema - vx_cmd)**2)
+            r_vy_track = math.exp(-4.0 * (vy_ema - vy_cmd)**2)
+            r_wz_track = math.exp(-4.0 * (wz - wz_cmd)**2)
 
             total = (
-                10.0 * r_vel             # forward velocity (main driver)
-                + 1.0                    # alive bonus each step
+                5.0 * r_vx_lin           # linear velocity (constant gradient)
+                + 3.0 * r_vx_track       # exp tracking bonus at target
+                + 0.5 * r_vy_track       # lateral tracking
+                + 0.5 * r_wz_track       # yaw tracking
                 - 2.0 * r_orientation    # stay upright
-                - 1e-4 * r_torque        # energy efficiency
-                - 0.02 * r_smooth        # smooth actions
-                - 2.0 * r_lin_vel_z      # don't bounce
-                - 0.05 * r_ang_vel_xy    # don't wobble
+                - 5e-5 * r_torque        # energy
+                - 0.005 * r_smooth       # smooth actions
+                - 0.5 * r_lin_vel_z      # don't bounce
+                - 0.02 * r_ang_vel_xy    # don't wobble
             )
             scaled_components = {
-                "r_fwd_vel": 10.0 * r_vel,
-                "r_alive": 1.0,
+                "r_vx_lin": 5.0 * r_vx_lin,
+                "r_vx_track": 3.0 * r_vx_track,
+                "r_vy_track": 0.5 * r_vy_track,
+                "r_wz_track": 0.5 * r_wz_track,
                 "r_orientation": -2.0 * r_orientation,
-                "r_torque": -1e-4 * r_torque,
-                "r_smooth": -0.02 * r_smooth,
-                "r_lin_vel_z": -2.0 * r_lin_vel_z,
-                "r_ang_vel_xy": -0.05 * r_ang_vel_xy,
+                "r_torque": -5e-5 * r_torque,
+                "r_smooth": -0.005 * r_smooth,
+                "r_lin_vel_z": -0.5 * r_lin_vel_z,
+                "r_ang_vel_xy": -0.02 * r_ang_vel_xy,
                 "r_total": total,
             }
         else:
@@ -1475,7 +1485,7 @@ class MiniCheetahEnv(gym.Env):
             height = float(rng.uniform(HEIGHT_MIN, HEIGHT_MAX))
             self._start_height_ramp(height)
         elif mode == "walk":
-            vx = float(rng.uniform(0.3, 0.7))   # v23i4: always forward, narrow range
+            vx = float(rng.uniform(0.15, 0.5))   # v23i7b: lower range for achievable targets
             vy = float(rng.uniform(-0.1, 0.1))  # v23i4: minimal lateral
             wz = float(rng.uniform(-0.2, 0.2))  # v23i4: minimal turning
             # Random height during walking (tests crouched walking)
