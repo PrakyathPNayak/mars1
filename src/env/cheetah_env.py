@@ -730,7 +730,13 @@ class MiniCheetahEnv(gym.Env):
         self.target_height = self._effective_target_height
 
         # Scale action (corrections to posture-centered base)
-        action_scaled = action * 0.5  # v23i: increased from 0.25 for walking authority
+        # v23i9g: Walk/run uses small action scale (0.15) so reference trajectory
+        # dominates and policy can only make small balance corrections.
+        # Stand/jump keeps 0.5 for full control authority.
+        if self.command_mode in ("walk", "run"):
+            action_scaled = action * 0.15  # small corrections on top of reference
+        else:
+            action_scaled = action * 0.5  # full authority for stand/jump
 
         # CPG phase tick (for timing observation signal)
         cpg = self._compute_cpg()  # returns zeros but updates _cpg_phase
@@ -1323,19 +1329,18 @@ class MiniCheetahEnv(gym.Env):
             # v23i9g: Minimal penalties. Reference trajectory creates walking
             # motion → torque/smooth/bounce penalties punish the WALKING itself.
             # Only keep orientation (must stay upright) and alive bonus.
+            # v23i9g: NO alive bonus — survival incentive is implicit from
+            # future velocity rewards (gamma=0.99). Alive bonus caused policy
+            # to suppress walking (survive longer via damping > walk fast).
             total = (
-                0.5                       # v23i9g: alive bonus (survival = good)
-                + 4.0 * r_vx_lin         # v23i9g: DOMINANT velocity (was 2.0)
+                6.0 * r_vx_lin           # v23i9g: strong velocity (was 4.0)
                 + 1.0 * r_vx_track       # EMA tracking bonus
                 - 3.0 * r_orientation    # stay upright (critical for survival)
-                - 0.001 * r_smooth       # v23i9g: tiny smoothness (was 0.005)
             )
             scaled_components = {
-                "r_alive": 0.5,
-                "r_vx_lin": 4.0 * r_vx_lin,
+                "r_vx_lin": 6.0 * r_vx_lin,
                 "r_vx_track": 1.0 * r_vx_track,
                 "r_orientation": -3.0 * r_orientation,
-                "r_smooth": -0.001 * r_smooth,
                 "r_vx_ema": vx_ema,
                 "r_total": total,
             }
