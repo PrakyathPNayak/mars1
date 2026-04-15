@@ -730,11 +730,13 @@ class MiniCheetahEnv(gym.Env):
         self.target_height = self._effective_target_height
 
         # Scale action (corrections to posture-centered base)
-        # v23i9g: Walk/run uses small action scale (0.15) so reference trajectory
-        # dominates and policy can only make small balance corrections.
+        # v23i9h: Walk/run uses action_scale=0 — reference trajectory IS the
+        # controller. RL struggled to learn useful corrections (2.75M steps,
+        # eval stayed at ~800 vs 1100 baseline). The reference trajectory alone
+        # produces 0.52 m/s walking for ~519 steps.
         # Stand/jump keeps 0.5 for full control authority.
         if self.command_mode in ("walk", "run"):
-            action_scaled = action * 0.15  # small corrections on top of reference
+            action_scaled = action * 0.0  # reference only — no RL corrections
         else:
             action_scaled = action * 0.5  # full authority for stand/jump
 
@@ -742,8 +744,6 @@ class MiniCheetahEnv(gym.Env):
         cpg = self._compute_cpg()  # returns zeros but updates _cpg_phase
 
         # v23i9f: Reference walking trajectory as action center.
-        # Replaces disabled CPG. Produces ~0.3 m/s trot pattern.
-        # Policy action is a CORRECTION on top of this reference.
         ref = self._compute_walk_reference_action()
 
         # v23g: Action center adapts to target height (crouch/stand/jump)
@@ -900,7 +900,32 @@ class MiniCheetahEnv(gym.Env):
             ref[knee_i] = amp_knee * s * math.sin(p + knee_lead)
             ref[abd_i]  = amp_abd * math.cos(p)
         return ref
-        cpg[9]  = amp_abd * abd_sign * cos_p      # RL abductor
+
+    def _compute_balance_corrections(self) -> np.ndarray:
+        """v23i9g-fix4: Static trim to cancel systematic yaw drift.
+
+        The asymmetric trot (rear_scale=1.3) creates net rightward yaw torque
+        (+41° over 500 steps). Instead of dynamic feedback (which disrupts
+        the gait), use a small static differential hip bias to trim the yaw.
+        """
+        corr = np.zeros(NUM_JOINTS, dtype=np.float32)
+        if self.command_mode not in ("walk", "run"):
+            return corr
+
+        # Static yaw trim: right hips slightly forward, left slightly back
+        # This creates a left-turn tendency to offset the natural right drift
+        yaw_trim = 0.04  # tuning parameter — adjust based on drift rate
+        corr[1]  += yaw_trim   # FR hip: forward
+        corr[7]  += yaw_trim   # RR hip: forward
+        corr[4]  -= yaw_trim   # FL hip: back
+        corr[10] -= yaw_trim   # RL hip: back
+
+        return corr
+
+    # Dead code below from old CPG (kept for reference)
+    def _old_cpg_code(self):
+        pass
+        cpg = np.zeros(12)  # placeholder
 
         # Scale sagittal CPG based on command activity
         fwd_activity = abs(float(self.command[0])) + abs(float(self.command[2])) * 0.15

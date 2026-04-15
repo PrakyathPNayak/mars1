@@ -202,12 +202,12 @@ def train(args):
             gae_lambda=0.95,
             clip_range=0.2,
             target_kl=0.05,   # v23i4: allow more epochs (was 0.02, only got 1/10)
-            ent_coef=0.005,   # v23i9g: low entropy — ref traj dominates, policy makes tiny corrections
+            ent_coef=0.01,    # v23i9h: moderate exploration for stand+jump
             vf_coef=0.5,
             max_grad_norm=0.5,
             policy_kwargs=dict(
                 net_arch=dict(pi=[256, 256], vf=[256, 256]),
-                log_std_init=-2.0,  # v23i9g: low std=0.135 — ref dominates, tiny corrections only
+                log_std_init=-1.0,  # v23i9h: moderate std=0.37 for stand+jump
             ),
             tensorboard_log=str(log_dir),
             verbose=1,
