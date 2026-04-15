@@ -81,7 +81,13 @@ def run(checkpoint_path=None, use_policy=True):
             step_start = time.time()
 
             vx, vy, wz, mode = ctrl.get_command()
-            env.set_command(vx, vy, wz, mode)
+            # Handle crouch: set low height, map to stand/walk
+            if mode == "crouch":
+                crouch_height = 0.15
+                actual_mode = "walk" if (vx != 0 or vy != 0 or wz != 0) else "stand"
+                env.set_command(vx, vy, wz, actual_mode, height=crouch_height)
+            else:
+                env.set_command(vx, vy, wz, mode)
 
             # Choose action
             if policy is not None:

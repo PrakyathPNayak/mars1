@@ -164,7 +164,7 @@ REWARD_SCALES = {
     "r_motion_penalty": -1.5,
     "r_vel_track_penalty": 0.0,    # DISABLED — unbounded, use exp() tracking instead
     "r_fwd_vel":        10.0,      # v23h: boosted forward velocity incentive
-    "r_jump_phase":     3.0,
+    "r_jump_phase":     5.0,
     "r_alive":          2.0,       # Increased — anchor rewards positive
     "r_terrain_progress": 1.0,
     "r_foot_clearance":  0.5,
@@ -691,6 +691,13 @@ class MiniCheetahEnv(gym.Env):
         self.data.qpos[7:7 + NUM_JOINTS] = DEFAULT_STANCE
         mujoco.mj_forward(self.model, self.data)
 
+        # v23i9f: Bootstrap locomotion with initial forward velocity.
+        # Without CPG, policy has zero gradient from standing→walking.
+        # Give robot forward momentum so it must learn to step to stay upright.
+        if self.randomize_commands:
+            # Will be set after mode selection below, but set a default
+            pass
+
         self._initial_base_pos = self.data.qpos[:3].copy()
 
         # Randomize command for training
@@ -703,6 +710,13 @@ class MiniCheetahEnv(gym.Env):
                 self.command_mode = str(rng.choice(SKILL_MODES, p=mode_weights))
             self._randomize_command_for_mode(rng)
             self.target_height = self._effective_target_height
+
+            # v23i9f: Bootstrap locomotion — give initial forward velocity
+            # so policy experiences non-zero vx and has gradient to learn from.
+            if self.command_mode in ("walk", "run"):
+                init_vx = float(rng.uniform(0.1, 0.4))
+                self.data.qvel[0] = init_vx
+                self._vx_ema = init_vx * 0.5  # pre-seed EMA
 
         return self._get_obs(), {}
 
@@ -1273,9 +1287,8 @@ class MiniCheetahEnv(gym.Env):
         scaled_components = {}
 
         # v23i9e: Instant vx for learning + EMA for gating/tracking
-        # v23i9d EMA killed learning speed: smooth rewards → tiny PPO advantages.
-        # Fix: instant vx for linear term (strong per-step gradient),
-        #      EMA for tracking/standstill/clearance gate (exploit-proof).
+        # v23i9f: Add alive bonus (+0.3) for stable exploration floor.
+        # Bootstrap: initial velocity in reset provides non-zero vx signal.
         if mode in ("walk", "run"):
             vx = float(base_linvel[0])    # instantaneous
             vx_ema = self._vx_ema         # EMA-smoothed
@@ -1290,10 +1303,11 @@ class MiniCheetahEnv(gym.Env):
             gated_clearance = foot_clearance * vx_gate
 
             total = (
-                2.0 * r_vx_lin           # INSTANT forward velocity (strong learning signal)
+                0.3                       # v23i9f: alive bonus — positive floor for exploration
+                + 2.0 * r_vx_lin         # INSTANT forward velocity (strong learning signal)
                 + 1.0 * r_vx_track       # EMA tracking (sustained motion bonus)
-                + 0.15 * gated_clearance # gait hint (EMA-gated, exploit-proof)
-                - 0.3 * r_standstill     # EMA standstill (oscillation-proof)
+                + 0.15 * gated_clearance  # gait hint (EMA-gated, exploit-proof)
+                - 0.2 * r_standstill     # v23i9f: reduced from 0.3 (alive bonus offsets)
                 - 2.0 * r_orientation    # stay upright
                 - 5e-5 * r_torque        # energy
                 - 0.005 * r_smooth       # smooth actions
@@ -1301,10 +1315,11 @@ class MiniCheetahEnv(gym.Env):
                 - 0.02 * r_ang_vel_xy    # don't wobble
             )
             scaled_components = {
+                "r_alive": 0.3,
                 "r_vx_lin": 2.0 * r_vx_lin,
                 "r_vx_track": 1.0 * r_vx_track,
                 "r_clearance_gated": 0.15 * gated_clearance,
-                "r_standstill": -0.3 * r_standstill,
+                "r_standstill": -0.2 * r_standstill,
                 "r_orientation": -2.0 * r_orientation,
                 "r_torque": -5e-5 * r_torque,
                 "r_smooth": -0.005 * r_smooth,
@@ -1394,19 +1409,19 @@ class MiniCheetahEnv(gym.Env):
         # Launch phase: bonus for upward velocity
         if 0.15 < phase < 0.50:
             vz = float(base_linvel[2])
-            r += max(0.0, vz) * 2.0
+            r += max(0.0, vz) * 3.0  # v23i9f: increased from 2.0
 
         # Airborne phase: bonus for height
         if 0.30 < phase < 0.65:
-            r += max(0.0, effective_h - HEIGHT_DEFAULT) * 3.0
+            r += max(0.0, effective_h - HEIGHT_DEFAULT) * 5.0  # v23i9f: increased from 3.0
             n_contacts = int(np.sum(foot_contacts))
             if n_contacts == 0:
-                r += 1.0
+                r += 1.5  # v23i9f: increased from 1.0
 
         # Advance
         self._jump_traj_step += 1
         if self._jump_traj_step >= JUMP_TRAJECTORY_STEPS:
-            r += max(0.0, self._jump_max_height - 0.30) * 5.0
+            r += max(0.0, self._jump_max_height - 0.30) * 10.0  # v23i9f: increased from 5.0
             self._jump_traj_active = False
             self._jump_traj_step = 0
             self._jump_max_height = base_z - terrain_h
@@ -1486,7 +1501,7 @@ class MiniCheetahEnv(gym.Env):
             height = float(rng.uniform(HEIGHT_MIN, HEIGHT_MAX))
             self._start_height_ramp(height)
         elif mode == "walk":
-            vx = float(rng.uniform(0.15, 0.5))   # v23i7b: lower range for achievable targets
+            vx = float(rng.uniform(0.05, 0.5))   # v23i9f: wide range for walking
             vy = 0.0   # v23i9b: pure forward walk first — no lateral confusion
             wz = 0.0   # v23i9b: no yaw — learn forward walking first
             # Random height during walking (tests crouched walking)

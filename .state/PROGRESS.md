@@ -332,3 +332,12 @@ Root causes identified:
 [02:03:22] Step   10,000 | timesteps=480,000
 [02:19:59] Step   10,000 | timesteps=480,000
 [02:31:40] Step   20,000 | timesteps=960,000
+[02:53:40] Step   10,000 | timesteps=480,000
+[03:05:09] Step   20,000 | timesteps=960,000
+[03:16:41] Step   30,000 | timesteps=1,440,000
+[03:28:11] Step   40,000 | timesteps=1,920,000
+[03:39:32] Step   50,000 | timesteps=2,400,000
+[03:51:11] Step   60,000 | timesteps=2,880,000
+[04:03:22] Step   70,000 | timesteps=3,360,000
+[04:17:45] Step   80,000 | timesteps=3,840,000
+[04:41:08] Step   10,000 | timesteps=480,000
