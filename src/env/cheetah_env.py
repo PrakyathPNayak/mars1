@@ -706,7 +706,7 @@ class MiniCheetahEnv(gym.Env):
             if self.forced_mode and self.forced_mode in SKILL_MODES:
                 self.command_mode = self.forced_mode
             else:
-                mode_weights = [0.08, 0.42, 0.25, 0.25]  # stand, walk, run, jump
+                mode_weights = [0.20, 0.05, 0.05, 0.70]  # stand, walk, run, jump (v23i9i: focus on jump, walk/run use ref traj)
                 self.command_mode = str(rng.choice(SKILL_MODES, p=mode_weights))
             self._randomize_command_for_mode(rng)
             self.target_height = self._effective_target_height
@@ -1372,8 +1372,22 @@ class MiniCheetahEnv(gym.Env):
                 "r_vx_ema": vx_ema,
                 "r_total": total,
             }
+        elif mode == "jump":
+            # v23i9i: Simplified jump reward — no free standing bonuses.
+            # Zero-action baseline was 10.75/step (38% body_height, 28% jump_phase,
+            # 19% alive) — robot learned to stand still instead of jumping.
+            # Now: ONLY reward actual jumping. Peak height 0.288 → need 0.40+.
+            total = (
+                8.0 * r_jump_phase       # dominant: trajectory following + launch + airborne
+                - 3.0 * r_orientation    # stay upright (light penalty)
+            )
+            scaled_components = {
+                "r_jump_phase": 8.0 * r_jump_phase,
+                "r_orientation": -3.0 * r_orientation,
+                "r_total": total,
+            }
         else:
-            # Original complex reward for stand/jump modes
+            # Original complex reward for stand mode
             _UNGATED = {"r_standstill", "r_heading_drift", "r_fwd_vel", "r_alive"}
             if mode in ("walk", "run") and cmd_speed > 0.1:
                 actual_speed = math.sqrt(float(base_linvel[0])**2 + float(base_linvel[1])**2)
@@ -1447,25 +1461,27 @@ class MiniCheetahEnv(gym.Env):
         phase = self._jump_traj_step / JUMP_TRAJECTORY_STEPS
 
         r = 0.0
-        height_err_sq = (effective_h - traj_h)**2
-        r += math.exp(-height_err_sq / 0.02) * 0.5
+        # v23i9i: NO continuous height tracking — it gave ~3/step "free" reward
+        # for standing still (trajectory passes through standing height phases).
+        # Phase-specific bonuses provide all signal: launch vz, airborne height,
+        # and end-of-cycle peak height. All are strictly zero for standing.
 
         # Launch phase: bonus for upward velocity
         if 0.15 < phase < 0.50:
             vz = float(base_linvel[2])
-            r += max(0.0, vz) * 3.0  # v23i9f: increased from 2.0
+            r += max(0.0, vz) * 5.0  # v23i9i: boosted from 3.0
 
-        # Airborne phase: bonus for height
+        # Airborne phase: bonus for height + no contact
         if 0.30 < phase < 0.65:
-            r += max(0.0, effective_h - HEIGHT_DEFAULT) * 5.0  # v23i9f: increased from 3.0
+            r += max(0.0, effective_h - HEIGHT_DEFAULT) * 8.0  # v23i9i: boosted from 5.0
             n_contacts = int(np.sum(foot_contacts))
             if n_contacts == 0:
-                r += 1.5  # v23i9f: increased from 1.0
+                r += 3.0  # v23i9i: boosted from 1.5
 
         # Advance
         self._jump_traj_step += 1
         if self._jump_traj_step >= JUMP_TRAJECTORY_STEPS:
-            r += max(0.0, self._jump_max_height - 0.30) * 10.0  # v23i9f: increased from 5.0
+            r += max(0.0, self._jump_max_height - 0.30) * 15.0  # v23i9i: boosted from 10.0
             self._jump_traj_active = False
             self._jump_traj_step = 0
             self._jump_max_height = base_z - terrain_h
