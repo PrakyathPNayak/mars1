@@ -857,57 +857,43 @@ class MiniCheetahEnv(gym.Env):
         return cpg      # v23i9: all zeros — no CPG offsets, only phase for obs
 
     def _compute_walk_reference_action(self) -> np.ndarray:
-        """v23i9f: Reference walking action trajectory for imitation reward.
+        """v23i9g: Reference walking trajectory with asymmetric trot.
 
-        Produces a sinusoidal trot pattern (freq=3Hz, hip=0.4, knee=0.4)
-        that generates ~0.3 m/s forward velocity. Used as imitation target
-        so the policy has a clear gradient from random actions to walking.
+        Key innovations over v23i9f:
+        - Knee phase lead (pi/3): foot lifts before hip swings forward,
+          breaking force symmetry to produce real forward walking
+        - Rear leg scale (1.3x): rear legs push harder (primary propulsion)
+        - Abductor stabilization: small lateral oscillation for balance
+
+        Open-loop: ~0.52 m/s, survives ~520 steps (10s). Policy learns
+        balance corrections to extend episode and modulate speed.
         """
         ref = np.zeros(NUM_JOINTS, dtype=np.float32)
         if self.command_mode not in ("walk", "run"):
             return ref
 
         t = self.step_count * self.dt
-        freq = 3.0  # Hz — best walking frequency found empirically
+        freq = 3.0   # Hz
         phase = 2.0 * math.pi * freq * t
-        amp_hip = 0.4
-        amp_knee = 0.4
+        amp_hip = 0.30
+        amp_knee = 0.40
+        knee_lead = math.pi / 3.0  # ~60° lead: foot lifts during forward swing
+        amp_abd = 0.03             # small abductor oscillation for balance
+        rear_scale = 1.3           # rear legs are primary propulsors
 
-        sin_p = math.sin(phase)
-        sin_anti = math.sin(phase + math.pi)
-
-        # Trot: FR+RL vs FL+RR in anti-phase
-        ref[1]  = amp_hip * sin_p        # FR hip
-        ref[2]  = amp_knee * sin_p       # FR knee
-        ref[4]  = amp_hip * sin_anti     # FL hip
-        ref[5]  = amp_knee * sin_anti    # FL knee
-        ref[7]  = amp_hip * sin_anti     # RR hip
-        ref[8]  = amp_knee * sin_anti    # RR knee
-        ref[10] = amp_hip * sin_p        # RL hip
-        ref[11] = amp_knee * sin_p       # RL knee
+        # FR (diag1), FL (diag2), RR (diag2), RL (diag1)
+        for hip_i, knee_i, abd_i, is_diag1, is_rear in [
+            (1, 2, 0, True, False),    # FR
+            (4, 5, 3, False, False),   # FL
+            (7, 8, 6, False, True),    # RR
+            (10, 11, 9, True, True),   # RL
+        ]:
+            p = phase if is_diag1 else phase + math.pi
+            s = rear_scale if is_rear else 1.0
+            ref[hip_i]  = amp_hip * s * math.sin(p)
+            ref[knee_i] = amp_knee * s * math.sin(p + knee_lead)
+            ref[abd_i]  = amp_abd * math.cos(p)
         return ref
-
-        sin_p = math.sin(phase)
-        sin_p_pi = math.sin(phase + math.pi)
-
-        # Trot: diagonal pairs in anti-phase (FR+RL vs FL+RR)
-        cpg[1]  = amp_hip * sin_p       # FR hip
-        cpg[2]  = amp_knee * sin_p       # FR knee
-        cpg[4]  = amp_hip * sin_p_pi     # FL hip
-        cpg[5]  = amp_knee * sin_p_pi    # FL knee
-        cpg[7]  = amp_hip * sin_p_pi     # RR hip
-        cpg[8]  = amp_knee * sin_p_pi    # RR knee
-        cpg[10] = amp_hip * sin_p        # RL hip
-        cpg[11] = amp_knee * sin_p       # RL knee
-
-        # Lateral CPG: abductor oscillation for lateral stepping
-        amp_abd = 0.25 * min(abs(float(self.command[1])) / 0.3, 1.0)
-        abd_sign = 1.0 if float(self.command[1]) > 0 else -1.0
-        cos_p = math.cos(phase)
-        cos_p_pi = math.cos(phase + math.pi)
-        cpg[0]  = amp_abd * abd_sign * cos_p      # FR abductor
-        cpg[3]  = amp_abd * abd_sign * cos_p_pi   # FL abductor
-        cpg[6]  = amp_abd * abd_sign * cos_p_pi   # RR abductor
         cpg[9]  = amp_abd * abd_sign * cos_p      # RL abductor
 
         # Scale sagittal CPG based on command activity
@@ -1321,49 +1307,35 @@ class MiniCheetahEnv(gym.Env):
         total = 0.0
         scaled_components = {}
 
-        # v23i9e: Instant vx for learning + EMA for gating/tracking
-        # v23i9f: Add alive bonus (+0.3) for stable exploration floor.
-        # Bootstrap: initial velocity in reset provides non-zero vx signal.
+        # v23i9g: Velocity-dominated walk reward.
+        # Reference trajectory provides walking motion (action center).
+        # Policy learns CORRECTIONS for balance/speed — reward must not
+        # penalize the walking motion itself. Only velocity + orientation.
         if mode in ("walk", "run"):
             vx = float(base_linvel[0])    # instantaneous
             vx_ema = self._vx_ema         # EMA-smoothed
 
-            # Linear velocity: INSTANT for strong per-step gradient (learning)
+            # Linear velocity: INSTANT for strong per-step gradient
             r_vx_lin = vx * (1.0 if vx_cmd > 0 else (-1.0 if vx_cmd < 0 else 0.0))
-            # Exp tracking: EMA for sustained motion only (no oscillation bonus)
+            # Exp tracking: EMA for sustained motion
             r_vx_track = math.exp(-16.0 * (vx_ema - vx_cmd)**2)
 
-            # Velocity-gated foot clearance: EMA gate (no exploit)
-            vx_gate = min(max(vx_ema, 0.0) / 0.05, 1.0)
-            gated_clearance = foot_clearance * vx_gate
-
-            # v23i9f: Reference trajectory is now the action center (added in step()).
-            # Zero-action policy automatically walks via the reference.
-            # Imitation reward not needed — velocity reward guides corrections.
-
+            # v23i9g: Minimal penalties. Reference trajectory creates walking
+            # motion → torque/smooth/bounce penalties punish the WALKING itself.
+            # Only keep orientation (must stay upright) and alive bonus.
             total = (
-                0.3                       # alive bonus — positive floor for exploration
-                + 2.0 * r_vx_lin         # INSTANT forward velocity (strong learning signal)
-                + 1.0 * r_vx_track       # EMA tracking (sustained motion bonus)
-                + 0.15 * gated_clearance  # gait hint (EMA-gated, exploit-proof)
-                - 0.2 * r_standstill     # standstill penalty
-                - 2.0 * r_orientation    # stay upright
-                - 5e-5 * r_torque        # energy
-                - 0.005 * r_smooth       # smooth actions
-                - 0.5 * r_lin_vel_z      # don't bounce
-                - 0.02 * r_ang_vel_xy    # don't wobble
+                0.5                       # v23i9g: alive bonus (survival = good)
+                + 4.0 * r_vx_lin         # v23i9g: DOMINANT velocity (was 2.0)
+                + 1.0 * r_vx_track       # EMA tracking bonus
+                - 3.0 * r_orientation    # stay upright (critical for survival)
+                - 0.001 * r_smooth       # v23i9g: tiny smoothness (was 0.005)
             )
             scaled_components = {
-                "r_alive": 0.3,
-                "r_vx_lin": 2.0 * r_vx_lin,
+                "r_alive": 0.5,
+                "r_vx_lin": 4.0 * r_vx_lin,
                 "r_vx_track": 1.0 * r_vx_track,
-                "r_clearance_gated": 0.15 * gated_clearance,
-                "r_standstill": -0.2 * r_standstill,
-                "r_orientation": -2.0 * r_orientation,
-                "r_torque": -5e-5 * r_torque,
-                "r_smooth": -0.005 * r_smooth,
-                "r_lin_vel_z": -0.5 * r_lin_vel_z,
-                "r_ang_vel_xy": -0.02 * r_ang_vel_xy,
+                "r_orientation": -3.0 * r_orientation,
+                "r_smooth": -0.001 * r_smooth,
                 "r_vx_ema": vx_ema,
                 "r_total": total,
             }
