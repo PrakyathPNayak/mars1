@@ -732,16 +732,20 @@ class MiniCheetahEnv(gym.Env):
         # Scale action (corrections to posture-centered base)
         action_scaled = action * 0.5  # v23i: increased from 0.25 for walking authority
 
-        # CPG trot pattern for walk/run
-        cpg = self._compute_cpg()
+        # CPG phase tick (for timing observation signal)
+        cpg = self._compute_cpg()  # returns zeros but updates _cpg_phase
+
+        # v23i9f: Reference walking trajectory as action center.
+        # Replaces disabled CPG. Produces ~0.3 m/s trot pattern.
+        # Policy action is a CORRECTION on top of this reference.
+        ref = self._compute_walk_reference_action()
 
         # v23g: Action center adapts to target height (crouch/stand/jump)
-        # Without this, action scale 0.2 cannot reach crouch posture (requires ±0.6 rad)
         posture = self._get_height_posture(self._effective_target_height)
         center = DEFAULT_STANCE.copy()
         center[HIP_JOINT_INDICES] = posture["hip"]
         center[KNEE_JOINT_INDICES] = posture["knee"]
-        target_q = center + action_scaled + cpg
+        target_q = center + action_scaled + ref
 
         # PD control (perfect actuators)
         q = self.data.qpos[7:7 + NUM_JOINTS]
@@ -851,6 +855,37 @@ class MiniCheetahEnv(gym.Env):
         amp_hip = 0.0   # v23i9: CPG DISABLED — policy learns gait from scratch
         amp_knee = 0.0  # v23i9: (phase still ticks for timing obs)
         return cpg      # v23i9: all zeros — no CPG offsets, only phase for obs
+
+    def _compute_walk_reference_action(self) -> np.ndarray:
+        """v23i9f: Reference walking action trajectory for imitation reward.
+
+        Produces a sinusoidal trot pattern (freq=3Hz, hip=0.4, knee=0.4)
+        that generates ~0.3 m/s forward velocity. Used as imitation target
+        so the policy has a clear gradient from random actions to walking.
+        """
+        ref = np.zeros(NUM_JOINTS, dtype=np.float32)
+        if self.command_mode not in ("walk", "run"):
+            return ref
+
+        t = self.step_count * self.dt
+        freq = 3.0  # Hz — best walking frequency found empirically
+        phase = 2.0 * math.pi * freq * t
+        amp_hip = 0.4
+        amp_knee = 0.4
+
+        sin_p = math.sin(phase)
+        sin_anti = math.sin(phase + math.pi)
+
+        # Trot: FR+RL vs FL+RR in anti-phase
+        ref[1]  = amp_hip * sin_p        # FR hip
+        ref[2]  = amp_knee * sin_p       # FR knee
+        ref[4]  = amp_hip * sin_anti     # FL hip
+        ref[5]  = amp_knee * sin_anti    # FL knee
+        ref[7]  = amp_hip * sin_anti     # RR hip
+        ref[8]  = amp_knee * sin_anti    # RR knee
+        ref[10] = amp_hip * sin_p        # RL hip
+        ref[11] = amp_knee * sin_p       # RL knee
+        return ref
 
         sin_p = math.sin(phase)
         sin_p_pi = math.sin(phase + math.pi)
@@ -1302,12 +1337,16 @@ class MiniCheetahEnv(gym.Env):
             vx_gate = min(max(vx_ema, 0.0) / 0.05, 1.0)
             gated_clearance = foot_clearance * vx_gate
 
+            # v23i9f: Reference trajectory is now the action center (added in step()).
+            # Zero-action policy automatically walks via the reference.
+            # Imitation reward not needed — velocity reward guides corrections.
+
             total = (
-                0.3                       # v23i9f: alive bonus — positive floor for exploration
+                0.3                       # alive bonus — positive floor for exploration
                 + 2.0 * r_vx_lin         # INSTANT forward velocity (strong learning signal)
                 + 1.0 * r_vx_track       # EMA tracking (sustained motion bonus)
                 + 0.15 * gated_clearance  # gait hint (EMA-gated, exploit-proof)
-                - 0.2 * r_standstill     # v23i9f: reduced from 0.3 (alive bonus offsets)
+                - 0.2 * r_standstill     # standstill penalty
                 - 2.0 * r_orientation    # stay upright
                 - 5e-5 * r_torque        # energy
                 - 0.005 * r_smooth       # smooth actions
