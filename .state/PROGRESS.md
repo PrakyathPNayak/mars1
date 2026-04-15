@@ -330,3 +330,5 @@ Root causes identified:
 [01:33:19] Step  260,000 | timesteps=12,480,000
 [01:45:43] Step  270,000 | timesteps=12,960,000
 [02:03:22] Step   10,000 | timesteps=480,000
+[02:19:59] Step   10,000 | timesteps=480,000
+[02:31:40] Step   20,000 | timesteps=960,000

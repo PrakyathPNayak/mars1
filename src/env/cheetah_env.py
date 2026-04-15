@@ -1272,29 +1272,28 @@ class MiniCheetahEnv(gym.Env):
         total = 0.0
         scaled_components = {}
 
-        # v23i9d: EMA velocity + velocity-gated clearance
-        # v23i9b: clearance exploit (lift feet while standing, 0.5/step free)
-        # v23i9c: too barren (no gait hint, eval stuck at -75)
-        # v23i9d: EMA filters oscillation, small clearance gated on EMA vx > 0.03
+        # v23i9e: Instant vx for learning + EMA for gating/tracking
+        # v23i9d EMA killed learning speed: smooth rewards → tiny PPO advantages.
+        # Fix: instant vx for linear term (strong per-step gradient),
+        #      EMA for tracking/standstill/clearance gate (exploit-proof).
         if mode in ("walk", "run"):
-            # Update EMA (filters oscillation that inflated v23i9b metrics)
-            vx_ema = self._vx_ema
-            vx = float(base_linvel[0])
+            vx = float(base_linvel[0])    # instantaneous
+            vx_ema = self._vx_ema         # EMA-smoothed
 
-            # Linear velocity: reward sustained forward motion (EMA)
-            r_vx_lin = vx_ema * (1.0 if vx_cmd > 0 else (-1.0 if vx_cmd < 0 else 0.0))
-            # Sharp exp tracking on EMA (sigma=0.25 like legged_gym)
+            # Linear velocity: INSTANT for strong per-step gradient (learning)
+            r_vx_lin = vx * (1.0 if vx_cmd > 0 else (-1.0 if vx_cmd < 0 else 0.0))
+            # Exp tracking: EMA for sustained motion only (no oscillation bonus)
             r_vx_track = math.exp(-16.0 * (vx_ema - vx_cmd)**2)
 
-            # Velocity-gated foot clearance: only reward stepping if walking
-            vx_gate = min(max(vx_ema, 0.0) / 0.05, 1.0)  # 0 at standing, 1.0 at vx_ema≥0.05
+            # Velocity-gated foot clearance: EMA gate (no exploit)
+            vx_gate = min(max(vx_ema, 0.0) / 0.05, 1.0)
             gated_clearance = foot_clearance * vx_gate
 
             total = (
-                2.0 * r_vx_lin           # forward velocity (EMA, constant gradient)
-                + 1.0 * r_vx_track       # sharp tracking bonus at target
-                + 0.15 * gated_clearance # small gait hint, ONLY when walking
-                - 0.3 * r_standstill     # penalize standing still
+                2.0 * r_vx_lin           # INSTANT forward velocity (strong learning signal)
+                + 1.0 * r_vx_track       # EMA tracking (sustained motion bonus)
+                + 0.15 * gated_clearance # gait hint (EMA-gated, exploit-proof)
+                - 0.3 * r_standstill     # EMA standstill (oscillation-proof)
                 - 2.0 * r_orientation    # stay upright
                 - 5e-5 * r_torque        # energy
                 - 0.005 * r_smooth       # smooth actions
