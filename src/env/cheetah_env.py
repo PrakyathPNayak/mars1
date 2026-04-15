@@ -1225,13 +1225,12 @@ class MiniCheetahEnv(gym.Env):
                         r_stumble += 1.0
 
         # ── 22. Standstill penalty (v23h) ───────────────────────
-        # Break the "standing is safe" local minimum during locomotion modes.
-        # Without this, the policy gets 7.5/step for standing during walk,
-        # which is higher than the 3-5/step from failed walking attempts.
+        # v23i9d: Use EMA velocity, not instantaneous. Prevents oscillation gaming
+        # (robot could oscillate ±0.3 m/s with zero net motion but zero penalty).
         r_standstill = 0.0
         if mode in ("walk", "run") and cmd_speed > 0.1:
-            actual_speed = math.sqrt(float(base_linvel[0])**2 + float(base_linvel[1])**2)
-            speed_frac = min(actual_speed / cmd_speed, 1.0)
+            ema_speed = abs(self._vx_ema)  # v23i9d: EMA-smoothed forward speed
+            speed_frac = min(ema_speed / cmd_speed, 1.0)
             # Quadratic penalty peaks at standstill, zero at full speed
             r_standstill = (1.0 - speed_frac) ** 2
 
@@ -1273,21 +1272,28 @@ class MiniCheetahEnv(gym.Env):
         total = 0.0
         scaled_components = {}
 
-        # v23i9c: PURE VELOCITY REWARD — no gait rewards to exploit
-        # v23i9b foot_clearance gave 0.5/step free (robot lifted feet while standing).
-        # FIX: Remove ALL gait rewards. Only forward velocity gives positive reward.
-        # Standing: ~-0.04/step. Walking at 0.3: ~1.56/step. Gap: 1.60/step.
+        # v23i9d: EMA velocity + velocity-gated clearance
+        # v23i9b: clearance exploit (lift feet while standing, 0.5/step free)
+        # v23i9c: too barren (no gait hint, eval stuck at -75)
+        # v23i9d: EMA filters oscillation, small clearance gated on EMA vx > 0.03
         if mode in ("walk", "run"):
-            vx = float(base_linvel[0])    # instantaneous
+            # Update EMA (filters oscillation that inflated v23i9b metrics)
+            vx_ema = self._vx_ema
+            vx = float(base_linvel[0])
 
-            # Linear velocity: constant gradient everywhere
-            r_vx_lin = vx * (1.0 if vx_cmd > 0 else (-1.0 if vx_cmd < 0 else 0.0))
-            # Sharp exp tracking (sigma=0.25 like legged_gym)
-            r_vx_track = math.exp(-16.0 * (vx - vx_cmd)**2)
+            # Linear velocity: reward sustained forward motion (EMA)
+            r_vx_lin = vx_ema * (1.0 if vx_cmd > 0 else (-1.0 if vx_cmd < 0 else 0.0))
+            # Sharp exp tracking on EMA (sigma=0.25 like legged_gym)
+            r_vx_track = math.exp(-16.0 * (vx_ema - vx_cmd)**2)
+
+            # Velocity-gated foot clearance: only reward stepping if walking
+            vx_gate = min(max(vx_ema, 0.0) / 0.05, 1.0)  # 0 at standing, 1.0 at vx_ema≥0.05
+            gated_clearance = foot_clearance * vx_gate
 
             total = (
-                2.0 * r_vx_lin           # forward velocity (constant gradient)
+                2.0 * r_vx_lin           # forward velocity (EMA, constant gradient)
                 + 1.0 * r_vx_track       # sharp tracking bonus at target
+                + 0.15 * gated_clearance # small gait hint, ONLY when walking
                 - 0.3 * r_standstill     # penalize standing still
                 - 2.0 * r_orientation    # stay upright
                 - 5e-5 * r_torque        # energy
@@ -1298,12 +1304,14 @@ class MiniCheetahEnv(gym.Env):
             scaled_components = {
                 "r_vx_lin": 2.0 * r_vx_lin,
                 "r_vx_track": 1.0 * r_vx_track,
+                "r_clearance_gated": 0.15 * gated_clearance,
                 "r_standstill": -0.3 * r_standstill,
                 "r_orientation": -2.0 * r_orientation,
                 "r_torque": -5e-5 * r_torque,
                 "r_smooth": -0.005 * r_smooth,
                 "r_lin_vel_z": -0.5 * r_lin_vel_z,
                 "r_ang_vel_xy": -0.02 * r_ang_vel_xy,
+                "r_vx_ema": vx_ema,
                 "r_total": total,
             }
         else:
