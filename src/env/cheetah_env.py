@@ -714,7 +714,7 @@ class MiniCheetahEnv(gym.Env):
             # v23i9f: Bootstrap locomotion — give initial forward velocity
             # so policy experiences non-zero vx and has gradient to learn from.
             if self.command_mode in ("walk", "run"):
-                init_vx = float(rng.uniform(0.1, 0.4))
+                init_vx = float(rng.uniform(0.3, 0.5))  # v23i9g: match command range
                 self.data.qvel[0] = init_vx
                 self._vx_ema = init_vx * 0.5  # pre-seed EMA
 
@@ -1321,25 +1321,28 @@ class MiniCheetahEnv(gym.Env):
             vx = float(base_linvel[0])    # instantaneous
             vx_ema = self._vx_ema         # EMA-smoothed
 
-            # Linear velocity: INSTANT for strong per-step gradient
-            r_vx_lin = vx * (1.0 if vx_cmd > 0 else (-1.0 if vx_cmd < 0 else 0.0))
-            # Exp tracking: EMA for sustained motion
+            # v23i9g-fix2: CAPPED velocity — no reward for exceeding command.
+            # Without cap, unbounded r_vx_lin + gamma<1 makes fast-but-unstable
+            # walking optimal (1.5x higher discounted return than stable).
+            # Cap makes the optimal strategy: walk at command speed, survive long.
+            vx_cmd_floor = max(vx_cmd, 0.05)  # min floor prevents zero reward
+            if vx_cmd >= 0:
+                r_vx_fwd = min(vx, vx_cmd_floor)       # cap at command
+            else:
+                r_vx_fwd = max(vx, -vx_cmd_floor)      # cap for backward
+
+            # Exp tracking: EMA for sustained motion (provides gradient to slow
+            # down when overshooting — capped r_vx_fwd has zero gradient above cmd)
             r_vx_track = math.exp(-16.0 * (vx_ema - vx_cmd)**2)
 
-            # v23i9g: Minimal penalties. Reference trajectory creates walking
-            # motion → torque/smooth/bounce penalties punish the WALKING itself.
-            # Only keep orientation (must stay upright) and alive bonus.
-            # v23i9g: NO alive bonus — survival incentive is implicit from
-            # future velocity rewards (gamma=0.99). Alive bonus caused policy
-            # to suppress walking (survive longer via damping > walk fast).
             total = (
-                6.0 * r_vx_lin           # v23i9g: strong velocity (was 4.0)
-                + 1.0 * r_vx_track       # EMA tracking bonus
-                - 3.0 * r_orientation    # stay upright (critical for survival)
+                6.0 * r_vx_fwd          # capped forward velocity
+                + 3.0 * r_vx_track      # tracking bonus (increased from 1.0)
+                - 3.0 * r_orientation   # stay upright
             )
             scaled_components = {
-                "r_vx_lin": 6.0 * r_vx_lin,
-                "r_vx_track": 1.0 * r_vx_track,
+                "r_vx_fwd": 6.0 * r_vx_fwd,
+                "r_vx_track": 3.0 * r_vx_track,
                 "r_orientation": -3.0 * r_orientation,
                 "r_vx_ema": vx_ema,
                 "r_total": total,
@@ -1517,7 +1520,7 @@ class MiniCheetahEnv(gym.Env):
             height = float(rng.uniform(HEIGHT_MIN, HEIGHT_MAX))
             self._start_height_ramp(height)
         elif mode == "walk":
-            vx = float(rng.uniform(0.05, 0.5))   # v23i9f: wide range for walking
+            vx = float(rng.uniform(0.40, 0.60))   # v23i9g: aligned with ref traj speed (~0.52)
             vy = 0.0   # v23i9b: pure forward walk first — no lateral confusion
             wz = 0.0   # v23i9b: no yaw — learn forward walking first
             # Random height during walking (tests crouched walking)
