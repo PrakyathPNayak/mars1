@@ -1273,11 +1273,10 @@ class MiniCheetahEnv(gym.Env):
         total = 0.0
         scaled_components = {}
 
-        # v23i9b: NO-CPG, NO-FREE-REWARD walk reward
-        # v23i9 failed: vy/wz tracking gave 0.9/step free reward (77% of total).
-        # Policy had no incentive to discover forward motion.
-        # Fix: remove vy/wz tracking, add standstill penalty, pure forward walk.
-        # Standing gives ~0.02/step; walking at 0.3 gives ~1.7/step.
+        # v23i9c: PURE VELOCITY REWARD — no gait rewards to exploit
+        # v23i9b foot_clearance gave 0.5/step free (robot lifted feet while standing).
+        # FIX: Remove ALL gait rewards. Only forward velocity gives positive reward.
+        # Standing: ~-0.04/step. Walking at 0.3: ~1.56/step. Gap: 1.60/step.
         if mode in ("walk", "run"):
             vx = float(base_linvel[0])    # instantaneous
 
@@ -1289,9 +1288,7 @@ class MiniCheetahEnv(gym.Env):
             total = (
                 2.0 * r_vx_lin           # forward velocity (constant gradient)
                 + 1.0 * r_vx_track       # sharp tracking bonus at target
-                + 0.5 * foot_clearance        # lift swing feet
-                + 0.3 * stride_freq_reward    # encourage stepping cadence
-                - 0.3 * r_standstill          # v23i9b: penalize standing still
+                - 0.3 * r_standstill     # penalize standing still
                 - 2.0 * r_orientation    # stay upright
                 - 5e-5 * r_torque        # energy
                 - 0.005 * r_smooth       # smooth actions
@@ -1301,10 +1298,7 @@ class MiniCheetahEnv(gym.Env):
             scaled_components = {
                 "r_vx_lin": 2.0 * r_vx_lin,
                 "r_vx_track": 1.0 * r_vx_track,
-                "r_foot_clearance": 0.5 * foot_clearance,
-                "r_stride_freq": 0.3 * stride_freq_reward,
                 "r_standstill": -0.3 * r_standstill,
-                "r_stride_freq": 0.3 * stride_freq_reward,
                 "r_orientation": -2.0 * r_orientation,
                 "r_torque": -5e-5 * r_torque,
                 "r_smooth": -0.005 * r_smooth,
