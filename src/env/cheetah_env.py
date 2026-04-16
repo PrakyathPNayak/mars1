@@ -734,8 +734,10 @@ class MiniCheetahEnv(gym.Env):
         # v24b: action_scale=0.3 gives RL meaningful authority.
         # Action magnitude penalty (r_action_mag) keeps corrections small
         # unless they clearly improve tracking/stability. Residual RL approach.
-        if self.command_mode in ("walk", "run"):
+        if self.command_mode == "walk":
             action_scaled = action * 0.3
+        elif self.command_mode == "run":
+            action_scaled = action * 0.8  # v25: run needs more authority (ref=0.7 m/s, cmd up to 4.0)
         else:
             action_scaled = action * 0.5
 
@@ -1591,7 +1593,7 @@ class MiniCheetahEnv(gym.Env):
             height = float(rng.uniform(HEIGHT_MIN + 0.05, HEIGHT_MAX))
             self._start_height_ramp(height)
         elif mode == "run":
-            vx = float(rng.uniform(0.5, 4.0))  # v24: real Mini Cheetah ~3.7 m/s top
+            vx = float(rng.uniform(0.5, 2.0))  # v25: start with reachable range, expand later
             vy = float(rng.uniform(-0.5, 0.5))
             wz = float(rng.uniform(-0.5, 0.5))
             # Run height is more restricted (can't run fully crouched)

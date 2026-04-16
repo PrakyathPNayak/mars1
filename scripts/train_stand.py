@@ -1,4 +1,4 @@
-"""Jump-only training v24: zero-free-lunch jump reward."""
+"""Stand-only training v24: simplest mode, dense reward."""
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 os.chdir(os.path.join(os.path.dirname(__file__), ".."))
@@ -17,11 +17,10 @@ def make_env(rank, mode):
     return _init
 
 N_ENVS = 8
-MODE = "jump"
-TOTAL_STEPS = 5_000_000
+MODE = "stand"
+TOTAL_STEPS = 2_000_000  # stand is simple, should converge fast
 
 print(f"Training {MODE}-only, {N_ENVS} envs, {TOTAL_STEPS:,} steps...")
-print("Config: batch=4096, ent_coef=0.0001, log_std=-1.5, action_scale=0.5")
 base_env = DummyVecEnv([make_env(i, MODE) for i in range(N_ENVS)])
 env = VecNormalize(VecMonitor(base_env), norm_obs=False, norm_reward=True, clip_obs=10.0)
 
@@ -42,27 +41,26 @@ model = PPO(
     verbose=1,
     device="cpu",
     policy_kwargs=dict(
-        log_std_init=-1.0,  # std≈0.37, need more exploration for sparse jump reward
+        log_std_init=-2.0,  # std≈0.135, stand needs precision not exploration
         net_arch=dict(pi=[256, 256], vf=[256, 256]),
     ),
 )
 
 eval_callback = EvalCallback(
-    eval_env, best_model_save_path="checkpoints/jump_v24_best/",
+    eval_env, best_model_save_path="checkpoints/stand_v24_best/",
     eval_freq=50_000, n_eval_episodes=5, deterministic=True, verbose=1,
 )
 
 model.learn(total_timesteps=TOTAL_STEPS, callback=eval_callback)
 
-model.save("checkpoints/jump_v24")
-env.save("checkpoints/jump_v24_vecnorm.pkl")
-print("Saved to checkpoints/jump_v24*")
+model.save("checkpoints/stand_v24")
+env.save("checkpoints/stand_v24_vecnorm.pkl")
+print("Saved to checkpoints/stand_v24*")
 
 # Evaluate
 print("\n=== EVALUATION (10 episodes) ===")
 eval_raw = MiniCheetahEnv(render_mode="none", forced_mode=MODE, episode_length=2000)
-rewards = []
-ep_lens = []
+rewards, ep_lens = [], []
 for ep in range(10):
     obs, _ = eval_raw.reset(seed=100+ep)
     total_r = 0.0
