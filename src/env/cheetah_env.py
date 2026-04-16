@@ -1411,25 +1411,23 @@ class MiniCheetahEnv(gym.Env):
                     "r_total": total,
                 }
             else:
-                # v27b: Walk reward — reference ON, ZERO penalties.
-                # Key insight: v24-v26c all failed because penalties incentivized
-                # cancelling the reference trajectory. Without penalties, the ONLY
-                # way to earn reward is forward velocity. No reason to cancel ref.
-                # r_vx_lin(5.0) DOMINANT — monotonic forward gradient.
-                # r_vx_track tight sigma(0.08) — precision for speed matching.
-                # r_gait(0.5) — gentle foot pattern bonus.
-                # Minimal orientation(0.1) — just prevent flipping.
-                walk_sigma = 0.08
-                r_vx_track_tight = math.exp(-(vx - vx_cmd)**2 / walk_sigma) * vx_cmd_scale
+                # v27c: Walk reward — BIPOLAR tracking eliminates survival trade-off.
+                # Key insight: v27b failed because wrong-speed survival accumulated
+                # positive reward (r_vx_lin capped at cmd). Bipolar tracking makes
+                # wrong speed NEGATIVE, so extra survival at wrong speed = penalty.
+                # r_bipolar = 5*(2*exp(-err²/σ)-1): ranges -5 to +5.
+                # At cmd speed: +5. At wrong speed: negative. Standing still: ~-3.5.
+                walk_sigma = 0.25  # legged_gym standard sigma
+                r_bipolar = 2.0 * math.exp(-(vx - vx_cmd)**2 / walk_sigma) - 1.0
                 total = (
-                    1.5 * r_vx_track_tight   # tight exp tracking — precision
-                    + 5.0 * r_vx_lin         # forward velocity (DOMINANT, must move)
+                    5.0 * r_bipolar          # bipolar tracking (DOMINANT, -5 to +5)
+                    + 2.0 * r_vx_lin         # monotonic forward gradient (initial learning)
                     + 0.5 * r_gait           # gait quality (gentle)
                     - 0.1 * r_orientation    # prevent flipping only
                 )
                 scaled_components = {
-                    "r_vx_track": 1.5 * r_vx_track_tight,
-                    "r_vx_lin": 5.0 * r_vx_lin,
+                    "r_vx_track": 5.0 * r_bipolar,
+                    "r_vx_lin": 2.0 * r_vx_lin,
                     "r_gait": 0.5 * r_gait,
                     "r_orientation": -0.1 * r_orientation,
                     "r_vx_ema": vx_ema,

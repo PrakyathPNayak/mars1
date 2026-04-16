@@ -1,7 +1,6 @@
-"""Walk training v27: pure RL, no reference trajectory.
+"""Walk training v27b: reference ON, zero penalties, forward-only reward.
 Config from v24h: norm_reward=True, norm_obs=False, batch=4096.
-v27: reference disabled for walk, action_scale=0.5, tight sigma=0.08.
-r_vx_lin(3.0) DOMINANT, r_vx_track_tight(1.5), r_gait(1.5).
+v27b: r_vx_lin(5.0) DOMINANT + r_vx_track_tight(1.5,s=0.08) + r_gait(0.5) - orient(0.1).
 """
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -24,9 +23,9 @@ N_ENVS = 8
 MODE = "walk"
 TOTAL_STEPS = 10_000_000
 
-print(f"Training {MODE}-only v27, {N_ENVS} envs, {TOTAL_STEPS:,} steps...")
+print(f"Training {MODE}-only v27b, {N_ENVS} envs, {TOTAL_STEPS:,} steps...")
 print("Config: norm_reward=True, norm_obs=False, batch=4096, ent=0.0001, std=-2.0")
-print("Reward: track_tight(1.5,s=0.08) + vx_lin(3.0) + gait(1.5) - orient(0.3) - ang(0.05) - linz(0.03)")
+print("Reward: vx_lin(5.0) + track_tight(1.5,s=0.08) + gait(0.5) - orient(0.1) | NO penalties")
 
 base_env = DummyVecEnv([make_env(i, MODE) for i in range(N_ENVS)])
 env = VecNormalize(VecMonitor(base_env), norm_obs=False, norm_reward=True, clip_obs=10.0)
@@ -48,20 +47,20 @@ model = PPO(
     verbose=1,
     device="cpu",
     policy_kwargs=dict(
-        log_std_init=-1.0,  # v27: more exploration for learning gait from scratch
+        log_std_init=-2.0,  # walk needs precision, not exploration
         net_arch=dict(pi=[256, 256], vf=[256, 256]),
     ),
 )
 
 eval_callback = EvalCallback(
-    eval_env, best_model_save_path="checkpoints/walk_v27_best/",
+    eval_env, best_model_save_path="checkpoints/walk_v27b_best/",
     eval_freq=50_000, n_eval_episodes=10, deterministic=True, verbose=1,
 )
 
 model.learn(total_timesteps=TOTAL_STEPS, callback=eval_callback)
 
-model.save("checkpoints/walk_v27")
-print("Saved to checkpoints/walk_v27")
+model.save("checkpoints/walk_v27b")
+print("Saved to checkpoints/walk_v27b")
 
 # Evaluate with distance measurement
 print("\n=== EVALUATION (10 episodes) ===")
