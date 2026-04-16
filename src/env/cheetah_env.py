@@ -83,7 +83,7 @@ OBS_SCALES = np.concatenate([
     np.array([5.0]*3),          # base angular velocity
     np.array([1.0]*3),          # gravity projection
     np.array([1.0]*12),         # previous action
-    np.array([2.0, 0.5, 0.8, 0.35]),   # command (vx, vy, wz, h)
+    np.array([2.0, 2.0, 5.0, 0.35]),   # command (vx, vy, wz, h) — v29: match actual vel scales
     np.array([1.0]*4),          # skill one-hot
     np.array([2.0, 1.0, 1.0, 1.0, 1.0, 1.0]),  # command decomposition
     np.array([0.35]),           # base height
@@ -1361,9 +1361,12 @@ class MiniCheetahEnv(gym.Env):
             vx_ema = self._vx_ema
 
             # Velocity tracking (exp kernel, legged_gym style)
+            # v29: Use adaptive sigma for vy/wz — wider for large commands to help learning
+            sigma_vy_track = max(LATERAL_SIGMA, abs(vy_cmd) * 0.3)
+            sigma_wz_track = max(HEADING_SIGMA, abs(wz_cmd) * 0.3)
             r_vx_track = math.exp(-(vx - vx_cmd)**2 / TRACKING_SIGMA)
-            r_vy_track = math.exp(-(vy - vy_cmd)**2 / LATERAL_SIGMA)
-            r_wz_track = math.exp(-(wz - wz_cmd)**2 / HEADING_SIGMA)
+            r_vy_track = math.exp(-(vy - vy_cmd)**2 / sigma_vy_track)
+            r_wz_track = math.exp(-(wz - wz_cmd)**2 / sigma_wz_track)
 
             # Gate: only reward tracking for commanded directions
             r_vx_track *= vx_cmd_scale
@@ -1379,25 +1382,33 @@ class MiniCheetahEnv(gym.Env):
             else:
                 r_vx_lin = 0.0
 
+            # v29: Lateral linear bonus (monotonic gradient for vy commands)
+            vy_ema = self._vy_ema
+            if vy_cmd > 0.05:
+                r_vy_lin = max(0.0, min(vy_ema, vy_cmd)) / max(vy_cmd, 0.1)
+            elif vy_cmd < -0.05:
+                r_vy_lin = max(0.0, min(-vy_ema, -vy_cmd)) / max(-vy_cmd, 0.1)
+            else:
+                r_vy_lin = 0.0
+
             if mode == "run":
-                # v27: Run reward — speed-first, minimal penalties.
-                # Reference trot gives 0.69 m/s, commands go to 2.0 m/s.
-                # r_vx_lin provides monotonic gradient toward speed (NOT free for run).
-                # Penalties reduced 6× vs walk — running has natural wobble/bounce.
+                # v29: Run reward — added r_vy_lin for lateral gradient.
                 total = (
                     3.0 * r_vx_track         # exp tracking — primary
                     + 1.5 * r_vx_lin         # monotonic speed bonus
                     + 0.3 * r_vy_track       # lateral tracking
+                    + 0.3 * r_vy_lin         # lateral gradient
                     + 0.3 * r_wz_track       # yaw tracking
                     + 0.5 * r_gait           # gait quality (reduced vs walk)
                     - 0.3 * r_orientation    # stay upright (reduced)
-                    - 0.05 * r_ang_vel_xy    # minimal wobble penalty (6× less than walk)
-                    - 0.05 * r_lin_vel_z     # minimal bounce penalty (4× less than walk)
+                    - 0.05 * r_ang_vel_xy    # minimal wobble penalty
+                    - 0.05 * r_lin_vel_z     # minimal bounce penalty
                     - 0.01 * r_smooth        # action smoothness
                 )
                 scaled_components = {
                     "r_vx_track": 3.0 * r_vx_track,
                     "r_vy_track": 0.3 * r_vy_track,
+                    "r_vy_lin": 0.3 * r_vy_lin,
                     "r_wz_track": 0.3 * r_wz_track,
                     "r_vx_lin": 1.5 * r_vx_lin,
                     "r_gait": 0.5 * r_gait,
@@ -1409,22 +1420,29 @@ class MiniCheetahEnv(gym.Env):
                     "r_total": total,
                 }
             else:
-                # v28: Walk reward — fixed reference + tight tracking.
-                # Reference provides gait pattern at ~0.5 m/s (fixed amplitude).
-                # Policy must modulate speed to track command. Zero-action ≈ 44% optimal.
-                # Sigma tightened 0.25→0.10 to penalize speed mismatch from reference.
+                # v29: Walk reward — full 3-DOF tracking (vx, vy, wz).
+                # v28 only tracked vx → lateral/yaw commands ignored → robot always goes forward.
+                # Now includes vy_track + wz_track like run mode, with walk-appropriate weights.
                 walk_sigma = 0.10
                 r_vx_track_walk = math.exp(-(vx - vx_cmd)**2 / walk_sigma)
+                r_vx_track_walk *= vx_cmd_scale  # gate: no free reward when vx not commanded
+
                 total = (
-                    5.0 * r_vx_track_walk    # Gaussian tracking (tight — reference undershoots)
+                    5.0 * r_vx_track_walk    # forward tracking (tight sigma)
                     + 2.0 * r_vx_lin         # monotonic forward gradient
+                    + 1.5 * r_vy_track       # lateral tracking
+                    + 1.0 * r_vy_lin         # monotonic lateral gradient
+                    + 1.0 * r_wz_track       # yaw rate tracking
                     + 0.5 * r_gait           # gait quality
                     - 0.1 * r_orientation    # prevent flipping only
-                    - 0.02 * r_smooth        # action smoothness (stabilize training)
+                    - 0.02 * r_smooth        # action smoothness
                 )
                 scaled_components = {
                     "r_vx_track": 5.0 * r_vx_track_walk,
                     "r_vx_lin": 2.0 * r_vx_lin,
+                    "r_vy_track": 1.5 * r_vy_track,
+                    "r_vy_lin": 1.0 * r_vy_lin,
+                    "r_wz_track": 1.0 * r_wz_track,
                     "r_gait": 0.5 * r_gait,
                     "r_orientation": -0.1 * r_orientation,
                     "r_smooth": -0.02 * r_smooth,
@@ -1671,7 +1689,14 @@ class MiniCheetahEnv(gym.Env):
                     mode: str = "walk", height: float = HEIGHT_DEFAULT):
         """Set command for interactive/eval use."""
         self.command = np.array([vx, vy, wz], dtype=np.float32)
-        new_mode = mode if mode in SKILL_MODES else "walk"
+        # v29: Handle crouch as walk/stand at low height
+        if mode == "crouch":
+            crouch_height = HEIGHT_MIN + 0.08  # ~0.18m deep crouch
+            has_motion = abs(vx) > 0.05 or abs(vy) > 0.05 or abs(wz) > 0.05
+            new_mode = "walk" if has_motion else "stand"
+            height = crouch_height
+        else:
+            new_mode = mode if mode in SKILL_MODES else "walk"
         if new_mode != self.command_mode:
             self._last_mode_change_step = self.step_count
         self.command_mode = new_mode
