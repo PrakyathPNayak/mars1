@@ -61,9 +61,15 @@ else:
     )
     print("Fresh model", flush=True)
 
-model.learn(total_timesteps=CHUNK)
+try:
+    model.learn(total_timesteps=CHUNK)
+    print("Training complete, saving...", flush=True)
+except Exception as e:
+    print(f"Training error: {e}", flush=True)
+    import traceback; traceback.print_exc()
 
 save_path = f"{CKPT_DIR}/chunk_{chunk_num:03d}"
+print(f"Saving to {save_path}...", flush=True)
 model.save(save_path)
 env.save(vecnorm_path)
 total_so_far += CHUNK

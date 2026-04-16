@@ -1,13 +1,14 @@
-"""Walk training v27b: reference ON, zero penalties, forward-only reward.
-Config from v24h: norm_reward=True, norm_obs=False, batch=4096.
-v27b: r_vx_lin(5.0) DOMINANT + r_vx_track_tight(1.5,s=0.08) + r_gait(0.5) - orient(0.1).
+"""Walk training v27d: calibrated reference + Gaussian tracking.
+Reference scales amplitude by vx_cmd (0.65*cmd+0.22, clamped [0.3,0.9]).
+16 SubprocVecEnv on i9-14900K. norm_reward=True, norm_obs=False, batch=4096.
+v27d: track(5.0,s=0.25) + vx_lin(2.0) + gait(0.5) - orient(0.1).
 """
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 os.chdir(os.path.join(os.path.dirname(__file__), ".."))
 
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize, VecMonitor
+from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv, VecNormalize, VecMonitor
 from stable_baselines3.common.callbacks import EvalCallback
 from src.env.cheetah_env import MiniCheetahEnv
 import numpy as np
@@ -19,15 +20,15 @@ def make_env(rank, mode):
         return env
     return _init
 
-N_ENVS = 8
+N_ENVS = 16
 MODE = "walk"
 TOTAL_STEPS = 10_000_000
 
-print(f"Training {MODE}-only v27b, {N_ENVS} envs, {TOTAL_STEPS:,} steps...")
-print("Config: norm_reward=True, norm_obs=False, batch=4096, ent=0.0001, std=-2.0")
-print("Reward: vx_lin(5.0) + track_tight(1.5,s=0.08) + gait(0.5) - orient(0.1) | NO penalties")
+print(f"Training {MODE}-only v27d, {N_ENVS} SubprocVecEnv, {TOTAL_STEPS:,} steps...")
+print("Calibrated reference (0.65*cmd+0.22), 16 parallel envs on i9-14900K")
+print("Reward: track(5.0,s=0.25) + vx_lin(2.0) + gait(0.5) - orient(0.1)")
 
-base_env = DummyVecEnv([make_env(i, MODE) for i in range(N_ENVS)])
+base_env = SubprocVecEnv([make_env(i, MODE) for i in range(N_ENVS)])
 env = VecNormalize(VecMonitor(base_env), norm_obs=False, norm_reward=True, clip_obs=10.0)
 
 eval_base = DummyVecEnv([make_env(100, MODE)])
@@ -47,20 +48,20 @@ model = PPO(
     verbose=1,
     device="cpu",
     policy_kwargs=dict(
-        log_std_init=-2.0,  # walk needs precision, not exploration
+        log_std_init=-2.0,
         net_arch=dict(pi=[256, 256], vf=[256, 256]),
     ),
 )
 
 eval_callback = EvalCallback(
-    eval_env, best_model_save_path="checkpoints/walk_v27b_best/",
+    eval_env, best_model_save_path="checkpoints/walk_v27d_best/",
     eval_freq=50_000, n_eval_episodes=10, deterministic=True, verbose=1,
 )
 
 model.learn(total_timesteps=TOTAL_STEPS, callback=eval_callback)
 
-model.save("checkpoints/walk_v27b")
-print("Saved to checkpoints/walk_v27b")
+model.save("checkpoints/walk_v27d")
+print("Saved to checkpoints/walk_v27d")
 
 # Evaluate with distance measurement
 print("\n=== EVALUATION (10 episodes) ===")
@@ -106,6 +107,25 @@ for ep in range(10):
 print(f"zero-action: r={np.mean(zr):.1f}±{np.std(zr):.1f}, "
       f"steps={np.mean(zs):.0f}±{np.std(zs):.0f}, "
       f"dist={np.mean(zd):.2f}±{np.std(zd):.2f}m")
+
+# Command-specific speed tracking test
+print("\n=== COMMAND TRACKING TEST ===")
+import math
+for vx_cmd in [0.30, 0.50, 0.75, 1.00, 1.20]:
+    speeds = []
+    for ep in range(5):
+        obs, _ = eval_raw.reset(seed=200+ep)
+        x0 = float(eval_raw.data.qpos[0])
+        for step in range(500):
+            eval_raw.command[0] = vx_cmd
+            action, _ = model.predict(obs.astype(np.float32), deterministic=True)
+            obs, r, term, trunc, info = eval_raw.step(action)
+            if term or trunc: break
+        dx = float(eval_raw.data.qpos[0]) - x0
+        speeds.append(dx / ((step+1)*0.02))
+    spd = np.mean(speeds)
+    err = abs(spd - vx_cmd)
+    print(f"  cmd={vx_cmd:.2f}: speed={spd:.2f} err={err:.2f} track={math.exp(-err**2/0.25):.3f}")
 
 eval_raw.close()
 env.close()

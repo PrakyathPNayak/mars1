@@ -873,31 +873,31 @@ class MiniCheetahEnv(gym.Env):
         return cpg      # v23i9: all zeros — no CPG offsets, only phase for obs
 
     def _compute_walk_reference_action(self) -> np.ndarray:
-        """v23i9g: Reference walking trajectory with asymmetric trot.
+        """v27d: Command-dependent reference trajectory.
 
-        Key innovations over v23i9f:
-        - Knee phase lead (pi/3): foot lifts before hip swings forward,
-          breaking force symmetry to produce real forward walking
-        - Rear leg scale (1.3x): rear legs push harder (primary propulsion)
-        - Abductor stabilization: small lateral oscillation for balance
-
-        Open-loop: ~0.52 m/s, survives ~520 steps (10s). Policy learns
-        balance corrections to extend episode and modulate speed.
+        Amplitude scales with vx_cmd via empirically calibrated formula:
+          scale = 0.65 * vx_cmd + 0.22, clamped [0.30, 0.90]
+        Calibration (zero-action speed per scale):
+          0.3→0.11, 0.5→0.43, 0.7→0.75, 0.9→1.05, 1.0→UNSTABLE
+        Reference handles speed tracking; policy handles stabilization.
         """
         ref = np.zeros(NUM_JOINTS, dtype=np.float32)
         if self.command_mode not in ("walk", "run"):
             return ref
 
+        # Calibrated amplitude scaling: maps vx_cmd → gait amplitude
+        vx_cmd = abs(float(self.command[0]))
+        speed_scale = float(np.clip(0.65 * vx_cmd + 0.22, 0.30, 0.90))
+
         t = self.step_count * self.dt
         freq = 3.0   # Hz
         phase = 2.0 * math.pi * freq * t
-        amp_hip = 0.30
-        amp_knee = 0.40
-        knee_lead = math.pi / 3.0  # ~60° lead: foot lifts during forward swing
-        amp_abd = 0.03             # small abductor oscillation for balance
-        rear_scale = 1.3           # rear legs are primary propulsors
+        amp_hip = 0.30 * speed_scale
+        amp_knee = 0.40 * speed_scale
+        knee_lead = math.pi / 3.0
+        amp_abd = 0.03
+        rear_scale = 1.3
 
-        # FR (diag1), FL (diag2), RR (diag2), RL (diag1)
         for hip_i, knee_i, abd_i, is_diag1, is_rear in [
             (1, 2, 0, True, False),    # FR
             (4, 5, 3, False, False),   # FL
@@ -1411,22 +1411,21 @@ class MiniCheetahEnv(gym.Env):
                     "r_total": total,
                 }
             else:
-                # v27c: Walk reward — BIPOLAR tracking eliminates survival trade-off.
-                # Key insight: v27b failed because wrong-speed survival accumulated
-                # positive reward (r_vx_lin capped at cmd). Bipolar tracking makes
-                # wrong speed NEGATIVE, so extra survival at wrong speed = penalty.
-                # r_bipolar = 5*(2*exp(-err²/σ)-1): ranges -5 to +5.
-                # At cmd speed: +5. At wrong speed: negative. Standing still: ~-3.5.
-                walk_sigma = 0.25  # legged_gym standard sigma
-                r_bipolar = 2.0 * math.exp(-(vx - vx_cmd)**2 / walk_sigma) - 1.0
+                # v27d: Walk reward — calibrated reference + Gaussian tracking.
+                # Reference now scales with vx_cmd (0.65*cmd+0.22, clamped [0.3,0.9]).
+                # Zero-action ≈ commanded speed → high tracking reward automatically.
+                # Policy's job: stabilize gait, extend episodes, fine-tune speed.
+                # No bipolar needed — reference handles speed, policy handles balance.
+                walk_sigma = 0.25
+                r_vx_track_walk = math.exp(-(vx - vx_cmd)**2 / walk_sigma)
                 total = (
-                    5.0 * r_bipolar          # bipolar tracking (DOMINANT, -5 to +5)
-                    + 2.0 * r_vx_lin         # monotonic forward gradient (initial learning)
-                    + 0.5 * r_gait           # gait quality (gentle)
+                    5.0 * r_vx_track_walk    # Gaussian tracking (reference ≈ cmd)
+                    + 2.0 * r_vx_lin         # monotonic forward gradient
+                    + 0.5 * r_gait           # gait quality
                     - 0.1 * r_orientation    # prevent flipping only
                 )
                 scaled_components = {
-                    "r_vx_track": 5.0 * r_bipolar,
+                    "r_vx_track": 5.0 * r_vx_track_walk,
                     "r_vx_lin": 2.0 * r_vx_lin,
                     "r_gait": 0.5 * r_gait,
                     "r_orientation": -0.1 * r_orientation,
