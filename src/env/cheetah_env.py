@@ -721,12 +721,20 @@ class MiniCheetahEnv(gym.Env):
             # v25: random command duration
             self._next_cmd_resample = self.step_count + int(rng.integers(COMMAND_RESAMPLE_MIN, COMMAND_RESAMPLE_MAX + 1))
 
-            # v23i9f: Bootstrap locomotion — give initial forward velocity
-            # so policy experiences non-zero vx and has gradient to learn from.
+            # v23i9f: Bootstrap locomotion — give initial velocity matching command.
+            # Policy experiences non-zero velocity from start → has gradient to learn.
             if self.command_mode in ("walk", "run"):
-                init_vx = float(rng.uniform(0.3, 0.5))  # v23i9g: match command range
-                self.data.qvel[0] = init_vx
-                self._vx_ema = init_vx * 0.5  # pre-seed EMA
+                vx_cmd_abs = abs(float(self.command[0]))
+                vy_cmd_abs = abs(float(self.command[1]))
+                if vx_cmd_abs > 0.35:
+                    init_vx = float(rng.uniform(0.3, max(0.35, min(vx_cmd_abs, 1.0))))
+                    self.data.qvel[0] = init_vx
+                    self._vx_ema = init_vx * 0.5
+                if vy_cmd_abs > 0.15:
+                    # v30c: Bootstrap lateral velocity so policy experiences lateral motion
+                    init_vy = float(rng.uniform(0.1, max(0.15, min(vy_cmd_abs, 0.5)))) * np.sign(self.command[1])
+                    self.data.qvel[1] = init_vy
+                    self._vy_ema = init_vy * 0.5
 
         return self._get_obs(), {}
 
@@ -1661,9 +1669,18 @@ class MiniCheetahEnv(gym.Env):
             height = float(rng.uniform(HEIGHT_MIN, HEIGHT_MAX))
             self._start_height_ramp(height)
         elif mode == "walk":
-            vx = float(rng.uniform(0.0, 1.20))    # v30: include zero-fwd for lateral-only
-            vy = float(rng.uniform(-0.4, 0.4))    # v30: lateral commands enabled
-            wz = float(rng.uniform(-0.6, 0.6))    # v30: yaw commands enabled
+            # v30c: 30% pure lateral/yaw episodes (vx≈0) to force lateral learning
+            if float(rng.uniform(0, 1)) < 0.30:
+                vx = float(rng.uniform(-0.05, 0.05))  # near-zero forward
+                vy = float(rng.uniform(-0.4, 0.4))
+                wz = float(rng.uniform(-0.6, 0.6))
+                # Ensure at least one lateral/yaw DOF is active
+                if abs(vy) < 0.1 and abs(wz) < 0.1:
+                    vy = float(rng.choice([-0.3, 0.3]))
+            else:
+                vx = float(rng.uniform(0.0, 1.20))
+                vy = float(rng.uniform(-0.4, 0.4))
+                wz = float(rng.uniform(-0.6, 0.6))
             # Random height during walking (tests crouched walking)
             height = float(rng.uniform(HEIGHT_MIN + 0.05, HEIGHT_MAX))
             self._start_height_ramp(height)
