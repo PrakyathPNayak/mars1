@@ -744,7 +744,7 @@ class MiniCheetahEnv(gym.Env):
         # Action magnitude penalty (r_action_mag) keeps corrections small
         # unless they clearly improve tracking/stability. Residual RL approach.
         if self.command_mode == "walk":
-            action_scaled = action * 0.3  # v27b: moderate authority, reference provides base gait
+            action_scaled = action * 0.5  # v28: more authority for speed modulation (was 0.3)
         elif self.command_mode == "run":
             action_scaled = action * 0.8  # v25: run needs more authority (ref=0.7 m/s, cmd up to 4.0)
         else:
@@ -873,21 +873,19 @@ class MiniCheetahEnv(gym.Env):
         return cpg      # v23i9: all zeros — no CPG offsets, only phase for obs
 
     def _compute_walk_reference_action(self) -> np.ndarray:
-        """v27d: Command-dependent reference trajectory.
+        """v28: Fixed-amplitude reference trajectory (gait pattern only).
 
-        Amplitude scales with vx_cmd via empirically calibrated formula:
-          scale = 0.65 * vx_cmd + 0.22, clamped [0.30, 0.90]
-        Calibration (zero-action speed per scale):
-          0.3→0.11, 0.5→0.43, 0.7→0.75, 0.9→1.05, 1.0→UNSTABLE
-        Reference handles speed tracking; policy handles stabilization.
+        Provides diagonal trot timing/coordination but NOT speed matching.
+        Fixed scale 0.45 → ~0.5 m/s open-loop. Policy must learn to
+        modulate speed via action corrections (action_scale=0.5).
+        Zero-action at cmd=0.8 gets ~44% of optimal (was 87% in v27d).
         """
         ref = np.zeros(NUM_JOINTS, dtype=np.float32)
         if self.command_mode not in ("walk", "run"):
             return ref
 
-        # Calibrated amplitude scaling: maps vx_cmd → gait amplitude
-        vx_cmd = abs(float(self.command[0]))
-        speed_scale = float(np.clip(0.65 * vx_cmd + 0.22, 0.30, 0.90))
+        # v28: Fixed amplitude — reference provides gait pattern, not speed
+        speed_scale = 0.45
 
         t = self.step_count * self.dt
         freq = 3.0   # Hz
@@ -1411,24 +1409,25 @@ class MiniCheetahEnv(gym.Env):
                     "r_total": total,
                 }
             else:
-                # v27d: Walk reward — calibrated reference + Gaussian tracking.
-                # Reference now scales with vx_cmd (0.65*cmd+0.22, clamped [0.3,0.9]).
-                # Zero-action ≈ commanded speed → high tracking reward automatically.
-                # Policy's job: stabilize gait, extend episodes, fine-tune speed.
-                # No bipolar needed — reference handles speed, policy handles balance.
-                walk_sigma = 0.25
+                # v28: Walk reward — fixed reference + tight tracking.
+                # Reference provides gait pattern at ~0.5 m/s (fixed amplitude).
+                # Policy must modulate speed to track command. Zero-action ≈ 44% optimal.
+                # Sigma tightened 0.25→0.10 to penalize speed mismatch from reference.
+                walk_sigma = 0.10
                 r_vx_track_walk = math.exp(-(vx - vx_cmd)**2 / walk_sigma)
                 total = (
-                    5.0 * r_vx_track_walk    # Gaussian tracking (reference ≈ cmd)
+                    5.0 * r_vx_track_walk    # Gaussian tracking (tight — reference undershoots)
                     + 2.0 * r_vx_lin         # monotonic forward gradient
                     + 0.5 * r_gait           # gait quality
                     - 0.1 * r_orientation    # prevent flipping only
+                    - 0.02 * r_smooth        # action smoothness (stabilize training)
                 )
                 scaled_components = {
                     "r_vx_track": 5.0 * r_vx_track_walk,
                     "r_vx_lin": 2.0 * r_vx_lin,
                     "r_gait": 0.5 * r_gait,
                     "r_orientation": -0.1 * r_orientation,
+                    "r_smooth": -0.02 * r_smooth,
                     "r_vx_ema": vx_ema,
                     "r_total": total,
                 }
@@ -1649,7 +1648,7 @@ class MiniCheetahEnv(gym.Env):
             height = float(rng.uniform(HEIGHT_MIN + 0.05, HEIGHT_MAX))
             self._start_height_ramp(height)
         elif mode == "run":
-            vx = float(rng.uniform(0.5, 2.0))  # v25: start with reachable range, expand later
+            vx = float(rng.uniform(0.5, 4.0))  # v28: full speed range (real Go1 ≈ 3.7 m/s)
             vy = float(rng.uniform(-0.5, 0.5))
             wz = float(rng.uniform(-0.5, 0.5))
             # Run height is more restricted (can't run fully crouched)
