@@ -23,9 +23,9 @@ N_ENVS = 8
 MODE = "walk"
 TOTAL_STEPS = 5_000_000
 
-print(f"Training {MODE}-only v26, {N_ENVS} envs, {TOTAL_STEPS:,} steps...")
+print(f"Training {MODE}-only v26b, {N_ENVS} envs, {TOTAL_STEPS:,} steps...")
 print("Config: norm_reward=True, norm_obs=False, batch=4096, ent=0.0001, std=-2.0")
-print("Reward: tracking(2.5) + gait(1.5) - orientation(0.5) - ang_vel(0.3) - lin_vel_z(0.2)")
+print("Reward: track(2.5) + vx_lin(1.0) + gait(1.0) - orient(0.3) - ang(0.05) - linz(0.03)")
 
 base_env = DummyVecEnv([make_env(i, MODE) for i in range(N_ENVS)])
 env = VecNormalize(VecMonitor(base_env), norm_obs=False, norm_reward=True, clip_obs=10.0)
@@ -53,14 +53,14 @@ model = PPO(
 )
 
 eval_callback = EvalCallback(
-    eval_env, best_model_save_path="checkpoints/walk_v26_best/",
+    eval_env, best_model_save_path="checkpoints/walk_v26b_best/",
     eval_freq=50_000, n_eval_episodes=10, deterministic=True, verbose=1,
 )
 
 model.learn(total_timesteps=TOTAL_STEPS, callback=eval_callback)
 
-model.save("checkpoints/walk_v26")
-print("Saved to checkpoints/walk_v26")
+model.save("checkpoints/walk_v26b")
+print("Saved to checkpoints/walk_v26b")
 
 # Evaluate with distance measurement
 print("\n=== EVALUATION (10 episodes) ===")

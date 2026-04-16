@@ -744,7 +744,7 @@ class MiniCheetahEnv(gym.Env):
         # Action magnitude penalty (r_action_mag) keeps corrections small
         # unless they clearly improve tracking/stability. Residual RL approach.
         if self.command_mode == "walk":
-            action_scaled = action * 0.5  # v26: more authority for walk corrections
+            action_scaled = action * 0.2  # v26c: prevent reference cancellation (ref amp=0.3-0.4)
         elif self.command_mode == "run":
             action_scaled = action * 0.8  # v25: run needs more authority (ref=0.7 m/s, cmd up to 4.0)
         else:
