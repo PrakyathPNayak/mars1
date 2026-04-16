@@ -744,7 +744,7 @@ class MiniCheetahEnv(gym.Env):
         # Action magnitude penalty (r_action_mag) keeps corrections small
         # unless they clearly improve tracking/stability. Residual RL approach.
         if self.command_mode == "walk":
-            action_scaled = action * 0.3
+            action_scaled = action * 0.5  # v26: more authority for walk corrections
         elif self.command_mode == "run":
             action_scaled = action * 0.8  # v25: run needs more authority (ref=0.7 m/s, cmd up to 4.0)
         else:
@@ -1381,26 +1381,31 @@ class MiniCheetahEnv(gym.Env):
             else:
                 r_vx_lin = 0.0
 
-            # v24d: Simplified walk/run reward. Always-positive per-step.
-            # Removed: standstill penalty (wrongly penalizes oscillating gait),
-            #          action_mag penalty (counterproductive for residual RL),
-            #          dof_vel penalty (near-zero impact).
-            # Reduced: orientation penalty 2.0 → 1.0 (less exploration-sensitive).
+            # v26: Walk/run reward redesign for gait quality + stability.
+            # Key changes from v24d:
+            # - DROPPED r_vx_lin (98.5% free from reference trot — no learning signal)
+            # - ADDED r_gait (air_time, trot_symmetry, foot_clearance, stride_freq)
+            # - ADDED r_ang_vel_xy, r_lin_vel_z penalties (wobble/bounce reduction)
+            # - INCREASED r_vx_track scale 1.5→2.5 (primary objective)
             total = (
-                1.5 * r_vx_track         # exp tracking [0, 1.5]
+                2.5 * r_vx_track         # exp tracking [0, 2.5] — primary
                 + 0.5 * r_vy_track       # lateral tracking [0, 0.5]
                 + 0.5 * r_wz_track       # yaw tracking [0, 0.5]
-                + 2.0 * r_vx_lin         # linear velocity bonus [0, 2.0]
-                - 1.0 * r_orientation    # stay upright (halved from 2.0)
-                - 0.01 * r_smooth        # tiny action smoothness
+                + 1.5 * r_gait           # gait quality [~0, ~1.5]
+                - 0.5 * r_orientation    # stay upright
+                - 0.3 * r_ang_vel_xy     # penalize roll/pitch wobble
+                - 0.2 * r_lin_vel_z      # penalize vertical bounce
+                - 0.02 * r_smooth        # action smoothness
             )
             scaled_components = {
-                "r_vx_track": 1.5 * r_vx_track,
+                "r_vx_track": 2.5 * r_vx_track,
                 "r_vy_track": 0.5 * r_vy_track,
                 "r_wz_track": 0.5 * r_wz_track,
-                "r_vx_lin": 2.0 * r_vx_lin,
-                "r_orientation": -1.0 * r_orientation,
-                "r_smooth": -0.01 * r_smooth,
+                "r_gait": 1.5 * r_gait,
+                "r_orientation": -0.5 * r_orientation,
+                "r_ang_vel_xy": -0.3 * r_ang_vel_xy,
+                "r_lin_vel_z": -0.2 * r_lin_vel_z,
+                "r_smooth": -0.02 * r_smooth,
                 "r_vx_ema": vx_ema,
                 "r_total": total,
             }
@@ -1614,7 +1619,7 @@ class MiniCheetahEnv(gym.Env):
             height = float(rng.uniform(HEIGHT_MIN, HEIGHT_MAX))
             self._start_height_ramp(height)
         elif mode == "walk":
-            vx = float(rng.uniform(0.40, 0.60))   # v23i9g: aligned with ref traj speed (~0.52)
+            vx = float(rng.uniform(0.30, 1.20))   # v26: wider range, covers ref speed (~1.0)
             vy = 0.0   # v23i9b: pure forward walk first — no lateral confusion
             wz = 0.0   # v23i9b: no yaw — learn forward walking first
             # Random height during walking (tests crouched walking)
