@@ -53,14 +53,14 @@ model = PPO(
 )
 
 eval_callback = EvalCallback(
-    eval_env, best_model_save_path="checkpoints/walk_v26b_best/",
+    eval_env, best_model_save_path="checkpoints/walk_v26c_best/",
     eval_freq=50_000, n_eval_episodes=10, deterministic=True, verbose=1,
 )
 
 model.learn(total_timesteps=TOTAL_STEPS, callback=eval_callback)
 
-model.save("checkpoints/walk_v26b")
-print("Saved to checkpoints/walk_v26b")
+model.save("checkpoints/walk_v26c")
+print("Saved to checkpoints/walk_v26c")
 
 # Evaluate with distance measurement
 print("\n=== EVALUATION (10 episodes) ===")
