@@ -8,22 +8,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
 def test_env_creation():
-    from src.env.cheetah_env import MiniCheetahEnv
-    env = MiniCheetahEnv(render_mode="none", randomize_domain=False)
+    from src.env.cheetah_env import MiniCheetahEnv, OBS_DIM
+    env = MiniCheetahEnv(render_mode="none")
     obs, info = env.reset()
-    assert obs.shape == (61,), f"Expected obs shape (61,), got {obs.shape}"
+    assert obs.shape == (OBS_DIM,), f"Expected obs shape ({OBS_DIM},), got {obs.shape}"
     assert obs.dtype == np.float32
     env.close()
     print("  [PASS] test_env_creation")
 
 
 def test_step():
-    from src.env.cheetah_env import MiniCheetahEnv
-    env = MiniCheetahEnv(render_mode="none", randomize_domain=False)
+    from src.env.cheetah_env import MiniCheetahEnv, OBS_DIM
+    env = MiniCheetahEnv(render_mode="none")
     obs, _ = env.reset()
     action = env.action_space.sample()
     obs2, reward, done, truncated, info = env.step(action)
-    assert obs2.shape == (61,)
+    assert obs2.shape == (OBS_DIM,)
     assert isinstance(reward, float)
     assert isinstance(done, bool)
     assert isinstance(truncated, bool)
@@ -33,7 +33,7 @@ def test_step():
 
 def test_multiple_steps():
     from src.env.cheetah_env import MiniCheetahEnv
-    env = MiniCheetahEnv(render_mode="none", randomize_domain=False)
+    env = MiniCheetahEnv(render_mode="none")
     obs, _ = env.reset()
     for _ in range(50):
         action = np.zeros(12, dtype=np.float32)
@@ -48,10 +48,10 @@ def test_multiple_steps():
 
 def test_domain_randomization():
     from src.env.cheetah_env import MiniCheetahEnv
-    env = MiniCheetahEnv(render_mode="none", randomize_domain=True)
+    env = MiniCheetahEnv(render_mode="none")
     obs1, _ = env.reset(seed=42)
     obs2, _ = env.reset(seed=43)
-    # Different seeds should give slightly different observations (noise)
+    # Different seeds should give slightly different observations
     env.close()
     print("  [PASS] test_domain_randomization")
 
@@ -94,7 +94,7 @@ def test_exploration_policy():
 
 def test_command_setting():
     from src.env.cheetah_env import MiniCheetahEnv
-    env = MiniCheetahEnv(render_mode="none", randomize_domain=False)
+    env = MiniCheetahEnv(render_mode="none")
     env.reset()
     env.set_command(1.5, 0.0, 0.0, "walk")
     assert env.command[0] == 1.5
@@ -106,7 +106,7 @@ def test_command_setting():
 
 def test_episode_termination():
     from src.env.cheetah_env import MiniCheetahEnv
-    env = MiniCheetahEnv(render_mode="none", randomize_domain=False, episode_length=10)
+    env = MiniCheetahEnv(render_mode="none", episode_length=10)
     obs, _ = env.reset()
     reached_truncation = False
     for _ in range(15):
@@ -123,7 +123,7 @@ def test_episode_termination():
 
 def test_action_space():
     from src.env.cheetah_env import MiniCheetahEnv
-    env = MiniCheetahEnv(render_mode="none", randomize_domain=False)
+    env = MiniCheetahEnv(render_mode="none")
     assert env.action_space.shape == (12,)
     assert env.action_space.low[0] == -1.0
     assert env.action_space.high[0] == 1.0
@@ -132,9 +132,9 @@ def test_action_space():
 
 
 def test_observation_space():
-    from src.env.cheetah_env import MiniCheetahEnv
-    env = MiniCheetahEnv(render_mode="none", randomize_domain=False)
-    assert env.observation_space.shape == (61,)
+    from src.env.cheetah_env import MiniCheetahEnv, OBS_DIM
+    env = MiniCheetahEnv(render_mode="none")
+    assert env.observation_space.shape == (OBS_DIM,)
     obs, _ = env.reset()
     assert env.observation_space.contains(obs), "obs not in observation space"
     env.close()
