@@ -731,11 +731,11 @@ class MiniCheetahEnv(gym.Env):
         self.target_height = self._effective_target_height
 
         # Scale action (corrections to posture-centered base)
-        # v24: Restore RL corrections for walk/run at small scale (0.15 rad max).
-        # Previous 0.0 meant no learning; previous 0.5 disrupted gait.
-        # 0.15 allows balance corrections without overriding reference trajectory.
+        # v24b: action_scale=0.3 gives RL meaningful authority.
+        # Action magnitude penalty (r_action_mag) keeps corrections small
+        # unless they clearly improve tracking/stability. Residual RL approach.
         if self.command_mode in ("walk", "run"):
-            action_scaled = action * 0.15
+            action_scaled = action * 0.3
         else:
             action_scaled = action * 0.5
 
@@ -1227,6 +1227,11 @@ class MiniCheetahEnv(gym.Env):
         # ── 12. Action smoothness (L2) ─────────────────────────
         r_smooth = float(np.sum((action - self.prev_action)**2))
 
+        # ── 12b. Action magnitude (residual regularization) ──
+        # Penalize RL corrections to encourage near-zero output.
+        # Forces policy to only add corrections that clearly help.
+        r_action_mag = float(np.sum(action**2))
+
         # ── 13. Joint limit proximity ───────────────────────────
         jnt_range = self.model.jnt_range[1:NUM_JOINTS + 1]
         margin = 0.1
@@ -1377,6 +1382,7 @@ class MiniCheetahEnv(gym.Env):
                 + 2.0 * r_vx_lin         # linear velocity bonus (0-1 range)
                 - 2.0 * r_orientation    # stay upright
                 - 0.01 * r_smooth        # tiny action smoothness
+                - 0.05 * r_action_mag    # residual regularization: stay near zero
                 - 1e-5 * r_dof_vel       # tiny joint velocity (don't penalize walking)
                 - 1.0 * r_standstill_pen # penalize standing still when walk commanded
             )
@@ -1387,6 +1393,7 @@ class MiniCheetahEnv(gym.Env):
                 "r_vx_lin": 2.0 * r_vx_lin,
                 "r_orientation": -2.0 * r_orientation,
                 "r_smooth": -0.01 * r_smooth,
+                "r_action_mag": -0.05 * r_action_mag,
                 "r_dof_vel": -1e-5 * r_dof_vel,
                 "r_standstill": -1.0 * r_standstill_pen,
                 "r_vx_ema": vx_ema,
@@ -1590,7 +1597,7 @@ class MiniCheetahEnv(gym.Env):
             height = float(rng.uniform(HEIGHT_MIN + 0.05, HEIGHT_MAX))
             self._start_height_ramp(height)
         elif mode == "run":
-            vx = float(rng.uniform(1.5, 3.0))
+            vx = float(rng.uniform(0.5, 4.0))  # v24: real Mini Cheetah ~3.7 m/s top
             vy = float(rng.uniform(-0.5, 0.5))
             wz = float(rng.uniform(-0.5, 0.5))
             # Run height is more restricted (can't run fully crouched)
