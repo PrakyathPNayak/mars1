@@ -42,7 +42,7 @@ model = PPO(
     verbose=1,
     device="cpu",
     policy_kwargs=dict(
-        log_std_init=-1.0,  # std≈0.37, run needs broad exploration
+        log_std_init=-2.0,  # std≈0.135, start conservative with action_scale=0.8
         net_arch=dict(pi=[256, 256], vf=[256, 256]),
     ),
 )

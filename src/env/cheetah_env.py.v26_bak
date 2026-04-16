@@ -1381,59 +1381,34 @@ class MiniCheetahEnv(gym.Env):
             else:
                 r_vx_lin = 0.0
 
-            if mode == "run":
-                # v27: Run reward — speed-first, minimal penalties.
-                # Reference trot gives 0.69 m/s, commands go to 2.0 m/s.
-                # r_vx_lin provides monotonic gradient toward speed (NOT free for run).
-                # Penalties reduced 6× vs walk — running has natural wobble/bounce.
-                total = (
-                    3.0 * r_vx_track         # exp tracking — primary
-                    + 1.5 * r_vx_lin         # monotonic speed bonus
-                    + 0.3 * r_vy_track       # lateral tracking
-                    + 0.3 * r_wz_track       # yaw tracking
-                    + 0.5 * r_gait           # gait quality (reduced vs walk)
-                    - 0.3 * r_orientation    # stay upright (reduced)
-                    - 0.05 * r_ang_vel_xy    # minimal wobble penalty (6× less than walk)
-                    - 0.05 * r_lin_vel_z     # minimal bounce penalty (4× less than walk)
-                    - 0.01 * r_smooth        # action smoothness
-                )
-                scaled_components = {
-                    "r_vx_track": 3.0 * r_vx_track,
-                    "r_vy_track": 0.3 * r_vy_track,
-                    "r_wz_track": 0.3 * r_wz_track,
-                    "r_vx_lin": 1.5 * r_vx_lin,
-                    "r_gait": 0.5 * r_gait,
-                    "r_orientation": -0.3 * r_orientation,
-                    "r_ang_vel_xy": -0.05 * r_ang_vel_xy,
-                    "r_lin_vel_z": -0.05 * r_lin_vel_z,
-                    "r_smooth": -0.01 * r_smooth,
-                    "r_vx_ema": vx_ema,
-                    "r_total": total,
-                }
-            else:
-                # v26: Walk reward — stability-first, gait quality.
-                total = (
-                    2.5 * r_vx_track         # exp tracking [0, 2.5] — primary
-                    + 0.5 * r_vy_track       # lateral tracking [0, 0.5]
-                    + 0.5 * r_wz_track       # yaw tracking [0, 0.5]
-                    + 1.5 * r_gait           # gait quality [~0, ~1.5]
-                    - 0.5 * r_orientation    # stay upright
-                    - 0.3 * r_ang_vel_xy     # penalize roll/pitch wobble
-                    - 0.2 * r_lin_vel_z      # penalize vertical bounce
-                    - 0.02 * r_smooth        # action smoothness
-                )
-                scaled_components = {
-                    "r_vx_track": 2.5 * r_vx_track,
-                    "r_vy_track": 0.5 * r_vy_track,
-                    "r_wz_track": 0.5 * r_wz_track,
-                    "r_gait": 1.5 * r_gait,
-                    "r_orientation": -0.5 * r_orientation,
-                    "r_ang_vel_xy": -0.3 * r_ang_vel_xy,
-                    "r_lin_vel_z": -0.2 * r_lin_vel_z,
-                    "r_smooth": -0.02 * r_smooth,
-                    "r_vx_ema": vx_ema,
-                    "r_total": total,
-                }
+            # v26: Walk/run reward redesign for gait quality + stability.
+            # Key changes from v24d:
+            # - DROPPED r_vx_lin (98.5% free from reference trot — no learning signal)
+            # - ADDED r_gait (air_time, trot_symmetry, foot_clearance, stride_freq)
+            # - ADDED r_ang_vel_xy, r_lin_vel_z penalties (wobble/bounce reduction)
+            # - INCREASED r_vx_track scale 1.5→2.5 (primary objective)
+            total = (
+                2.5 * r_vx_track         # exp tracking [0, 2.5] — primary
+                + 0.5 * r_vy_track       # lateral tracking [0, 0.5]
+                + 0.5 * r_wz_track       # yaw tracking [0, 0.5]
+                + 1.5 * r_gait           # gait quality [~0, ~1.5]
+                - 0.5 * r_orientation    # stay upright
+                - 0.3 * r_ang_vel_xy     # penalize roll/pitch wobble
+                - 0.2 * r_lin_vel_z      # penalize vertical bounce
+                - 0.02 * r_smooth        # action smoothness
+            )
+            scaled_components = {
+                "r_vx_track": 2.5 * r_vx_track,
+                "r_vy_track": 0.5 * r_vy_track,
+                "r_wz_track": 0.5 * r_wz_track,
+                "r_gait": 1.5 * r_gait,
+                "r_orientation": -0.5 * r_orientation,
+                "r_ang_vel_xy": -0.3 * r_ang_vel_xy,
+                "r_lin_vel_z": -0.2 * r_lin_vel_z,
+                "r_smooth": -0.02 * r_smooth,
+                "r_vx_ema": vx_ema,
+                "r_total": total,
+            }
         elif mode == "jump":
             # v24: Clean jump reward. No free reward from PD bounce.
             # Require real vertical velocity (>1.0 m/s) for launch bonus.
