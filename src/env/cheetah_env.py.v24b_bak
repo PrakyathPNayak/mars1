@@ -1370,26 +1370,32 @@ class MiniCheetahEnv(gym.Env):
             else:
                 r_vx_lin = 0.0
 
-            # v24d: Simplified walk/run reward. Always-positive per-step.
-            # Removed: standstill penalty (wrongly penalizes oscillating gait),
-            #          action_mag penalty (counterproductive for residual RL),
-            #          dof_vel penalty (near-zero impact).
-            # Reduced: orientation penalty 2.0 → 1.0 (less exploration-sensitive).
+            # Standstill penalty: quadratic, based on EMA speed vs command
+            ema_speed = abs(vx_ema)
+            speed_frac = min(ema_speed / max(cmd_speed, 0.1), 1.0) if cmd_speed > 0.1 else 1.0
+            r_standstill_pen = (1.0 - speed_frac) ** 2
+
             total = (
-                1.5 * r_vx_track         # exp tracking [0, 1.5]
-                + 0.5 * r_vy_track       # lateral tracking [0, 0.5]
-                + 0.5 * r_wz_track       # yaw tracking [0, 0.5]
-                + 2.0 * r_vx_lin         # linear velocity bonus [0, 2.0]
-                - 1.0 * r_orientation    # stay upright (halved from 2.0)
+                1.5 * r_vx_track         # exp tracking (peaks at 1.0 when perfect)
+                + 0.5 * r_vy_track       # lateral tracking
+                + 0.5 * r_wz_track       # yaw tracking
+                + 2.0 * r_vx_lin         # linear velocity bonus (0-1 range)
+                - 2.0 * r_orientation    # stay upright
                 - 0.01 * r_smooth        # tiny action smoothness
+                - 0.05 * r_action_mag    # residual regularization: stay near zero
+                - 1e-5 * r_dof_vel       # tiny joint velocity (don't penalize walking)
+                - 1.0 * r_standstill_pen # penalize standing still when walk commanded
             )
             scaled_components = {
                 "r_vx_track": 1.5 * r_vx_track,
                 "r_vy_track": 0.5 * r_vy_track,
                 "r_wz_track": 0.5 * r_wz_track,
                 "r_vx_lin": 2.0 * r_vx_lin,
-                "r_orientation": -1.0 * r_orientation,
+                "r_orientation": -2.0 * r_orientation,
                 "r_smooth": -0.01 * r_smooth,
+                "r_action_mag": -0.05 * r_action_mag,
+                "r_dof_vel": -1e-5 * r_dof_vel,
+                "r_standstill": -1.0 * r_standstill_pen,
                 "r_vx_ema": vx_ema,
                 "r_total": total,
             }
