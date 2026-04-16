@@ -134,7 +134,7 @@ FEET_AIR_TIME_THRESHOLD = 0.15
 POSTURE_SIGMA = 0.5
 BODY_HEIGHT_SIGMA = 0.10
 TRACKING_SIGMA = 0.25
-LATERAL_SIGMA = 0.15
+LATERAL_SIGMA = 0.05
 HEADING_SIGMA = 0.08
 
 ROBOT_MASS = 12.74  # Go1 approximate total mass (kg)
@@ -1398,9 +1398,9 @@ class MiniCheetahEnv(gym.Env):
                 total = (
                     3.0 * r_vx_track         # exp tracking — primary
                     + 1.5 * r_vx_lin         # monotonic speed bonus
-                    + 0.3 * r_vy_track       # lateral tracking
-                    + 0.3 * r_vy_lin         # lateral gradient
-                    + 0.3 * r_wz_track       # yaw tracking
+                    + 1.0 * r_vy_track       # v30: lateral tracking (was 0.3)
+                    + 0.5 * r_vy_lin         # v30: lateral gradient (was 0.3)
+                    + 1.0 * r_wz_track       # v30: yaw tracking (was 0.3)
                     + 0.5 * r_gait           # gait quality (reduced vs walk)
                     - 0.3 * r_orientation    # stay upright (reduced)
                     - 0.05 * r_ang_vel_xy    # minimal wobble penalty
@@ -1409,9 +1409,9 @@ class MiniCheetahEnv(gym.Env):
                 )
                 scaled_components = {
                     "r_vx_track": 3.0 * r_vx_track,
-                    "r_vy_track": 0.3 * r_vy_track,
-                    "r_vy_lin": 0.3 * r_vy_lin,
-                    "r_wz_track": 0.3 * r_wz_track,
+                    "r_vy_track": 1.0 * r_vy_track,
+                    "r_vy_lin": 0.5 * r_vy_lin,
+                    "r_wz_track": 1.0 * r_wz_track,
                     "r_vx_lin": 1.5 * r_vx_lin,
                     "r_gait": 0.5 * r_gait,
                     "r_orientation": -0.3 * r_orientation,
@@ -1432,9 +1432,9 @@ class MiniCheetahEnv(gym.Env):
                 total = (
                     5.0 * r_vx_track_walk    # forward tracking (tight sigma)
                     + 2.0 * r_vx_lin         # monotonic forward gradient
-                    + 1.5 * r_vy_track       # lateral tracking
-                    + 1.0 * r_vy_lin         # monotonic lateral gradient
-                    + 1.0 * r_wz_track       # yaw rate tracking
+                    + 3.0 * r_vy_track       # v30: lateral tracking (was 1.5)
+                    + 1.5 * r_vy_lin         # v30: monotonic lateral gradient (was 1.0)
+                    + 2.0 * r_wz_track       # v30: yaw rate tracking (was 1.0)
                     + 0.5 * r_gait           # gait quality
                     - 0.1 * r_orientation    # prevent flipping only
                     - 0.02 * r_smooth        # action smoothness
@@ -1442,9 +1442,9 @@ class MiniCheetahEnv(gym.Env):
                 scaled_components = {
                     "r_vx_track": 5.0 * r_vx_track_walk,
                     "r_vx_lin": 2.0 * r_vx_lin,
-                    "r_vy_track": 1.5 * r_vy_track,
-                    "r_vy_lin": 1.0 * r_vy_lin,
-                    "r_wz_track": 1.0 * r_wz_track,
+                    "r_vy_track": 3.0 * r_vy_track,
+                    "r_vy_lin": 1.5 * r_vy_lin,
+                    "r_wz_track": 2.0 * r_wz_track,
                     "r_gait": 0.5 * r_gait,
                     "r_orientation": -0.1 * r_orientation,
                     "r_smooth": -0.02 * r_smooth,
@@ -1661,9 +1661,9 @@ class MiniCheetahEnv(gym.Env):
             height = float(rng.uniform(HEIGHT_MIN, HEIGHT_MAX))
             self._start_height_ramp(height)
         elif mode == "walk":
-            vx = float(rng.uniform(0.30, 1.20))   # v26: wider range, covers ref speed (~1.0)
-            vy = 0.0   # v23i9b: pure forward walk first — no lateral confusion
-            wz = 0.0   # v23i9b: no yaw — learn forward walking first
+            vx = float(rng.uniform(0.0, 1.20))    # v30: include zero-fwd for lateral-only
+            vy = float(rng.uniform(-0.4, 0.4))    # v30: lateral commands enabled
+            wz = float(rng.uniform(-0.6, 0.6))    # v30: yaw commands enabled
             # Random height during walking (tests crouched walking)
             height = float(rng.uniform(HEIGHT_MIN + 0.05, HEIGHT_MAX))
             self._start_height_ramp(height)
