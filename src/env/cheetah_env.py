@@ -744,7 +744,7 @@ class MiniCheetahEnv(gym.Env):
         # Action magnitude penalty (r_action_mag) keeps corrections small
         # unless they clearly improve tracking/stability. Residual RL approach.
         if self.command_mode == "walk":
-            action_scaled = action * 0.5  # v27: pure RL, no reference — need full authority
+            action_scaled = action * 0.3  # v27b: moderate authority, reference provides base gait
         elif self.command_mode == "run":
             action_scaled = action * 0.8  # v25: run needs more authority (ref=0.7 m/s, cmd up to 4.0)
         else:
@@ -886,9 +886,6 @@ class MiniCheetahEnv(gym.Env):
         """
         ref = np.zeros(NUM_JOINTS, dtype=np.float32)
         if self.command_mode not in ("walk", "run"):
-            return ref
-        # v27: walk uses pure RL — no reference trajectory
-        if self.command_mode == "walk":
             return ref
 
         t = self.step_count * self.dt
@@ -1414,34 +1411,27 @@ class MiniCheetahEnv(gym.Env):
                     "r_total": total,
                 }
             else:
-                # v27: Walk reward — pure RL, no reference trajectory.
-                # Zero-action = standing still = 0 forward reward (r_vx_lin=0).
-                # r_vx_lin is DOMINANT — monotonic gradient, must move to earn.
-                # r_vx_track uses tight sigma (0.08) — precision refinement only.
-                # Gait reward encourages proper foot patterns.
-                walk_sigma = 0.08  # tight tracking — standing still with cmd=0.5: exp(-0.25/0.08)=0.04
+                # v27b: Walk reward — reference ON, ZERO penalties.
+                # Key insight: v24-v26c all failed because penalties incentivized
+                # cancelling the reference trajectory. Without penalties, the ONLY
+                # way to earn reward is forward velocity. No reason to cancel ref.
+                # r_vx_lin(5.0) DOMINANT — monotonic forward gradient.
+                # r_vx_track tight sigma(0.08) — precision for speed matching.
+                # r_gait(0.5) — gentle foot pattern bonus.
+                # Minimal orientation(0.1) — just prevent flipping.
+                walk_sigma = 0.08
                 r_vx_track_tight = math.exp(-(vx - vx_cmd)**2 / walk_sigma) * vx_cmd_scale
                 total = (
-                    1.5 * r_vx_track_tight   # tight exp tracking — precision only
-                    + 3.0 * r_vx_lin         # forward velocity gradient (DOMINANT, must move)
-                    + 0.5 * r_vy_track       # lateral tracking
-                    + 0.5 * r_wz_track       # yaw tracking
-                    + 1.5 * r_gait           # gait quality (foot patterns, stride)
-                    - 0.3 * r_orientation    # stay upright
-                    - 0.05 * r_ang_vel_xy    # wobble penalty (gentle)
-                    - 0.03 * r_lin_vel_z     # bounce penalty (gentle)
-                    - 0.05 * r_smooth        # action smoothness
+                    1.5 * r_vx_track_tight   # tight exp tracking — precision
+                    + 5.0 * r_vx_lin         # forward velocity (DOMINANT, must move)
+                    + 0.5 * r_gait           # gait quality (gentle)
+                    - 0.1 * r_orientation    # prevent flipping only
                 )
                 scaled_components = {
                     "r_vx_track": 1.5 * r_vx_track_tight,
-                    "r_vx_lin": 3.0 * r_vx_lin,
-                    "r_vy_track": 0.5 * r_vy_track,
-                    "r_wz_track": 0.5 * r_wz_track,
-                    "r_gait": 1.5 * r_gait,
-                    "r_orientation": -0.3 * r_orientation,
-                    "r_ang_vel_xy": -0.05 * r_ang_vel_xy,
-                    "r_lin_vel_z": -0.03 * r_lin_vel_z,
-                    "r_smooth": -0.05 * r_smooth,
+                    "r_vx_lin": 5.0 * r_vx_lin,
+                    "r_gait": 0.5 * r_gait,
+                    "r_orientation": -0.1 * r_orientation,
                     "r_vx_ema": vx_ema,
                     "r_total": total,
                 }
