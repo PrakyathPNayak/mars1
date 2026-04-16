@@ -187,9 +187,10 @@ REWARD_SCALES = {
 MODE_REWARD_MULTIPLIERS = {
     "stand": {
         "r_vel_x": 0.0, "r_vel_y": 0.0, "r_yaw": 0.0, "r_gait": 0.0,
-        "r_posture": 3.0, "r_body_height": 2.0, "r_stillness": 3.0,
+        "r_posture": 1.5, "r_body_height": 1.0, "r_stillness": 1.0,
         "r_motion_penalty": 1.0, "r_vel_track_penalty": 0.0,
         "r_fwd_vel": 0.0, "r_jump_phase": 0.0,
+        "r_alive": 0.0,
         "r_terrain_progress": 0.0, "r_foot_clearance": 0.0,
         "r_orientation": 2.0, "r_ang_vel_xy": 2.0, "r_lin_vel_z": 2.0,
         "r_energy": 0.5, "r_stumble": 0.0, "r_standstill": 0.0,
@@ -706,7 +707,7 @@ class MiniCheetahEnv(gym.Env):
             if self.forced_mode and self.forced_mode in SKILL_MODES:
                 self.command_mode = self.forced_mode
             else:
-                mode_weights = [0.20, 0.05, 0.05, 0.70]  # stand, walk, run, jump (v23i9i: focus on jump, walk/run use ref traj)
+                mode_weights = [0.15, 0.35, 0.25, 0.25]  # stand, walk, run, jump (v24: balanced, walk-heavy)
                 self.command_mode = str(rng.choice(SKILL_MODES, p=mode_weights))
             self._randomize_command_for_mode(rng)
             self.target_height = self._effective_target_height
@@ -730,15 +731,13 @@ class MiniCheetahEnv(gym.Env):
         self.target_height = self._effective_target_height
 
         # Scale action (corrections to posture-centered base)
-        # v23i9h: Walk/run uses action_scale=0 — reference trajectory IS the
-        # controller. RL struggled to learn useful corrections (2.75M steps,
-        # eval stayed at ~800 vs 1100 baseline). The reference trajectory alone
-        # produces 0.52 m/s walking for ~519 steps.
-        # Stand/jump keeps 0.5 for full control authority.
+        # v24: Restore RL corrections for walk/run at small scale (0.15 rad max).
+        # Previous 0.0 meant no learning; previous 0.5 disrupted gait.
+        # 0.15 allows balance corrections without overriding reference trajectory.
         if self.command_mode in ("walk", "run"):
-            action_scaled = action * 0.0  # reference only — no RL corrections
+            action_scaled = action * 0.15
         else:
-            action_scaled = action * 0.5  # full authority for stand/jump
+            action_scaled = action * 0.5
 
         # CPG phase tick (for timing observation signal)
         cpg = self._compute_cpg()  # returns zeros but updates _cpg_phase
@@ -1338,52 +1337,73 @@ class MiniCheetahEnv(gym.Env):
         total = 0.0
         scaled_components = {}
 
-        # v23i9g: Velocity-dominated walk reward.
-        # Reference trajectory provides walking motion (action center).
-        # Policy learns CORRECTIONS for balance/speed — reward must not
-        # penalize the walking motion itself. Only velocity + orientation.
+        # v24: Clean walk/run reward from legged_gym principles.
+        # Zero-action standing must get <10% of optimal walking reward.
+        # NO alive bonus, NO posture/height freebies. Pure velocity tracking.
         if mode in ("walk", "run"):
-            vx = float(base_linvel[0])    # instantaneous
-            vx_ema = self._vx_ema         # EMA-smoothed
+            vx = float(base_linvel[0])
+            vy = float(base_linvel[1])
+            wz = float(base_angvel[2])
+            vx_ema = self._vx_ema
 
-            # v23i9g-fix2: CAPPED velocity — no reward for exceeding command.
-            # Without cap, unbounded r_vx_lin + gamma<1 makes fast-but-unstable
-            # walking optimal (1.5x higher discounted return than stable).
-            # Cap makes the optimal strategy: walk at command speed, survive long.
-            vx_cmd_floor = max(vx_cmd, 0.05)  # min floor prevents zero reward
-            if vx_cmd >= 0:
-                r_vx_fwd = min(vx, vx_cmd_floor)       # cap at command
+            # Velocity tracking (exp kernel, legged_gym style)
+            r_vx_track = math.exp(-(vx - vx_cmd)**2 / TRACKING_SIGMA)
+            r_vy_track = math.exp(-(vy - vy_cmd)**2 / LATERAL_SIGMA)
+            r_wz_track = math.exp(-(wz - wz_cmd)**2 / HEADING_SIGMA)
+
+            # Gate: only reward tracking for commanded directions
+            r_vx_track *= vx_cmd_scale
+            r_vy_track *= vy_cmd_scale
+            r_wz_track *= wz_cmd_scale
+
+            # Linear velocity bonus (provides monotonic gradient from standing)
+            # Capped at command speed — no reward for overshooting
+            if vx_cmd > 0.05:
+                r_vx_lin = max(0.0, min(vx_ema, vx_cmd)) / max(vx_cmd, 0.1)
+            elif vx_cmd < -0.05:
+                r_vx_lin = max(0.0, min(-vx_ema, -vx_cmd)) / max(-vx_cmd, 0.1)
             else:
-                r_vx_fwd = max(vx, -vx_cmd_floor)      # cap for backward
+                r_vx_lin = 0.0
 
-            # Exp tracking: EMA for sustained motion (provides gradient to slow
-            # down when overshooting — capped r_vx_fwd has zero gradient above cmd)
-            r_vx_track = math.exp(-16.0 * (vx_ema - vx_cmd)**2)
+            # Standstill penalty: quadratic, based on EMA speed vs command
+            ema_speed = abs(vx_ema)
+            speed_frac = min(ema_speed / max(cmd_speed, 0.1), 1.0) if cmd_speed > 0.1 else 1.0
+            r_standstill_pen = (1.0 - speed_frac) ** 2
 
             total = (
-                6.0 * r_vx_fwd          # capped forward velocity
-                + 3.0 * r_vx_track      # tracking bonus (increased from 1.0)
-                - 3.0 * r_orientation   # stay upright
+                1.5 * r_vx_track         # exp tracking (peaks at 1.0 when perfect)
+                + 0.5 * r_vy_track       # lateral tracking
+                + 0.5 * r_wz_track       # yaw tracking
+                + 2.0 * r_vx_lin         # linear velocity bonus (0-1 range)
+                - 2.0 * r_orientation    # stay upright
+                - 0.01 * r_smooth        # tiny action smoothness
+                - 1e-5 * r_dof_vel       # tiny joint velocity (don't penalize walking)
+                - 1.0 * r_standstill_pen # penalize standing still when walk commanded
             )
             scaled_components = {
-                "r_vx_fwd": 6.0 * r_vx_fwd,
-                "r_vx_track": 3.0 * r_vx_track,
-                "r_orientation": -3.0 * r_orientation,
+                "r_vx_track": 1.5 * r_vx_track,
+                "r_vy_track": 0.5 * r_vy_track,
+                "r_wz_track": 0.5 * r_wz_track,
+                "r_vx_lin": 2.0 * r_vx_lin,
+                "r_orientation": -2.0 * r_orientation,
+                "r_smooth": -0.01 * r_smooth,
+                "r_dof_vel": -1e-5 * r_dof_vel,
+                "r_standstill": -1.0 * r_standstill_pen,
                 "r_vx_ema": vx_ema,
                 "r_total": total,
             }
         elif mode == "jump":
-            # v23i9i: Simplified jump reward — no free standing bonuses.
-            # Zero-action baseline was 10.75/step (38% body_height, 28% jump_phase,
-            # 19% alive) — robot learned to stand still instead of jumping.
-            # Now: ONLY reward actual jumping. Peak height 0.288 → need 0.40+.
+            # v24: Clean jump reward. No free reward from PD bounce.
+            # Require real vertical velocity (>1.0 m/s) for launch bonus.
+            # Require feet off ground for airborne bonus.
+            # Standing still must get ~0 reward.
             total = (
-                8.0 * r_jump_phase       # dominant: trajectory following + launch + airborne
-                - 3.0 * r_orientation    # stay upright (light penalty)
+                8.0 * r_jump_phase
+                - 2.0 * r_orientation
             )
             scaled_components = {
                 "r_jump_phase": 8.0 * r_jump_phase,
-                "r_orientation": -3.0 * r_orientation,
+                "r_orientation": -2.0 * r_orientation,
                 "r_total": total,
             }
         else:
@@ -1461,22 +1481,24 @@ class MiniCheetahEnv(gym.Env):
         phase = self._jump_traj_step / JUMP_TRAJECTORY_STEPS
 
         r = 0.0
-        # v23i9i: NO continuous height tracking — it gave ~3/step "free" reward
-        # for standing still (trajectory passes through standing height phases).
-        # Phase-specific bonuses provide all signal: launch vz, airborne height,
-        # and end-of-cycle peak height. All are strictly zero for standing.
+        # v24: Require real jumping — no reward from passive PD bounce.
+        # Launch bonus: only for vz > 1.0 m/s (real push, not bounce)
+        # Airborne bonus: only when ALL feet off ground AND height > 0.32
+        # This eliminates the ~3.7/step free reward from PD bounce.
 
-        # Launch phase: bonus for upward velocity
+        # Launch phase: bonus for strong upward velocity only
         if 0.15 < phase < 0.50:
             vz = float(base_linvel[2])
-            r += max(0.0, vz) * 5.0  # v23i9i: boosted from 3.0
+            if vz > 1.0:  # threshold: real jump, not bounce
+                r += (vz - 1.0) * 5.0
 
         # Airborne phase: bonus for height + no contact
         if 0.30 < phase < 0.65:
-            r += max(0.0, effective_h - HEIGHT_DEFAULT) * 8.0  # v23i9i: boosted from 5.0
+            height_bonus = max(0.0, effective_h - 0.32) * 8.0  # must exceed 0.32, not 0.27
             n_contacts = int(np.sum(foot_contacts))
             if n_contacts == 0:
-                r += 3.0  # v23i9i: boosted from 1.5
+                r += height_bonus + 3.0  # only count if truly airborne
+            # If any foot on ground during "airborne" phase, zero bonus
 
         # Advance
         self._jump_traj_step += 1
