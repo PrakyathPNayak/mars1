@@ -1411,26 +1411,31 @@ class MiniCheetahEnv(gym.Env):
                     "r_total": total,
                 }
             else:
-                # v26: Walk reward — stability-first, gait quality.
+                # v26b: Walk reward — forward progress primary, gentle stability.
+                # v26 FAILED: penalties (ang_vel=0.3, lin_vel_z=0.2) too strong.
+                # Policy learned to stand still to minimize wobble.
+                # Fix: cut penalties 6×, add r_vx_lin back for gradient, boost gait.
                 total = (
-                    2.5 * r_vx_track         # exp tracking [0, 2.5] — primary
-                    + 0.5 * r_vy_track       # lateral tracking [0, 0.5]
-                    + 0.5 * r_wz_track       # yaw tracking [0, 0.5]
-                    + 1.5 * r_gait           # gait quality [~0, ~1.5]
-                    - 0.5 * r_orientation    # stay upright
-                    - 0.3 * r_ang_vel_xy     # penalize roll/pitch wobble
-                    - 0.2 * r_lin_vel_z      # penalize vertical bounce
-                    - 0.02 * r_smooth        # action smoothness
+                    2.5 * r_vx_track         # exp tracking — primary
+                    + 1.0 * r_vx_lin         # forward velocity gradient (helps overcome ref)
+                    + 0.5 * r_vy_track       # lateral tracking
+                    + 0.5 * r_wz_track       # yaw tracking
+                    + 1.0 * r_gait           # gait quality bonus
+                    - 0.3 * r_orientation    # stay upright (gentle)
+                    - 0.05 * r_ang_vel_xy    # minimal wobble penalty (6× less than v26)
+                    - 0.03 * r_lin_vel_z     # minimal bounce penalty (7× less than v26)
+                    - 0.01 * r_smooth        # action smoothness
                 )
                 scaled_components = {
                     "r_vx_track": 2.5 * r_vx_track,
+                    "r_vx_lin": 1.0 * r_vx_lin,
                     "r_vy_track": 0.5 * r_vy_track,
                     "r_wz_track": 0.5 * r_wz_track,
-                    "r_gait": 1.5 * r_gait,
-                    "r_orientation": -0.5 * r_orientation,
-                    "r_ang_vel_xy": -0.3 * r_ang_vel_xy,
-                    "r_lin_vel_z": -0.2 * r_lin_vel_z,
-                    "r_smooth": -0.02 * r_smooth,
+                    "r_gait": 1.0 * r_gait,
+                    "r_orientation": -0.3 * r_orientation,
+                    "r_ang_vel_xy": -0.05 * r_ang_vel_xy,
+                    "r_lin_vel_z": -0.03 * r_lin_vel_z,
+                    "r_smooth": -0.01 * r_smooth,
                     "r_vx_ema": vx_ema,
                     "r_total": total,
                 }
