@@ -873,21 +873,19 @@ class MiniCheetahEnv(gym.Env):
         return cpg      # v23i9: all zeros — no CPG offsets, only phase for obs
 
     def _compute_walk_reference_action(self) -> np.ndarray:
-        """v30: Command-scaled reference trajectory.
+        """v28: Fixed-amplitude reference trajectory (gait pattern only).
 
-        Reference amplitude scales with |vx_cmd| so lateral/yaw-only
-        commands don't get forward bias (~0.39 m/s in v28/v29).
-        Floor of 0.10 keeps minimal gait timing for pure lateral motion.
-        Tight tracking sigma (0.10) prevents free-lunch even with scaling.
+        Provides diagonal trot timing/coordination but NOT speed matching.
+        Fixed scale 0.45 → ~0.5 m/s open-loop. Policy must learn to
+        modulate speed via action corrections (action_scale=0.5).
+        Zero-action at cmd=0.8 gets ~44% of optimal (was 87% in v27d).
         """
         ref = np.zeros(NUM_JOINTS, dtype=np.float32)
         if self.command_mode not in ("walk", "run"):
             return ref
 
-        # v30: Scale reference with forward command intent
-        vx_cmd = abs(float(self.command[0]))
-        vx_scale = min(1.0, max(0.10, vx_cmd / 0.5))
-        speed_scale = 0.45 * vx_scale
+        # v28: Fixed amplitude — reference provides gait pattern, not speed
+        speed_scale = 0.45
 
         t = self.step_count * self.dt
         freq = 3.0   # Hz
