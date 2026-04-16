@@ -233,7 +233,9 @@ MODE_REWARD_MULTIPLIERS = {
 # ── Termination ───────────────────────────────────────────────────
 TERMINATION_GRACE_STEPS = 100      # 2s after reset
 MODE_TRANSITION_GRACE_STEPS = 50   # 1s after mode change
-COMMAND_RESAMPLE_INTERVAL = 200    # 4s at 50Hz
+COMMAND_RESAMPLE_MIN = 50          # v25: random command duration [50, 1000] steps
+COMMAND_RESAMPLE_MAX = 1000        # v25: = [1s, 20s] at 50Hz
+JUMP_LANDING_COOLDOWN = 25         # v25: 0.5s cooldown after landing before next jump
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -569,6 +571,10 @@ class MiniCheetahEnv(gym.Env):
         self._jump_traj_step = 0
         self._jump_traj_active = False
         self._jump_max_height = 0.0
+        self._jump_cooldown = 0  # v25: cooldown after landing
+
+        # Command duration (v25: random [50, 1000] steps)
+        self._next_cmd_resample = 0  # will be set on first reset()
 
         # Grace periods
         self._last_mode_change_step = 0
@@ -671,6 +677,7 @@ class MiniCheetahEnv(gym.Env):
         self._jump_traj_step = 0
         self._jump_traj_active = False
         self._jump_max_height = 0.0
+        self._jump_cooldown = 0  # v25: landing cooldown
 
         mujoco = self._mj
         mujoco.mj_resetData(self.model, self.data)
@@ -711,6 +718,8 @@ class MiniCheetahEnv(gym.Env):
                 self.command_mode = str(rng.choice(SKILL_MODES, p=mode_weights))
             self._randomize_command_for_mode(rng)
             self.target_height = self._effective_target_height
+            # v25: random command duration
+            self._next_cmd_resample = self.step_count + int(rng.integers(COMMAND_RESAMPLE_MIN, COMMAND_RESAMPLE_MAX + 1))
 
             # v23i9f: Bootstrap locomotion — give initial forward velocity
             # so policy experiences non-zero vx and has gradient to learn from.
@@ -777,13 +786,13 @@ class MiniCheetahEnv(gym.Env):
         self.step_count += 1
 
         # Mid-episode command re-randomization (velocity/height only, keep mode)
-        # v23h: mode persists for entire episode — switching modes every 4s was
-        # too hard and prevented the policy from learning any single mode well
+        # v25: random duration [50, 1000] steps instead of fixed 200
         if (self.randomize_commands
-                and self.step_count % COMMAND_RESAMPLE_INTERVAL == 0):
+                and self.step_count >= self._next_cmd_resample):
             rng = self.np_random if hasattr(self, 'np_random') and self.np_random is not None else np.random
             self._randomize_command_for_mode(rng)  # re-randomize vel/height
             self.target_height = self._effective_target_height
+            self._next_cmd_resample = self.step_count + int(rng.integers(COMMAND_RESAMPLE_MIN, COMMAND_RESAMPLE_MAX + 1))
 
         # Report to curriculum on episode end
         if (terminated or truncated) and self.curriculum is not None:
@@ -1464,11 +1473,29 @@ class MiniCheetahEnv(gym.Env):
     # ══════════════════════════════════════════════════════════════
 
     def _advance_jump(self, base_z, base_linvel, foot_contacts, terrain_h):
-        """Parabolic jump trajectory following with phase-specific bonuses."""
+        """Parabolic jump trajectory following with phase-specific bonuses.
+        
+        v25: After trajectory completes, enter cooldown (JUMP_LANDING_COOLDOWN steps).
+        Next jump only starts after cooldown AND feet are on ground.
+        Prevents double-jumping in interactive mode.
+        """
         if self.command_mode != "jump":
             if self._jump_traj_active:
                 self._jump_traj_active = False
                 self._jump_traj_step = 0
+                self._jump_cooldown = 0
+            return 0.0
+
+        # v25: Landing cooldown — wait for feet on ground before next jump
+        if self._jump_cooldown > 0:
+            self._jump_cooldown -= 1
+            n_contacts = int(np.sum(foot_contacts))
+            if self._jump_cooldown == 0 and n_contacts >= 2:
+                # Cooldown done and landed — ready for next jump
+                pass
+            elif self._jump_cooldown == 0:
+                # Cooldown done but still airborne — extend until landed
+                self._jump_cooldown = 1
             return 0.0
 
         if not self._jump_traj_active:
@@ -1509,6 +1536,7 @@ class MiniCheetahEnv(gym.Env):
             r += max(0.0, self._jump_max_height - 0.30) * 15.0  # v23i9i: boosted from 10.0
             self._jump_traj_active = False
             self._jump_traj_step = 0
+            self._jump_cooldown = JUMP_LANDING_COOLDOWN  # v25: cooldown before next jump
             self._jump_max_height = base_z - terrain_h
             self._start_height_ramp(HEIGHT_DEFAULT)
 
