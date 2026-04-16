@@ -1,10 +1,11 @@
-"""Run training v27 in 250K chunks with resume. Run this script repeatedly."""
-import sys, os, glob
+"""Run training v27 in 250K chunks with resume. Bulletproof saves via callback + signal handler."""
+import sys, os, glob, signal, atexit
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 os.chdir(os.path.join(os.path.dirname(__file__), ".."))
 
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize, VecMonitor
+from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
 from src.env.cheetah_env import MiniCheetahEnv
 import numpy as np
 
@@ -61,16 +62,55 @@ else:
     )
     print("Fresh model", flush=True)
 
+# Emergency save on any signal
+save_path = f"{CKPT_DIR}/chunk_{chunk_num:03d}"
+_saved = [False]
+
+def emergency_save(sig=None, frame=None):
+    if _saved[0]:
+        return
+    _saved[0] = True
+    signame = signal.Signals(sig).name if sig else "atexit"
+    print(f"\n{signame}: emergency save to {save_path}...", flush=True)
+    try:
+        model.save(save_path)
+        env.save(vecnorm_path)
+        print(f"{signame}: saved OK", flush=True)
+    except Exception as e:
+        print(f"{signame}: save FAILED: {e}", flush=True)
+    if sig:
+        sys.exit(0)
+
+signal.signal(signal.SIGTERM, emergency_save)
+signal.signal(signal.SIGINT, emergency_save)
+atexit.register(emergency_save)
+
+# Periodic checkpoint callback (every 50K steps)
+class PeriodicSave(BaseCallback):
+    def __init__(self, save_freq=50_000):
+        super().__init__()
+        self.save_freq = save_freq
+        self.last_save = 0
+    def _on_step(self):
+        if self.num_timesteps - self.last_save >= self.save_freq:
+            model.save(save_path)
+            env.save(vecnorm_path)
+            self.last_save = self.num_timesteps
+            print(f"  [periodic save at {self.num_timesteps:,} steps]", flush=True)
+        return True
+
 try:
-    model.learn(total_timesteps=CHUNK)
-    print("Training complete, saving...", flush=True)
+    model.learn(total_timesteps=CHUNK, reset_num_timesteps=True, callback=PeriodicSave(50_000))
+    print("Training complete.", flush=True)
 except Exception as e:
     print(f"Training error: {e}", flush=True)
     import traceback; traceback.print_exc()
 
-save_path = f"{CKPT_DIR}/chunk_{chunk_num:03d}"
-print(f"Saving to {save_path}...", flush=True)
-model.save(save_path)
-env.save(vecnorm_path)
-total_so_far += CHUNK
-print(f"Chunk {chunk_num} done. Total: {total_so_far:,}/{TARGET:,}", flush=True)
+# Final save
+if not _saved[0]:
+    _saved[0] = True
+    print(f"Saving to {save_path}...", flush=True)
+    model.save(save_path)
+    env.save(vecnorm_path)
+    total_so_far += CHUNK
+    print(f"Chunk {chunk_num} done. Total: {total_so_far:,}/{TARGET:,}", flush=True)
