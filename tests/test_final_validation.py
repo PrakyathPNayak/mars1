@@ -19,7 +19,7 @@ HISTORY = 16
 
 def mk(rank):
     def _init():
-        env = MiniCheetahEnv(render_mode='none', randomize_domain=True, episode_length=200)
+        env = MiniCheetahEnv(render_mode='none', episode_length=200)
         env = ActionSmoothingWrapper(env, alpha=0.8)
         env = HistoryWrapper(env, history_len=HISTORY)
         env.reset(seed=rank)
@@ -44,7 +44,7 @@ model = PPO(
     n_steps=128, batch_size=64, n_epochs=3,
     gamma=0.99, gae_lambda=0.95, clip_range=0.2,
     ent_coef=0.01, vf_coef=0.5, max_grad_norm=0.5,
-    policy_kwargs=dict(d_model=128, n_heads=4, n_layers=3, n_experts=4, history_len=HISTORY, obs_dim=61),
+    policy_kwargs=dict(d_model=128, n_heads=4, n_layers=3, n_experts=4, history_len=HISTORY, obs_dim=196),
     verbose=0, device='cpu',
 )
 

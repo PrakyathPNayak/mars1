@@ -1,4 +1,4 @@
-"""Walk-only training v24e: near-zero entropy, conservative exploration."""
+"""Jump-only training v24: zero-free-lunch jump reward."""
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 os.chdir(os.path.join(os.path.dirname(__file__), ".."))
@@ -17,15 +17,14 @@ def make_env(rank, mode):
     return _init
 
 N_ENVS = 8
-MODE = "walk"
+MODE = "jump"
 TOTAL_STEPS = 5_000_000
 
-print(f"Training {MODE}-only v24e, {N_ENVS} envs, {TOTAL_STEPS:,} steps...")
-print("Config: ent_coef=0.0001, log_std=-2.5, 5M steps")
+print(f"Training {MODE}-only, {N_ENVS} envs, {TOTAL_STEPS:,} steps...")
+print("Config: batch=4096, ent_coef=0.0001, log_std=-1.5, action_scale=0.5")
 base_env = DummyVecEnv([make_env(i, MODE) for i in range(N_ENVS)])
 env = VecNormalize(VecMonitor(base_env), norm_obs=True, norm_reward=False, clip_obs=10.0)
 
-# Eval env
 eval_base = DummyVecEnv([make_env(100, MODE)])
 eval_env = VecNormalize(VecMonitor(eval_base), norm_obs=True, norm_reward=False, clip_obs=10.0)
 
@@ -34,33 +33,32 @@ model = PPO(
     env,
     learning_rate=3e-4,
     n_steps=4096,
-    batch_size=512,
+    batch_size=4096,
     n_epochs=5,
     gamma=0.99,
     gae_lambda=0.95,
     clip_range=0.2,
-    ent_coef=0.0001,  # v24e: near-zero entropy — let std shrink naturally
+    ent_coef=0.0001,
     verbose=1,
     device="cpu",
     policy_kwargs=dict(
-        log_std_init=-2.5,  # std≈0.082, noise≈0.025 rad with action_scale=0.3
+        log_std_init=-1.5,  # std≈0.22, larger exploration for jump discovery
         net_arch=dict(pi=[256, 256], vf=[256, 256]),
     ),
 )
 
 eval_callback = EvalCallback(
-    eval_env, best_model_save_path="checkpoints/walk_v24e_best/",
+    eval_env, best_model_save_path="checkpoints/jump_v24_best/",
     eval_freq=50_000, n_eval_episodes=5, deterministic=True, verbose=1,
 )
 
 model.learn(total_timesteps=TOTAL_STEPS, callback=eval_callback)
 
-# Save final
-model.save("checkpoints/walk_v24e")
-env.save("checkpoints/walk_v24e_vecnorm.pkl")
-print("Saved to checkpoints/walk_v24e*")
+model.save("checkpoints/jump_v24")
+env.save("checkpoints/jump_v24_vecnorm.pkl")
+print("Saved to checkpoints/jump_v24*")
 
-# Evaluate deterministic policy
+# Evaluate
 print("\n=== EVALUATION (10 episodes) ===")
 eval_raw = MiniCheetahEnv(render_mode="none", forced_mode=MODE, episode_length=2000)
 rewards = []
@@ -81,7 +79,7 @@ for ep in range(10):
 
 print(f"\nPolicy: {np.mean(rewards):.1f}+/-{np.std(rewards):.1f} reward, {np.mean(ep_lens):.0f}+/-{np.std(ep_lens):.0f} steps")
 
-# Zero-action baseline for comparison
+# Zero-action baseline
 print("\n=== ZERO-ACTION BASELINE ===")
 zr, zs = [], []
 for ep in range(5):

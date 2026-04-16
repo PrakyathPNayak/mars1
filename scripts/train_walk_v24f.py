@@ -1,4 +1,4 @@
-"""Walk-only training v24e: near-zero entropy, conservative exploration."""
+"""Walk-only training v24f: proper batch size + near-zero entropy."""
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 os.chdir(os.path.join(os.path.dirname(__file__), ".."))
@@ -20,8 +20,8 @@ N_ENVS = 8
 MODE = "walk"
 TOTAL_STEPS = 5_000_000
 
-print(f"Training {MODE}-only v24e, {N_ENVS} envs, {TOTAL_STEPS:,} steps...")
-print("Config: ent_coef=0.0001, log_std=-2.5, 5M steps")
+print(f"Training {MODE}-only v24f, {N_ENVS} envs, {TOTAL_STEPS:,} steps...")
+print("Config: batch=4096, ent_coef=0.0001, log_std=-2.0, 5M steps")
 base_env = DummyVecEnv([make_env(i, MODE) for i in range(N_ENVS)])
 env = VecNormalize(VecMonitor(base_env), norm_obs=True, norm_reward=False, clip_obs=10.0)
 
@@ -34,31 +34,31 @@ model = PPO(
     env,
     learning_rate=3e-4,
     n_steps=4096,
-    batch_size=512,
+    batch_size=4096,  # v24f: 8 minibatches/epoch × 5 = 40 updates (was 320!)
     n_epochs=5,
     gamma=0.99,
     gae_lambda=0.95,
     clip_range=0.2,
-    ent_coef=0.0001,  # v24e: near-zero entropy — let std shrink naturally
+    ent_coef=0.0001,  # near-zero entropy — let std shrink naturally
     verbose=1,
     device="cpu",
     policy_kwargs=dict(
-        log_std_init=-2.5,  # std≈0.082, noise≈0.025 rad with action_scale=0.3
+        log_std_init=-2.0,  # std≈0.135, back to v24d start — larger batch handles it
         net_arch=dict(pi=[256, 256], vf=[256, 256]),
     ),
 )
 
 eval_callback = EvalCallback(
-    eval_env, best_model_save_path="checkpoints/walk_v24e_best/",
+    eval_env, best_model_save_path="checkpoints/walk_v24f_best/",
     eval_freq=50_000, n_eval_episodes=5, deterministic=True, verbose=1,
 )
 
 model.learn(total_timesteps=TOTAL_STEPS, callback=eval_callback)
 
 # Save final
-model.save("checkpoints/walk_v24e")
-env.save("checkpoints/walk_v24e_vecnorm.pkl")
-print("Saved to checkpoints/walk_v24e*")
+model.save("checkpoints/walk_v24f")
+env.save("checkpoints/walk_v24f_vecnorm.pkl")
+print("Saved to checkpoints/walk_v24f*")
 
 # Evaluate deterministic policy
 print("\n=== EVALUATION (10 episodes) ===")
