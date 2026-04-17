@@ -747,12 +747,10 @@ class MiniCheetahEnv(gym.Env):
                 # Walk needs ~2M+ of heavy training before other modes can share.
                 # Per-env steps: 8 envs → 125K env steps per 1M total steps.
                 _es = self._training_steps
-                if _es < 250_000:     # ~0-2M total: walk-heavy
-                    mode_weights = [0.08, 0.55, 0.17, 0.20]
-                elif _es < 500_000:   # ~2M-4M total: transition
-                    mode_weights = [0.12, 0.45, 0.20, 0.23]
-                else:                 # ~4M+ total: default balanced
-                    mode_weights = [0.15, 0.35, 0.25, 0.25]
+                if _es < 200_000:     # ~0-1.6M total: walk+run balanced
+                    mode_weights = [0.08, 0.37, 0.30, 0.25]
+                else:                 # ~1.6M+: run/jump boost
+                    mode_weights = [0.10, 0.25, 0.30, 0.35]
                 self.command_mode = str(rng.choice(SKILL_MODES, p=mode_weights))
             self._randomize_command_for_mode(rng)
             self.target_height = self._effective_target_height
