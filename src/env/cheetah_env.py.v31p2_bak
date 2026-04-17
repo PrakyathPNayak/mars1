@@ -949,15 +949,13 @@ class MiniCheetahEnv(gym.Env):
         if cmd_mag < 0.05:
             return ref  # truly standing still
 
-        # v31q: Walk reference provides TIMING cue only — NO amplitude.
-        # v31p base_amp=0.32 → zero-action vx=0.55 m/s → 100% free lunch!
-        # Even base_amp=0.15 → zero-action vx=0.55 (MuJoCo physics too efficient).
-        # Solution: walk base_amp=0.0. Policy learns gait from scratch.
-        # Phase observation still provides timing cues. Like legged_gym.
-        # Run keeps 0.45 (high-speed gait needs reference bootstrapping).
+        # v31d: Mode-dependent gait amplitude
+        # Walk base=0.32 (normalized at 0.5 m/s), Run base=0.45 (normalized at 2.0 m/s)
+        # BUG FIX: v31b/c had extra 0.30 multiplier → amp_hip=0.096 for walk_fwd
+        # This made forward reference WEAKER than lateral lat_boost=0.15!
         is_run = self.command_mode == "run"
         vx_norm = 2.0 if is_run else 0.5
-        base_amp = 0.45 if is_run else 0.0
+        base_amp = 0.45 if is_run else 0.32
         vx_scale = min(1.0, abs(vx_cmd) / vx_norm)
         has_lat_yaw = abs(vy_cmd) > 0.05 or abs(wz_cmd) > 0.05
         speed_scale = base_amp * vx_scale
@@ -1649,29 +1647,30 @@ class MiniCheetahEnv(gym.Env):
                 r_vx_var = (vx - vx_ema)**2 if abs(vx_cmd) > 0.05 else 0.0
                 r_vy_var = (vy - vy_ema_val)**2 if abs(vy_cmd) > 0.05 else 0.0
 
-                # v31q: Simplified walk reward — fixes "penalty trap" from v31p.
-                # Previous: 15 terms, heavy penalties → sprint then freeze.
-                # Now: tracking dominant + moderate overshoot + gentle drift.
-                # Reference amplitude reduced 0.32→0.15 to eliminate free-lunch.
+                # v31l: Restored r_vx_lin (removing it made walk_fwd learn nothing — r/step=-4.61).
+                # Sprint exploit fixed by strong overshoot penalty -5.0 instead.
                 total = (
-                    8.0 * r_vx_track_walk    # dominant: Gaussian peak at target speed
-                    + 3.0 * r_vx_lin         # monotonic forward gradient
-                    + 3.0 * r_vy_track       # EMA-based lateral tracking
+                    5.0 * r_vx_track_walk    # v31m3: reverted from 8→5 (boost caused sprinting)
+                    + 2.0 * r_vx_lin         # monotonic forward gradient
+                    + 3.0 * r_vy_track       # EMA-based (anti-oscillation)
                     + 2.0 * r_vy_lin         # monotonic lateral gradient
-                    + 2.0 * r_wz_track       # EMA-based yaw tracking
+                    + 2.0 * r_wz_track       # EMA-based (anti-oscillation)
                     + 2.0 * r_height_walk    # height tracking (crouch)
                     + 0.5 * r_gait           # gait quality
                     - 0.1 * r_orientation    # prevent flipping only
                     - 0.02 * r_smooth        # action smoothness
-                    - 2.0 * r_vx_overshoot   # prevent sprinting past target
-                    - 1.5 * r_vy_overshoot   # prevent lateral overshoot
-                    - 1.0 * r_vx_unwanted    # gentle: penalize fwd when not commanded
-                    - 0.5 * r_vy_unwanted    # gentle: penalize lateral drift
-                    - 1.0 * r_wz_unwanted    # gentle: penalize yaw drift
+                    - 3.0 * r_vx_unwanted    # anti-forward-bias
+                    - 2.5 * r_vy_unwanted    # anti-lateral-drift
+                    - 4.0 * r_wz_unwanted    # anti-spin (dead zone softens)
+                    - 1.0 * r_heading_drift  # heading correction
+                    - 3.0 * r_vx_overshoot   # v31p: softened from -5.0 (was overcorrecting sprint→freeze)
+                    - 1.5 * r_vy_overshoot   # lateral overshoot
+                    - 1.5 * r_vx_var         # v31p: softened from -3.0 (was suppressing all velocity)
+                    - 2.0 * r_vy_var         # v31m: lateral smoothness
                 )
                 scaled_components = {
-                    "r_vx_track": 8.0 * r_vx_track_walk,
-                    "r_vx_lin": 3.0 * r_vx_lin,
+                    "r_vx_track": 5.0 * r_vx_track_walk,
+                    "r_vx_lin": 2.0 * r_vx_lin,
                     "r_vy_track": 3.0 * r_vy_track,
                     "r_vy_lin": 2.0 * r_vy_lin,
                     "r_wz_track": 2.0 * r_wz_track,
@@ -1679,11 +1678,14 @@ class MiniCheetahEnv(gym.Env):
                     "r_gait": 0.5 * r_gait,
                     "r_orientation": -0.1 * r_orientation,
                     "r_smooth": -0.02 * r_smooth,
-                    "r_vx_overshoot": -2.0 * r_vx_overshoot,
+                    "r_vx_unwanted": -3.0 * r_vx_unwanted,
+                    "r_vy_unwanted": -2.5 * r_vy_unwanted,
+                    "r_wz_unwanted": -4.0 * r_wz_unwanted,
+                    "r_heading_drift": -1.0 * r_heading_drift,
+                    "r_vx_overshoot": -3.0 * r_vx_overshoot,
                     "r_vy_overshoot": -1.5 * r_vy_overshoot,
-                    "r_vx_unwanted": -1.0 * r_vx_unwanted,
-                    "r_vy_unwanted": -0.5 * r_vy_unwanted,
-                    "r_wz_unwanted": -1.0 * r_wz_unwanted,
+                    "r_vx_var": -1.5 * r_vx_var,
+                    "r_vy_var": -2.0 * r_vy_var,
                     "r_vx_ema": vx_ema,
                     "r_total": total,
                 }
