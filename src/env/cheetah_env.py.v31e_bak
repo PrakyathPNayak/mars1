@@ -709,12 +709,6 @@ class MiniCheetahEnv(gym.Env):
             pass
 
         self._initial_base_pos = self.data.qpos[:3].copy()
-        # v31f: Track initial heading for drift termination
-        quat = self.data.qpos[3:7]
-        self._initial_yaw = math.atan2(
-            2.0 * (quat[0] * quat[3] + quat[1] * quat[2]),
-            1.0 - 2.0 * (quat[2]**2 + quat[3]**2)
-        )
 
         # Randomize command for training
         if self.randomize_commands:
@@ -1449,12 +1443,11 @@ class MiniCheetahEnv(gym.Env):
             r_vy_track *= vy_cmd_scale
             r_wz_track *= wz_cmd_scale
 
-            # v31f: LINEAR unwanted penalties (was quadratic in v31e)
-            # Quadratic was too weak for small drift: 0.1²=0.01 → penalty 0.04
-            # Linear: 0.1 → penalty 0.4 (10× stronger at small drift)
-            r_vx_unwanted = abs(vx_ema) if abs(vx_cmd) < 0.05 else 0.0
-            r_vy_unwanted = abs(vy_ema_val) if abs(vy_cmd) < 0.05 else 0.0
-            r_wz_unwanted = abs(wz_ema_val) if abs(wz_cmd) < 0.05 else 0.0
+            # v31b: Penalize unwanted velocity on non-commanded DOFs
+            # Fixes forward bias from reference during pure lateral/yaw
+            r_vx_unwanted = vx_ema**2 if abs(vx_cmd) < 0.05 else 0.0
+            r_vy_unwanted = vy_ema_val**2 if abs(vy_cmd) < 0.05 else 0.0
+            r_wz_unwanted = wz_ema_val**2 if abs(wz_cmd) < 0.05 else 0.0
 
             # Linear velocity bonus (provides monotonic gradient from standing)
             # Capped at command speed — no reward for overshooting
@@ -1477,7 +1470,7 @@ class MiniCheetahEnv(gym.Env):
             if mode == "run":
                 # v29: Run reward — added r_vy_lin for lateral gradient.
                 # v31c: Remove oscillation penalty (EMA tracking already prevents gaming)
-                # v31f: LINEAR unwanted penalties + heading drift
+                # Reduce vx_unwanted (reference inherently creates forward bias)
                 total = (
                     3.0 * r_vx_track         # exp tracking — primary
                     + 1.5 * r_vx_lin         # monotonic speed bonus
@@ -1489,10 +1482,9 @@ class MiniCheetahEnv(gym.Env):
                     - 0.05 * r_ang_vel_xy    # minimal wobble penalty
                     - 0.05 * r_lin_vel_z     # minimal bounce penalty
                     - 0.01 * r_smooth        # action smoothness
-                    - 2.0 * r_vx_unwanted    # v31f: LINEAR anti-forward-bias
-                    - 1.5 * r_vy_unwanted    # v31f: LINEAR anti-lateral-drift
-                    - 2.0 * r_wz_unwanted    # v31f: LINEAR anti-spin
-                    - 1.0 * r_heading_drift  # v31f: always-on heading stabilizer
+                    - 2.0 * r_vx_unwanted    # v31d: anti-forward-bias
+                    - 1.5 * r_vy_unwanted    # v31d: anti-lateral-drift
+                    - 2.0 * r_wz_unwanted    # v31d: anti-spin
                 )
                 scaled_components = {
                     "r_vx_track": 3.0 * r_vx_track,
@@ -1508,7 +1500,6 @@ class MiniCheetahEnv(gym.Env):
                     "r_vx_unwanted": -2.0 * r_vx_unwanted,
                     "r_vy_unwanted": -1.5 * r_vy_unwanted,
                     "r_wz_unwanted": -2.0 * r_wz_unwanted,
-                    "r_heading_drift": -1.0 * r_heading_drift,
                     "r_vx_ema": vx_ema,
                     "r_total": total,
                 }
@@ -1524,9 +1515,6 @@ class MiniCheetahEnv(gym.Env):
                 walk_height_sigma = 0.01
                 r_height_walk = math.exp(-(effective_height - self._effective_target_height)**2 / walk_height_sigma)
 
-                # v31f: Add heading_drift to walk reward (was only in stand)
-                # Penalizes |wz - wz_cmd| always — even for small drift
-                # Combined with linear unwanted, prevents yaw instability
                 total = (
                     5.0 * r_vx_track_walk    # forward tracking (tight sigma)
                     + 2.0 * r_vx_lin         # monotonic forward gradient
@@ -1537,10 +1525,9 @@ class MiniCheetahEnv(gym.Env):
                     + 0.5 * r_gait           # gait quality
                     - 0.1 * r_orientation    # prevent flipping only
                     - 0.02 * r_smooth        # action smoothness
-                    - 3.0 * r_vx_unwanted    # v31f: LINEAR anti-forward-bias
-                    - 2.5 * r_vy_unwanted    # v31f: LINEAR anti-lateral-drift
-                    - 4.0 * r_wz_unwanted    # v31f: LINEAR anti-spin
-                    - 1.5 * r_heading_drift  # v31f: always-on heading stabilizer
+                    - 3.0 * r_vx_unwanted    # v31d: anti-forward-bias
+                    - 2.5 * r_vy_unwanted    # v31d: anti-lateral-drift
+                    - 4.0 * r_wz_unwanted    # v31d: STRONG anti-spin (policy was spinning wz=-0.46!)
                 )
                 scaled_components = {
                     "r_vx_track": 5.0 * r_vx_track_walk,
@@ -1555,7 +1542,6 @@ class MiniCheetahEnv(gym.Env):
                     "r_vx_unwanted": -3.0 * r_vx_unwanted,
                     "r_vy_unwanted": -2.5 * r_vy_unwanted,
                     "r_wz_unwanted": -4.0 * r_wz_unwanted,
-                    "r_heading_drift": -1.5 * r_heading_drift,
                     "r_vx_ema": vx_ema,
                     "r_total": total,
                 }
@@ -1620,20 +1606,6 @@ class MiniCheetahEnv(gym.Env):
         tilt = float(np.sum(gravity_body[:2]**2))
         if tilt > 0.75:  # ~60° tilt
             return True
-
-        # v31f: Terminate on excessive heading drift in walk/run when yaw NOT commanded
-        # Prevents episodes from degenerating into circles
-        if self.command_mode in ("walk", "run") and abs(float(self.command[2])) < 0.1:
-            current_yaw = math.atan2(
-                2.0 * (quat[0] * quat[3] + quat[1] * quat[2]),
-                1.0 - 2.0 * (quat[2]**2 + quat[3]**2)
-            )
-            yaw_drift = abs(current_yaw - self._initial_yaw)
-            # Wrap to [-π, π]
-            if yaw_drift > math.pi:
-                yaw_drift = 2.0 * math.pi - yaw_drift
-            if yaw_drift > 1.2:  # ~69° — generous enough for natural gait wobble
-                return True
 
         return False
 
