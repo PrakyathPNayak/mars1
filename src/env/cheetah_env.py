@@ -959,6 +959,12 @@ class MiniCheetahEnv(gym.Env):
         vx_scale = min(1.0, abs(vx_cmd) / vx_norm)
         has_lat_yaw = abs(vy_cmd) > 0.05 or abs(wz_cmd) > 0.05
         speed_scale = base_amp * vx_scale
+        # v31r: Minimum gait amplitude floor for forward/backward walking.
+        # Below speed_scale≈0.08, MuJoCo trot bifurcates to zero velocity.
+        # cmd=0.3 gets speed_scale=0.06 (dead). Floor=0.10 gives vx=0.150 (50% baseline).
+        # Policy learns remaining 50%. Backward also benefits (vx=-0.220→-0.345).
+        if abs(vx_cmd) > 0.05 and not is_run:
+            speed_scale = max(speed_scale, 0.10)
 
         t = self.step_count * self.dt
         freq = 3.0   # Hz
