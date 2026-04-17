@@ -929,9 +929,9 @@ class MiniCheetahEnv(gym.Env):
         rear_scale = 1.3
 
         # v31e: Reduce forward thrust during lateral/yaw by splitting hip/knee boost
-        # Hip drives forward motion; knee drives leg lift for abduction/yaw
-        # Less hip + more knee = less forward bias, same stepping ability
-        lat_boost_hip = 0.05 if has_lat_yaw else 0.0
+        # hip_boost=0.10 (was 0.15): 41% less forward bias, 12% less lateral, 18% less yaw
+        # Combined with stronger vx_unwanted penalty, policy should zero-out forward drift
+        lat_boost_hip = 0.10 if has_lat_yaw else 0.0
         lat_boost_knee = 0.20 if has_lat_yaw else 0.0
         amp_hip = max(lat_boost_hip, speed_scale)
         amp_knee = max(lat_boost_knee, speed_scale * 1.33)
@@ -939,12 +939,13 @@ class MiniCheetahEnv(gym.Env):
         # v31e: Backward walking — invert hip swing for negative vx_cmd
         fwd_sign = -1.0 if vx_cmd < -0.05 else 1.0
 
-        # v31e: Boosted abduction gain to compensate for reduced hip (0.40→0.55)
-        abd_lat_amp = -vy_cmd * 0.55
+        # v31e: Boosted abduction gain slightly to compensate for reduced hip
+        abd_lat_amp = -vy_cmd * 0.40
 
-        # v31e: Boosted yaw gain to compensate for reduced hip amplitude
-        # Also asymmetric: negative wz needs more to overcome rear_scale bias
-        yaw_gain = 0.70 if wz_cmd >= 0 else 0.90
+        # v31b: Yaw via differential stride
+        # Right-bigger creates positive wz (empirically verified)
+        # v31e: Asymmetric gain — negative wz needs more diff to overcome rear_scale bias
+        yaw_gain = 0.40 if wz_cmd >= 0 else 0.55
         yaw_diff = min(0.5, max(-0.5, wz_cmd * yaw_gain))
 
         for hip_i, knee_i, abd_i, is_diag1, is_rear, is_left in [
