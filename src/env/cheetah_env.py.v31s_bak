@@ -1572,27 +1572,13 @@ class MiniCheetahEnv(gym.Env):
 
             if mode == "run":
                 # v31m: Use EMA for vx tracking (consistent with walk mode fix)
-                # v31s2: wider sigma for run (0.25→0.5) — Gaussian gives gradient
-                # at large velocity deficits. At σ=0.25, exp(-9)≈0 for cmd=1.5,vx=0.
-                # At σ=0.5: exp(-4.5)≈0.011 — still faint but 90x more gradient.
-                _RUN_SIGMA = 0.50
-                r_vx_track_run = math.exp(-(vx_ema - vx_cmd)**2 / _RUN_SIGMA)
+                r_vx_track_run = math.exp(-(vx_ema - vx_cmd)**2 / TRACKING_SIGMA)
                 r_vx_track_run *= vx_cmd_scale
                 r_vx_var = (vx - vx_ema)**2 if abs(vx_cmd) > 0.05 else 0.0
 
-                # v31s2: Stall penalty — model learned to fight reference and stand still.
-                # Zero-action run gives vx=1.54 but falls at step 188. Model prefers to
-                # stand (vx=0, survives 500). This penalty makes stalling actively costly.
-                # Activates when moving < 30% of commanded speed. Scales with deficit.
-                if abs(vx_cmd) > 0.3:
-                    _vx_deficit = max(0.0, 0.3 * abs(vx_cmd) - abs(vx_ema))
-                    r_stall = _vx_deficit / abs(vx_cmd)  # 0..0.3, peaks when stationary
-                else:
-                    r_stall = 0.0
-
                 total = (
-                    4.0 * r_vx_track_run     # v31s2: boosted tracking (was 3.0)
-                    + 3.0 * r_vx_lin         # v31s2: boosted gradient (was 1.5)
+                    3.0 * r_vx_track_run     # v31m: EMA-based tracking
+                    + 1.5 * r_vx_lin         # monotonic speed bonus
                     + 1.0 * r_vy_track       # lateral tracking
                     + 0.5 * r_vy_lin         # lateral gradient
                     + 1.0 * r_wz_track       # yaw tracking
@@ -1608,14 +1594,13 @@ class MiniCheetahEnv(gym.Env):
                     - 2.0 * r_vx_overshoot   # speed cap
                     - 1.5 * r_vy_overshoot   # lateral overshoot
                     - 2.0 * r_vx_var         # v31m: velocity smoothness
-                    - 5.0 * r_stall          # v31s2: anti-stall penalty
                 )
                 scaled_components = {
-                    "r_vx_track": 4.0 * r_vx_track_run,
+                    "r_vx_track": 3.0 * r_vx_track_run,
                     "r_vy_track": 1.0 * r_vy_track,
                     "r_vy_lin": 0.5 * r_vy_lin,
                     "r_wz_track": 1.0 * r_wz_track,
-                    "r_vx_lin": 3.0 * r_vx_lin,
+                    "r_vx_lin": 1.5 * r_vx_lin,
                     "r_gait": 0.5 * r_gait,
                     "r_orientation": -0.3 * r_orientation,
                     "r_ang_vel_xy": -0.05 * r_ang_vel_xy,
@@ -1628,7 +1613,6 @@ class MiniCheetahEnv(gym.Env):
                     "r_vx_overshoot": -2.0 * r_vx_overshoot,
                     "r_vy_overshoot": -1.5 * r_vy_overshoot,
                     "r_vx_var": -2.0 * r_vx_var,
-                    "r_stall": -5.0 * r_stall,
                     "r_vx_ema": vx_ema,
                     "r_total": total,
                 }
@@ -1980,38 +1964,32 @@ class MiniCheetahEnv(gym.Env):
             # v31g: Dedicated sampling categories to prevent mode interference.
             # v31k: 35% pure forward (was 20% — walk_fwd regresses past 600K with 20%).
             roll = float(rng.uniform(0, 1))
-            if roll < 0.30:
-                # v31k: Pure forward/backward
+            if roll < 0.35:
+                # v31k: Pure forward/backward — increased from 20% to 35%
+                # At 20%, walk_fwd learned by 600K then died by 900K (mode interference).
+                # v31k: Extended backward range from -0.3 to -0.5 (was dead at cmd=-0.5)
                 vx = float(rng.uniform(-0.5, 1.0))
                 vy = float(rng.uniform(-0.05, 0.05))
                 wz = float(rng.uniform(-0.05, 0.05))
-            elif roll < 0.45:
+            elif roll < 0.55:
                 # Lateral-dominant: small forward + large lateral/yaw
                 vx = float(rng.uniform(0.1, 0.3))
                 vy = float(rng.uniform(-0.4, 0.4))
-                wz = float(rng.uniform(-0.8, 0.8))
+                wz = float(rng.uniform(-0.6, 0.6))
                 if abs(vy) < 0.15 and abs(wz) < 0.15:
                     vy = float(rng.choice([-0.3, 0.3]))
-            elif roll < 0.60:
+            elif roll < 0.70:
                 # Pure lateral (harder): vx≈0 but vy/wz large
                 vx = float(rng.uniform(-0.05, 0.1))
                 vy = float(rng.uniform(-0.4, 0.4))
-                wz = float(rng.uniform(-0.8, 0.8))
+                wz = float(rng.uniform(-0.6, 0.6))
                 if abs(vy) < 0.15 and abs(wz) < 0.15:
                     vy = float(rng.choice([-0.3, 0.3]))
-            elif roll < 0.72:
-                # v31s: Pure yaw — vx≈0, vy≈0, wz large
-                # Without this, yaw never gets isolated training signal.
-                vx = float(rng.uniform(-0.05, 0.05))
-                vy = float(rng.uniform(-0.05, 0.05))
-                wz = float(rng.uniform(-1.0, 1.0))
-                if abs(wz) < 0.2:
-                    wz = float(rng.choice([-0.8, 0.8]))
             else:
                 # General mixed commands
                 vx = float(rng.uniform(0.0, 1.20))
                 vy = float(rng.uniform(-0.4, 0.4))
-                wz = float(rng.uniform(-0.8, 0.8))
+                wz = float(rng.uniform(-0.6, 0.6))
             # v31: full height range for crouched walking training
             height = float(rng.uniform(HEIGHT_MIN, HEIGHT_MAX))
             self._start_height_ramp(height)
