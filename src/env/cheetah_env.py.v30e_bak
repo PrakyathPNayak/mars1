@@ -557,7 +557,6 @@ class MiniCheetahEnv(gym.Env):
         self._prev_foot_heights = np.zeros(4, dtype=np.float32)
         self._vx_ema = 0.0  # v23i5: smoothed forward velocity for reward
         self._vy_ema = 0.0
-        self._wz_ema = 0.0  # v31: smoothed yaw rate for anti-oscillation tracking
 
         # CPG phase
         self._cpg_phase = 0.0
@@ -666,7 +665,6 @@ class MiniCheetahEnv(gym.Env):
         self._prev_foot_heights = np.zeros(4, dtype=np.float32)
         self._vx_ema = 0.0
         self._vy_ema = 0.0
-        self._wz_ema = 0.0  # v31
         self._cpg_phase = 0.0
         self._last_mode_change_step = 0
         self._ep_reward_sum = 0.0
@@ -742,7 +740,6 @@ class MiniCheetahEnv(gym.Env):
                     # v30d: Bootstrap yaw angular velocity
                     init_wz = float(rng.uniform(0.1, max(0.15, min(wz_cmd_abs, 0.5)))) * np.sign(self.command[2])
                     self.data.qvel[5] = init_wz  # qvel[3:6] = angular velocity
-                    self._wz_ema = init_wz * 0.5  # v31: bootstrap wz EMA too
 
         return self._get_obs(), {}
 
@@ -905,7 +902,7 @@ class MiniCheetahEnv(gym.Env):
         if vx_cmd < 0.05:
             return ref  # all zeros — policy discovers lateral gait from scratch
         vx_scale = min(1.0, vx_cmd / 0.5)
-        speed_scale = 0.32 * vx_scale  # v31: reduced from 0.45 (user: -20-30% walk speed)
+        speed_scale = 0.45 * vx_scale
 
         t = self.step_count * self.dt
         freq = 3.0   # Hz
@@ -1224,7 +1221,6 @@ class MiniCheetahEnv(gym.Env):
         _EMA_ALPHA = 0.1  # v23i7b: ~10-step window (faster response, still filters CPG cycle)
         self._vx_ema = (1 - _EMA_ALPHA) * self._vx_ema + _EMA_ALPHA * float(base_linvel[0])
         self._vy_ema = (1 - _EMA_ALPHA) * self._vy_ema + _EMA_ALPHA * float(base_linvel[1])
-        self._wz_ema = (1 - _EMA_ALPHA) * self._wz_ema + _EMA_ALPHA * float(base_angvel[2])  # v31
         r_fwd_vel = 0.0
         if mode in ("walk", "run"):
             if abs(vx_cmd) > 0.05:
@@ -1380,22 +1376,14 @@ class MiniCheetahEnv(gym.Env):
             vy = float(base_linvel[1])
             wz = float(base_angvel[2])
             vx_ema = self._vx_ema
-            vy_ema_val = self._vy_ema   # v31: EMA for anti-oscillation
-            wz_ema_val = self._wz_ema   # v31
 
             # Velocity tracking (exp kernel, legged_gym style)
-            # v31: Use EMA for vy/wz tracking — prevents oscillation exploitation.
-            # Instantaneous vy/wz reward let policy oscillate for brief spikes.
-            # EMA forces SUSTAINED motion to earn reward.
-            sigma_vy_track = max(LATERAL_SIGMA, abs(vy_cmd) * 0.15)  # v31: tighter (was 0.3)
-            sigma_wz_track = max(HEADING_SIGMA, abs(wz_cmd) * 0.15)  # v31: tighter (was 0.3)
+            # v29: Use adaptive sigma for vy/wz — wider for large commands to help learning
+            sigma_vy_track = max(LATERAL_SIGMA, abs(vy_cmd) * 0.3)
+            sigma_wz_track = max(HEADING_SIGMA, abs(wz_cmd) * 0.3)
             r_vx_track = math.exp(-(vx - vx_cmd)**2 / TRACKING_SIGMA)
-            r_vy_track = math.exp(-(vy_ema_val - vy_cmd)**2 / sigma_vy_track)  # v31: EMA
-            r_wz_track = math.exp(-(wz_ema_val - wz_cmd)**2 / sigma_wz_track)  # v31: EMA
-
-            # v31: Oscillation penalty — penalize high-frequency vy/wz variance
-            r_osc_vy = (vy - vy_ema_val)**2
-            r_osc_wz = (wz - wz_ema_val)**2
+            r_vy_track = math.exp(-(vy - vy_cmd)**2 / sigma_vy_track)
+            r_wz_track = math.exp(-(wz - wz_cmd)**2 / sigma_wz_track)
 
             # Gate: only reward tracking for commanded directions
             r_vx_track *= vx_cmd_scale
@@ -1422,7 +1410,6 @@ class MiniCheetahEnv(gym.Env):
 
             if mode == "run":
                 # v29: Run reward — added r_vy_lin for lateral gradient.
-                # v31: added oscillation penalty
                 total = (
                     3.0 * r_vx_track         # exp tracking — primary
                     + 1.5 * r_vx_lin         # monotonic speed bonus
@@ -1434,8 +1421,6 @@ class MiniCheetahEnv(gym.Env):
                     - 0.05 * r_ang_vel_xy    # minimal wobble penalty
                     - 0.05 * r_lin_vel_z     # minimal bounce penalty
                     - 0.01 * r_smooth        # action smoothness
-                    - 1.0 * r_osc_vy         # v31: penalize lateral oscillation
-                    - 1.0 * r_osc_wz         # v31: penalize yaw oscillation
                 )
                 scaled_components = {
                     "r_vx_track": 3.0 * r_vx_track,
@@ -1448,40 +1433,36 @@ class MiniCheetahEnv(gym.Env):
                     "r_ang_vel_xy": -0.05 * r_ang_vel_xy,
                     "r_lin_vel_z": -0.05 * r_lin_vel_z,
                     "r_smooth": -0.01 * r_smooth,
-                    "r_osc_vy": -1.0 * r_osc_vy,
-                    "r_osc_wz": -1.0 * r_osc_wz,
                     "r_vx_ema": vx_ema,
                     "r_total": total,
                 }
             else:
-                # v31: Walk reward — EMA tracking + oscillation penalty
+                # v29: Walk reward — full 3-DOF tracking (vx, vy, wz).
+                # v28 only tracked vx → lateral/yaw commands ignored → robot always goes forward.
+                # Now includes vy_track + wz_track like run mode, with walk-appropriate weights.
                 walk_sigma = 0.10
                 r_vx_track_walk = math.exp(-(vx - vx_cmd)**2 / walk_sigma)
-                r_vx_track_walk *= vx_cmd_scale
+                r_vx_track_walk *= vx_cmd_scale  # gate: no free reward when vx not commanded
 
                 total = (
                     5.0 * r_vx_track_walk    # forward tracking (tight sigma)
                     + 2.0 * r_vx_lin         # monotonic forward gradient
-                    + 3.0 * r_vy_track       # v31: now uses EMA (anti-oscillation)
-                    + 2.0 * r_vy_lin         # v31: boosted monotonic lateral gradient (was 1.5)
-                    + 2.0 * r_wz_track       # v31: now uses EMA (anti-oscillation)
+                    + 3.0 * r_vy_track       # v30: lateral tracking (was 1.5)
+                    + 1.5 * r_vy_lin         # v30: monotonic lateral gradient (was 1.0)
+                    + 2.0 * r_wz_track       # v30: yaw rate tracking (was 1.0)
                     + 0.5 * r_gait           # gait quality
                     - 0.1 * r_orientation    # prevent flipping only
                     - 0.02 * r_smooth        # action smoothness
-                    - 2.0 * r_osc_vy         # v31: penalize lateral oscillation
-                    - 2.0 * r_osc_wz         # v31: penalize yaw oscillation
                 )
                 scaled_components = {
                     "r_vx_track": 5.0 * r_vx_track_walk,
                     "r_vx_lin": 2.0 * r_vx_lin,
                     "r_vy_track": 3.0 * r_vy_track,
-                    "r_vy_lin": 2.0 * r_vy_lin,
+                    "r_vy_lin": 1.5 * r_vy_lin,
                     "r_wz_track": 2.0 * r_wz_track,
                     "r_gait": 0.5 * r_gait,
                     "r_orientation": -0.1 * r_orientation,
                     "r_smooth": -0.02 * r_smooth,
-                    "r_osc_vy": -2.0 * r_osc_vy,
-                    "r_osc_wz": -2.0 * r_osc_wz,
                     "r_vx_ema": vx_ema,
                     "r_total": total,
                 }
@@ -1717,8 +1698,8 @@ class MiniCheetahEnv(gym.Env):
                 vx = float(rng.uniform(0.0, 1.20))
                 vy = float(rng.uniform(-0.4, 0.4))
                 wz = float(rng.uniform(-0.6, 0.6))
-            # v31: full height range for crouched walking training
-            height = float(rng.uniform(HEIGHT_MIN, HEIGHT_MAX))
+            # Random height during walking (tests crouched walking)
+            height = float(rng.uniform(HEIGHT_MIN + 0.05, HEIGHT_MAX))
             self._start_height_ramp(height)
         elif mode == "run":
             vx = float(rng.uniform(0.5, 4.0))  # v28: full speed range (real Go1 ≈ 3.7 m/s)
@@ -1746,7 +1727,7 @@ class MiniCheetahEnv(gym.Env):
         self.command = np.array([vx, vy, wz], dtype=np.float32)
         # v29: Handle crouch as walk/stand at low height
         if mode == "crouch":
-            crouch_height = HEIGHT_MIN  # v31: almost ground level (0.10m, was 0.18m)
+            crouch_height = HEIGHT_MIN + 0.08  # ~0.18m deep crouch
             has_motion = abs(vx) > 0.05 or abs(vy) > 0.05 or abs(wz) > 0.05
             new_mode = "walk" if has_motion else "stand"
             height = crouch_height
