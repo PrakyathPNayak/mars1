@@ -1542,6 +1542,17 @@ class MiniCheetahEnv(gym.Env):
             else:
                 r_vy_lin = 0.0
 
+            # v31s: Yaw linear bonus (monotonic gradient for wz commands)
+            # Without this, yaw has no gradient from zero → target.
+            # Gaussian tracking (r_wz_track) is near-zero at wz=0 for large wz_cmd.
+            wz_ema_for_lin = self._wz_ema
+            if wz_cmd > 0.05:
+                r_wz_lin = max(0.0, min(wz_ema_for_lin, wz_cmd)) / max(wz_cmd, 0.1)
+            elif wz_cmd < -0.05:
+                r_wz_lin = max(0.0, min(-wz_ema_for_lin, -wz_cmd)) / max(-wz_cmd, 0.1)
+            else:
+                r_wz_lin = 0.0
+
             # v31o: Overshoot penalties — use FAST EMA (α=0.3, ~3-step window).
             # History: slow EMA (α=0.1, v31m) → sprint exploit (20-step lag).
             #          Instantaneous (v31n) → model froze (gait-cycle spikes).
@@ -1672,7 +1683,8 @@ class MiniCheetahEnv(gym.Env):
                     + 3.0 * r_vx_lin         # monotonic forward gradient
                     + 3.0 * r_vy_track       # EMA-based lateral tracking
                     + 2.0 * r_vy_lin         # monotonic lateral gradient
-                    + 2.0 * r_wz_track       # EMA-based yaw tracking
+                    + 4.0 * r_wz_track       # v31s: boosted yaw tracking (was 2.0)
+                    + 2.0 * r_wz_lin         # v31s: monotonic yaw gradient (new)
                     + 2.0 * r_height_walk    # height tracking (crouch)
                     + 0.5 * r_gait           # gait quality
                     - 0.1 * r_orientation    # prevent flipping only
@@ -1682,14 +1694,15 @@ class MiniCheetahEnv(gym.Env):
                     - 1.0 * r_vx_unwanted    # gentle: penalize fwd when not commanded
                     - 0.5 * r_vy_unwanted    # gentle: penalize lateral drift
                     - 1.0 * r_wz_unwanted    # gentle: penalize yaw drift
-                    - 4.0 * r_effort         # penalize inaction (offsets reference free lunch)
+                    - 2.5 * r_effort         # penalize inaction (offsets reference free lunch)
                 )
                 scaled_components = {
                     "r_vx_track": 8.0 * r_vx_track_walk,
                     "r_vx_lin": 3.0 * r_vx_lin,
                     "r_vy_track": 3.0 * r_vy_track,
                     "r_vy_lin": 2.0 * r_vy_lin,
-                    "r_wz_track": 2.0 * r_wz_track,
+                    "r_wz_track": 4.0 * r_wz_track,
+                    "r_wz_lin": 2.0 * r_wz_lin,
                     "r_height_walk": 2.0 * r_height_walk,
                     "r_gait": 0.5 * r_gait,
                     "r_orientation": -0.1 * r_orientation,
@@ -1699,7 +1712,7 @@ class MiniCheetahEnv(gym.Env):
                     "r_vx_unwanted": -1.0 * r_vx_unwanted,
                     "r_vy_unwanted": -0.5 * r_vy_unwanted,
                     "r_wz_unwanted": -1.0 * r_wz_unwanted,
-                    "r_effort": -4.0 * r_effort,
+                    "r_effort": -2.5 * r_effort,
                     "r_vx_ema": vx_ema,
                     "r_total": total,
                 }
