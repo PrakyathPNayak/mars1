@@ -949,15 +949,13 @@ class MiniCheetahEnv(gym.Env):
         if cmd_mag < 0.05:
             return ref  # truly standing still
 
-        # v31q: Walk reference provides TIMING cue only — NO amplitude.
-        # v31p base_amp=0.32 → zero-action vx=0.55 m/s → 100% free lunch!
-        # Even base_amp=0.15 → zero-action vx=0.55 (MuJoCo physics too efficient).
-        # Solution: walk base_amp=0.0. Policy learns gait from scratch.
-        # Phase observation still provides timing cues. Like legged_gym.
-        # Run keeps 0.45 (high-speed gait needs reference bootstrapping).
+        # v31q: Walk reference — moderate bootstrapping + action effort penalty.
+        # base_amp=0.32 → vx=0.55 (97% free lunch), 0.0 → policy can't discover gait.
+        # base_amp=0.10 + effort penalty: reference provides stepping motion,
+        # penalty makes zero-action unprofitable. Policy must ACTIVELY walk.
         is_run = self.command_mode == "run"
         vx_norm = 2.0 if is_run else 0.5
-        base_amp = 0.45 if is_run else 0.0
+        base_amp = 0.45 if is_run else 0.10
         vx_scale = min(1.0, abs(vx_cmd) / vx_norm)
         has_lat_yaw = abs(vy_cmd) > 0.05 or abs(wz_cmd) > 0.05
         speed_scale = base_amp * vx_scale
@@ -1651,8 +1649,15 @@ class MiniCheetahEnv(gym.Env):
 
                 # v31q: Simplified walk reward — fixes "penalty trap" from v31p.
                 # Previous: 15 terms, heavy penalties → sprint then freeze.
-                # Now: tracking dominant + moderate overshoot + gentle drift.
-                # Reference amplitude reduced 0.32→0.15 to eliminate free-lunch.
+                # Now: tracking dominant + moderate overshoot + effort penalty.
+                # Reference base_amp=0.10 for exploration bootstrapping.
+                # Effort penalty offsets free lunch from reference at zero action.
+                # At zero action: effort_penalty ≈ -4.0, tracking ≈ +3.5 → net ≈ -0.5
+                # At active walk: effort_penalty ≈ 0.0, tracking ≈ 8.0 → net ≈ 13.0
+                action_norm_sq = float(np.sum(action**2))
+                cmd_mag = abs(vx_cmd) + abs(vy_cmd) + abs(wz_cmd)
+                # Only penalize inaction when velocity is commanded (not crouch)
+                r_effort = math.exp(-action_norm_sq / 0.5) if cmd_mag > 0.05 else 0.0
                 total = (
                     8.0 * r_vx_track_walk    # dominant: Gaussian peak at target speed
                     + 3.0 * r_vx_lin         # monotonic forward gradient
@@ -1668,6 +1673,7 @@ class MiniCheetahEnv(gym.Env):
                     - 1.0 * r_vx_unwanted    # gentle: penalize fwd when not commanded
                     - 0.5 * r_vy_unwanted    # gentle: penalize lateral drift
                     - 1.0 * r_wz_unwanted    # gentle: penalize yaw drift
+                    - 4.0 * r_effort         # penalize inaction (offsets reference free lunch)
                 )
                 scaled_components = {
                     "r_vx_track": 8.0 * r_vx_track_walk,
@@ -1684,6 +1690,7 @@ class MiniCheetahEnv(gym.Env):
                     "r_vx_unwanted": -1.0 * r_vx_unwanted,
                     "r_vy_unwanted": -0.5 * r_vy_unwanted,
                     "r_wz_unwanted": -1.0 * r_wz_unwanted,
+                    "r_effort": -4.0 * r_effort,
                     "r_vx_ema": vx_ema,
                     "r_total": total,
                 }
