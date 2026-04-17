@@ -889,44 +889,68 @@ class MiniCheetahEnv(gym.Env):
         return cpg      # v23i9: all zeros — no CPG offsets, only phase for obs
 
     def _compute_walk_reference_action(self) -> np.ndarray:
-        """v30: Command-scaled reference trajectory.
+        """v31b: Full 3-DOF reference trajectory — forward + lateral + yaw.
 
-        Reference amplitude scales with |vx_cmd| so lateral/yaw-only
-        commands don't get forward bias (~0.39 m/s in v28/v29).
-        Floor of 0.10 keeps minimal gait timing for pure lateral motion.
-        Tight tracking sigma (0.10) prevents free-lunch even with scaling.
+        Empirically verified mechanisms:
+        - Lateral: Synchronized abduction oscillation sin(phase) creates lateral GRF.
+          Sign: NEGATIVE amp * sin(p) → positive vy. Tested: amp=0.2 → vy=+0.253.
+        - Yaw: Differential stride between left/right legs.
+          Sign: RIGHT-bigger stride → positive wz. Tested: diff=0.3 → wz=+0.48.
+        - Forward: hip/knee sinusoidal oscillation (unchanged from v30).
         """
         ref = np.zeros(NUM_JOINTS, dtype=np.float32)
         if self.command_mode not in ("walk", "run"):
             return ref
 
-        # v30d: Zero reference for pure lateral/yaw — no forward bias
-        vx_cmd = abs(float(self.command[0]))
-        if vx_cmd < 0.05:
-            return ref  # all zeros — policy discovers lateral gait from scratch
-        vx_scale = min(1.0, vx_cmd / 0.5)
-        speed_scale = 0.32 * vx_scale  # v31: reduced from 0.45 (user: -20-30% walk speed)
+        vx_cmd = float(self.command[0])
+        vy_cmd = float(self.command[1])
+        wz_cmd = float(self.command[2])
+
+        # Any motion command needs a gait pattern for stepping
+        cmd_mag = abs(vx_cmd) + abs(vy_cmd) + abs(wz_cmd)
+        if cmd_mag < 0.05:
+            return ref  # truly standing still
+
+        # Gait amplitude: scales with |vx|, boosted minimum when lateral/yaw commanded
+        vx_scale = min(1.0, abs(vx_cmd) / 0.5)
+        has_lat_yaw = abs(vy_cmd) > 0.05 or abs(wz_cmd) > 0.05
+        speed_scale = 0.32 * vx_scale
 
         t = self.step_count * self.dt
         freq = 3.0   # Hz
         phase = 2.0 * math.pi * freq * t
-        amp_hip = 0.30 * speed_scale
-        amp_knee = 0.40 * speed_scale
+        # v31b: Ensure legs lift enough for lateral/yaw stepping
+        # Action test showed amp_hip≈0.2 needed for lateral. Reference needs ≥0.15.
+        lat_boost = 0.15 if has_lat_yaw else 0.0
+        amp_hip = max(lat_boost, 0.30 * speed_scale)
+        amp_knee = max(lat_boost * 1.33, 0.40 * speed_scale)
         knee_lead = math.pi / 3.0
-        amp_abd = 0.03
         rear_scale = 1.3
 
-        for hip_i, knee_i, abd_i, is_diag1, is_rear in [
-            (1, 2, 0, True, False),    # FR
-            (4, 5, 3, False, False),   # FL
-            (7, 8, 6, False, True),    # RR
-            (10, 11, 9, True, True),   # RL
+        # v31b: Lateral via synchronized abduction oscillation
+        # Negative amplitude creates positive vy (empirically verified)
+        abd_lat_amp = -vy_cmd * 0.40
+
+        # v31b: Yaw via differential stride
+        # Right-bigger creates positive wz (empirically verified)
+        # v31b: gain 0.40 (was 0.25) — need stronger diff to overcome asymmetries
+        yaw_diff = min(0.5, max(-0.5, wz_cmd * 0.40))
+
+        for hip_i, knee_i, abd_i, is_diag1, is_rear, is_left in [
+            (1, 2, 0, True, False, False),    # FR (right)
+            (4, 5, 3, False, False, True),     # FL (left)
+            (7, 8, 6, False, True, False),     # RR (right)
+            (10, 11, 9, True, True, True),     # RL (left)
         ]:
             p = phase if is_diag1 else phase + math.pi
             s = rear_scale if is_rear else 1.0
-            ref[hip_i]  = amp_hip * s * math.sin(p)
-            ref[knee_i] = amp_knee * s * math.sin(p + knee_lead)
-            ref[abd_i]  = amp_abd * math.cos(p)
+
+            # Yaw: right legs bigger for +wz
+            side = (1.0 - yaw_diff) if is_left else (1.0 + yaw_diff)
+
+            ref[hip_i]  = amp_hip * s * math.sin(p) * side
+            ref[knee_i] = amp_knee * s * math.sin(p + knee_lead) * max(0.3, abs(side))
+            ref[abd_i]  = 0.03 * math.cos(p) + abd_lat_amp * math.sin(p)
         return ref
 
     def _compute_balance_corrections(self) -> np.ndarray:
@@ -935,14 +959,16 @@ class MiniCheetahEnv(gym.Env):
         The asymmetric trot (rear_scale=1.3) creates net rightward yaw torque
         (+41° over 500 steps). Instead of dynamic feedback (which disrupts
         the gait), use a small static differential hip bias to trim the yaw.
+        v31b: Fade trim out when yaw is commanded so trim doesn't fight reference.
         """
         corr = np.zeros(NUM_JOINTS, dtype=np.float32)
         if self.command_mode not in ("walk", "run"):
             return corr
 
-        # Static yaw trim: right hips slightly forward, left slightly back
-        # This creates a left-turn tendency to offset the natural right drift
-        yaw_trim = 0.04  # tuning parameter — adjust based on drift rate
+        # v31b: Fade yaw trim when wz commanded — prevents fighting with yaw reference
+        wz_cmd = float(self.command[2])
+        trim_fade = max(0.0, 1.0 - abs(wz_cmd) / 0.3)
+        yaw_trim = 0.04 * trim_fade
         corr[1]  += yaw_trim   # FR hip: forward
         corr[7]  += yaw_trim   # RR hip: forward
         corr[4]  -= yaw_trim   # FL hip: back
@@ -1397,10 +1423,16 @@ class MiniCheetahEnv(gym.Env):
             r_osc_vy = (vy - vy_ema_val)**2
             r_osc_wz = (wz - wz_ema_val)**2
 
-            # Gate: only reward tracking for commanded directions
+            # v31b: Gate tracking for commanded DOFs + penalty for unwanted motion
             r_vx_track *= vx_cmd_scale
             r_vy_track *= vy_cmd_scale
             r_wz_track *= wz_cmd_scale
+
+            # v31b: Penalize unwanted velocity on non-commanded DOFs
+            # Fixes forward bias from reference during pure lateral/yaw
+            r_vx_unwanted = vx_ema**2 if abs(vx_cmd) < 0.05 else 0.0
+            r_vy_unwanted = vy_ema_val**2 if abs(vy_cmd) < 0.05 else 0.0
+            r_wz_unwanted = wz_ema_val**2 if abs(wz_cmd) < 0.05 else 0.0
 
             # Linear velocity bonus (provides monotonic gradient from standing)
             # Capped at command speed — no reward for overshooting
@@ -1436,6 +1468,9 @@ class MiniCheetahEnv(gym.Env):
                     - 0.01 * r_smooth        # action smoothness
                     - 1.0 * r_osc_vy         # v31: penalize lateral oscillation
                     - 1.0 * r_osc_wz         # v31: penalize yaw oscillation
+                    - 3.0 * r_vx_unwanted    # v31b: penalize forward bias
+                    - 2.0 * r_vy_unwanted    # v31b: penalize lateral drift
+                    - 1.0 * r_wz_unwanted    # v31b: penalize yaw drift
                 )
                 scaled_components = {
                     "r_vx_track": 3.0 * r_vx_track,
@@ -1450,14 +1485,17 @@ class MiniCheetahEnv(gym.Env):
                     "r_smooth": -0.01 * r_smooth,
                     "r_osc_vy": -1.0 * r_osc_vy,
                     "r_osc_wz": -1.0 * r_osc_wz,
+                    "r_vx_unwanted": -3.0 * r_vx_unwanted,
+                    "r_vy_unwanted": -2.0 * r_vy_unwanted,
+                    "r_wz_unwanted": -1.0 * r_wz_unwanted,
                     "r_vx_ema": vx_ema,
                     "r_total": total,
                 }
             else:
-                # v31: Walk reward — EMA tracking + oscillation penalty
+                # v31b: Walk reward — gated tracking + unwanted velocity penalty + EMA
                 walk_sigma = 0.10
                 r_vx_track_walk = math.exp(-(vx - vx_cmd)**2 / walk_sigma)
-                r_vx_track_walk *= vx_cmd_scale
+                r_vx_track_walk *= vx_cmd_scale  # gate for commanded DOF
 
                 total = (
                     5.0 * r_vx_track_walk    # forward tracking (tight sigma)
@@ -1470,6 +1508,9 @@ class MiniCheetahEnv(gym.Env):
                     - 0.02 * r_smooth        # action smoothness
                     - 2.0 * r_osc_vy         # v31: penalize lateral oscillation
                     - 2.0 * r_osc_wz         # v31: penalize yaw oscillation
+                    - 5.0 * r_vx_unwanted    # v31b: penalize forward bias
+                    - 3.0 * r_vy_unwanted    # v31b: penalize lateral drift
+                    - 2.0 * r_wz_unwanted    # v31b: penalize yaw drift
                 )
                 scaled_components = {
                     "r_vx_track": 5.0 * r_vx_track_walk,
@@ -1482,6 +1523,9 @@ class MiniCheetahEnv(gym.Env):
                     "r_smooth": -0.02 * r_smooth,
                     "r_osc_vy": -2.0 * r_osc_vy,
                     "r_osc_wz": -2.0 * r_osc_wz,
+                    "r_vx_unwanted": -5.0 * r_vx_unwanted,
+                    "r_vy_unwanted": -3.0 * r_vy_unwanted,
+                    "r_wz_unwanted": -2.0 * r_wz_unwanted,
                     "r_vx_ema": vx_ema,
                     "r_total": total,
                 }
