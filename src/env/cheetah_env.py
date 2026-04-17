@@ -956,7 +956,7 @@ class MiniCheetahEnv(gym.Env):
         # v31b: Yaw via differential stride
         # Right-bigger creates positive wz (empirically verified)
         # v31e: Asymmetric gain — negative wz needs more diff to overcome rear_scale bias
-        yaw_gain = 0.40 if wz_cmd >= 0 else 0.55
+        yaw_gain = 0.50  # v31j: symmetric (was 0.40/0.55 — left turns weaker than right)
         yaw_diff = min(0.5, max(-0.5, wz_cmd * yaw_gain))
 
         # v31h: Forward command bias — breaks reference symmetry for directional locomotion.
