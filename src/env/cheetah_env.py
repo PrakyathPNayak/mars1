@@ -1607,7 +1607,7 @@ class MiniCheetahEnv(gym.Env):
                 # v31l: Restored r_vx_lin (removing it made walk_fwd learn nothing — r/step=-4.61).
                 # Sprint exploit fixed by strong overshoot penalty -5.0 instead.
                 total = (
-                    5.0 * r_vx_track_walk    # v31m: EMA-based tracking (was instantaneous)
+                    8.0 * r_vx_track_walk    # v31m2: boosted 5→8 (walk_fwd r/step=0.89 vs stand=7.31)
                     + 2.0 * r_vx_lin         # monotonic forward gradient
                     + 3.0 * r_vy_track       # EMA-based (anti-oscillation)
                     + 2.0 * r_vy_lin         # monotonic lateral gradient
@@ -1626,7 +1626,7 @@ class MiniCheetahEnv(gym.Env):
                     - 2.0 * r_vy_var         # v31m: lateral smoothness
                 )
                 scaled_components = {
-                    "r_vx_track": 5.0 * r_vx_track_walk,
+                    "r_vx_track": 8.0 * r_vx_track_walk,
                     "r_vx_lin": 2.0 * r_vx_lin,
                     "r_vy_track": 3.0 * r_vy_track,
                     "r_vy_lin": 2.0 * r_vy_lin,
