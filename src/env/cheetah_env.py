@@ -959,6 +959,12 @@ class MiniCheetahEnv(gym.Env):
         yaw_gain = 0.40 if wz_cmd >= 0 else 0.55
         yaw_diff = min(0.5, max(-0.5, wz_cmd * yaw_gain))
 
+        # v31h: Forward command bias — breaks reference symmetry for directional locomotion.
+        # Without this, reference is symmetric and policy must learn to bias the gait,
+        # which is fragile and regresses during multi-task training (walk_fwd dies at 1.5M+).
+        # Hip offset creates physical forward lean → ground reaction force → forward motion.
+        hip_fwd_bias = vx_cmd * 0.15
+
         for hip_i, knee_i, abd_i, is_diag1, is_rear, is_left in [
             (1, 2, 0, True, False, False),    # FR (right)
             (4, 5, 3, False, False, True),     # FL (left)
@@ -971,7 +977,7 @@ class MiniCheetahEnv(gym.Env):
             # Yaw: right legs bigger for +wz
             side = (1.0 - yaw_diff) if is_left else (1.0 + yaw_diff)
 
-            ref[hip_i]  = amp_hip * s * math.sin(p) * side * fwd_sign
+            ref[hip_i]  = amp_hip * s * math.sin(p) * side * fwd_sign + hip_fwd_bias
             ref[knee_i] = amp_knee * s * math.sin(p + knee_lead) * max(0.3, abs(side))
             ref[abd_i]  = 0.03 * math.cos(p) + abd_lat_amp * math.sin(p)
 
