@@ -187,7 +187,7 @@ REWARD_SCALES = {
 MODE_REWARD_MULTIPLIERS = {
     "stand": {
         "r_vel_x": 0.0, "r_vel_y": 0.0, "r_yaw": 0.0, "r_gait": 0.0,
-        "r_posture": 1.5, "r_body_height": 3.0, "r_stillness": 1.0,
+        "r_posture": 1.5, "r_body_height": 1.0, "r_stillness": 1.0,
         "r_motion_penalty": 1.0, "r_vel_track_penalty": 0.0,
         "r_fwd_vel": 0.0, "r_jump_phase": 0.0,
         "r_alive": 0.0,
@@ -1498,16 +1498,15 @@ class MiniCheetahEnv(gym.Env):
                 r_vy_lin = 0.0
 
             # v31j: Overshoot penalties — penalize going faster than commanded.
-            # v31k: Added 20% dead zone. Without it, EMA noise at correct speed
-            # triggered penalties, teaching model "safer to not move at all."
-            # walk_fwd went from vx=1.35 (v31i) to vx=0.08 (v31j 1200K) — DEAD.
-            _OVERSHOOT_DEADZONE = 1.20  # only penalize when >120% of commanded
+            # Without this, r_vx_lin gives flat +2.0 even at vx=1.6 for cmd=0.5,
+            # and tracking exp() has zero gradient far from target.
+            # Robot learned to sprint at 1.6+ and crash instead of walking at 0.5.
             if abs(vx_cmd) > 0.05:
-                r_vx_overshoot = max(0.0, abs(vx_ema) - _OVERSHOOT_DEADZONE * abs(vx_cmd))
+                r_vx_overshoot = max(0.0, abs(vx_ema) - abs(vx_cmd))
             else:
                 r_vx_overshoot = 0.0
             if abs(vy_cmd) > 0.05:
-                r_vy_overshoot = max(0.0, abs(vy_ema) - _OVERSHOOT_DEADZONE * abs(vy_cmd))
+                r_vy_overshoot = max(0.0, abs(vy_ema) - abs(vy_cmd))
             else:
                 r_vy_overshoot = 0.0
 
@@ -1602,8 +1601,8 @@ class MiniCheetahEnv(gym.Env):
                     - 2.5 * r_vy_unwanted    # v31f: LINEAR anti-lateral-drift
                     - 4.0 * r_wz_unwanted    # v31f: LINEAR anti-spin (v31h: dead zone softens this)
                     - 1.0 * r_heading_drift  # v31h: reduced from -1.5 (was double-punishing with wz_unwanted)
-                    - 2.0 * r_vx_overshoot   # v31k: reduced from -3.0, with 20% dead zone
-                    - 1.5 * r_vy_overshoot   # v31k: reduced from -2.0, with 20% dead zone
+                    - 3.0 * r_vx_overshoot   # v31j: penalize exceeding commanded fwd speed
+                    - 2.0 * r_vy_overshoot   # v31j: penalize exceeding commanded lat speed
                 )
                 scaled_components = {
                     "r_vx_track": 5.0 * r_vx_track_walk,
@@ -1619,8 +1618,8 @@ class MiniCheetahEnv(gym.Env):
                     "r_vy_unwanted": -2.5 * r_vy_unwanted,
                     "r_wz_unwanted": -4.0 * r_wz_unwanted,
                     "r_heading_drift": -1.0 * r_heading_drift,
-                    "r_vx_overshoot": -2.0 * r_vx_overshoot,
-                    "r_vy_overshoot": -1.5 * r_vy_overshoot,
+                    "r_vx_overshoot": -3.0 * r_vx_overshoot,
+                    "r_vy_overshoot": -2.0 * r_vy_overshoot,
                     "r_vx_ema": vx_ema,
                     "r_total": total,
                 }
@@ -1646,13 +1645,6 @@ class MiniCheetahEnv(gym.Env):
                 _speed_gate = min(actual_speed / cmd_speed, 1.0)
             else:
                 _speed_gate = 1.0
-
-            # v31k: Override body_height for stand mode with tight sigma.
-            # Default BODY_HEIGHT_SIGMA=0.10 gives 72% reward at h=0.26 for target 0.08.
-            # Robot has NO incentive to crouch. Tight sigma=0.01 → 3.9% at same offset.
-            if mode == "stand":
-                tight_h = math.exp(-(effective_height - self._effective_target_height)**2 / 0.01)
-                raw_components["r_body_height"] = tight_h
 
             for k, raw_val in raw_components.items():
                 base_scale = REWARD_SCALES.get(k, 0.0)
@@ -1872,8 +1864,7 @@ class MiniCheetahEnv(gym.Env):
             if roll < 0.35:
                 # v31k: Pure forward/backward — increased from 20% to 35%
                 # At 20%, walk_fwd learned by 600K then died by 900K (mode interference).
-                # v31k: Extended backward range from -0.3 to -0.5 (was dead at cmd=-0.5)
-                vx = float(rng.uniform(-0.5, 1.0))
+                vx = float(rng.uniform(-0.3, 1.0))
                 vy = float(rng.uniform(-0.05, 0.05))
                 wz = float(rng.uniform(-0.05, 0.05))
             elif roll < 0.55:
