@@ -179,11 +179,12 @@ def train(args):
 
     # ── Build vectorized environments ────────────────────────────────
     print(f"Creating {args.n_envs} parallel environments...")
-    # Use DummyVecEnv: SubprocVecEnv keeps crashing with ConnectionResetError
-    # after ~200-500K steps due to multiprocessing IPC failures. DummyVecEnv is
-    # slower but 100% reliable. With 8 envs on CPU the FPS hit is acceptable.
-    base_env = DummyVecEnv([make_env(i) for i in range(args.n_envs)])
-    print("  Using DummyVecEnv (stable, no IPC crashes)")
+    try:
+        base_env = SubprocVecEnv([make_env(i) for i in range(args.n_envs)])
+        print("  Using SubprocVecEnv (parallel)")
+    except Exception as e:
+        print(f"  SubprocVecEnv failed ({e}), falling back to DummyVecEnv")
+        base_env = DummyVecEnv([make_env(i) for i in range(args.n_envs)])
     vec_env = VecMonitor(base_env, str(log_dir))
 
     # VecNormalize: v11 — obs normalization moved INTO the env (fixed scales,

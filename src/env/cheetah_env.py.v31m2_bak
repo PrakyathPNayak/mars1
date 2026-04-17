@@ -558,16 +558,6 @@ class MiniCheetahEnv(gym.Env):
         self._vx_ema = 0.0  # v23i5: smoothed forward velocity for reward
         self._vy_ema = 0.0
         self._wz_ema = 0.0  # v31: smoothed yaw rate for anti-oscillation tracking
-        # v31o: Fast EMA (α=0.3) for overshoot detection only.
-        # Slow EMA (α=0.1) lags ~20 steps → sprint exploit.
-        # Instantaneous (v31n) catches every gait-cycle spike → model freezes.
-        # Fast EMA: catches sustained sprints in 2-3 steps, ignores single-step noise.
-        self._vx_ema_fast = 0.0
-        self._vy_ema_fast = 0.0
-
-        # v31m3: Persistent training step counter (survives resets) for curriculum
-        if not hasattr(self, '_training_steps'):
-            self._training_steps = 0
 
         # CPG phase
         self._cpg_phase = 0.0
@@ -677,8 +667,6 @@ class MiniCheetahEnv(gym.Env):
         self._vx_ema = 0.0
         self._vy_ema = 0.0
         self._wz_ema = 0.0  # v31
-        self._vx_ema_fast = 0.0  # v31o
-        self._vy_ema_fast = 0.0  # v31o
         self._cpg_phase = 0.0
         self._last_mode_change_step = 0
         self._ep_reward_sum = 0.0
@@ -734,18 +722,7 @@ class MiniCheetahEnv(gym.Env):
             if self.forced_mode and self.forced_mode in SKILL_MODES:
                 self.command_mode = self.forced_mode
             else:
-                # v31m3: Curriculum learning — walk-heavy early to prevent mode interference.
-                # walk_fwd gets ~5.7% of samples with default weights → undertrained.
-                # At 500K, walk_fwd starts learning. By 1M, other modes displace it.
-                # Fix: front-load walk training so it converges before displacement.
-                # Per-env steps: 8 envs → 62.5K env steps per 500K total steps.
-                _es = self._training_steps
-                if _es < 62_500:      # ~0-500K total: walk-heavy
-                    mode_weights = [0.08, 0.55, 0.17, 0.20]
-                elif _es < 187_500:   # ~500K-1.5M total: transition
-                    mode_weights = [0.12, 0.45, 0.20, 0.23]
-                else:                 # ~1.5M+ total: default balanced
-                    mode_weights = [0.15, 0.35, 0.25, 0.25]
+                mode_weights = [0.15, 0.35, 0.25, 0.25]  # stand, walk, run, jump (v24: balanced, walk-heavy)
                 self.command_mode = str(rng.choice(SKILL_MODES, p=mode_weights))
             self._randomize_command_for_mode(rng)
             self.target_height = self._effective_target_height
@@ -761,13 +738,11 @@ class MiniCheetahEnv(gym.Env):
                     init_vx = float(rng.uniform(0.3, max(0.35, min(vx_cmd_abs, 1.0))))
                     self.data.qvel[0] = init_vx
                     self._vx_ema = init_vx * 0.5
-                    self._vx_ema_fast = init_vx * 0.5  # v31o
                 if vy_cmd_abs > 0.15:
                     # v30c: Bootstrap lateral velocity so policy experiences lateral motion
                     init_vy = float(rng.uniform(0.1, max(0.15, min(vy_cmd_abs, 0.5)))) * np.sign(self.command[1])
                     self.data.qvel[1] = init_vy
                     self._vy_ema = init_vy * 0.5
-                    self._vy_ema_fast = init_vy * 0.5  # v31o
                 wz_cmd_abs = abs(float(self.command[2]))
                 if wz_cmd_abs > 0.15:
                     # v30d: Bootstrap yaw angular velocity
@@ -831,7 +806,6 @@ class MiniCheetahEnv(gym.Env):
         self.prev_prev_action = self.prev_action.copy()
         self.prev_action = action.copy()
         self.step_count += 1
-        self._training_steps += 1  # v31m3: persistent counter for curriculum
 
         # Mid-episode command re-randomization (velocity/height only, keep mode)
         # v25: random duration [50, 1000] steps instead of fixed 200
@@ -1312,10 +1286,6 @@ class MiniCheetahEnv(gym.Env):
         self._vx_ema = (1 - _EMA_ALPHA) * self._vx_ema + _EMA_ALPHA * float(base_linvel[0])
         self._vy_ema = (1 - _EMA_ALPHA) * self._vy_ema + _EMA_ALPHA * float(base_linvel[1])
         self._wz_ema = (1 - _EMA_ALPHA) * self._wz_ema + _EMA_ALPHA * float(base_angvel[2])  # v31
-        # v31o: Fast EMA for overshoot detection (α=0.3, ~3-step window)
-        _EMA_ALPHA_FAST = 0.3
-        self._vx_ema_fast = (1 - _EMA_ALPHA_FAST) * self._vx_ema_fast + _EMA_ALPHA_FAST * float(base_linvel[0])
-        self._vy_ema_fast = (1 - _EMA_ALPHA_FAST) * self._vy_ema_fast + _EMA_ALPHA_FAST * float(base_linvel[1])
         r_fwd_vel = 0.0
         if mode in ("walk", "run"):
             if abs(vx_cmd) > 0.05:
@@ -1527,20 +1497,17 @@ class MiniCheetahEnv(gym.Env):
             else:
                 r_vy_lin = 0.0
 
-            # v31o: Overshoot penalties — use FAST EMA (α=0.3, ~3-step window).
-            # History: slow EMA (α=0.1, v31m) → sprint exploit (20-step lag).
-            #          Instantaneous (v31n) → model froze (gait-cycle spikes).
-            #          Fast EMA: catches sustained sprints in 2-3 steps, ignores
-            #          single-step gait oscillation. Best of both worlds.
+            # v31j: Overshoot penalties — penalize going faster than commanded.
+            # v31k: Added 20% dead zone. Without it, EMA noise at correct speed
+            # triggered penalties, teaching model "safer to not move at all."
+            # walk_fwd went from vx=1.35 (v31i) to vx=0.08 (v31j 1200K) — DEAD.
             _OVERSHOOT_DEADZONE = 1.20  # only penalize when >120% of commanded
-            vx_fast = self._vx_ema_fast
-            vy_fast = self._vy_ema_fast
             if abs(vx_cmd) > 0.05:
-                r_vx_overshoot = max(0.0, abs(vx_fast) - _OVERSHOOT_DEADZONE * abs(vx_cmd))
+                r_vx_overshoot = max(0.0, abs(vx_ema) - _OVERSHOOT_DEADZONE * abs(vx_cmd))
             else:
                 r_vx_overshoot = 0.0
             if abs(vy_cmd) > 0.05:
-                r_vy_overshoot = max(0.0, abs(vy_fast) - _OVERSHOOT_DEADZONE * abs(vy_cmd))
+                r_vy_overshoot = max(0.0, abs(vy_ema) - _OVERSHOOT_DEADZONE * abs(vy_cmd))
             else:
                 r_vy_overshoot = 0.0
 
@@ -1597,11 +1564,7 @@ class MiniCheetahEnv(gym.Env):
                 # Instantaneous tracking penalizes this → r_vx_track=1.73/5.0 (35% efficient).
                 # EMA smooths oscillation → r_vx_track≈4.71/5.0 (94% efficient).
                 # Consistent with vy/wz tracking which already use EMA (lines 1454-1455).
-                # v31m3: Adaptive sigma — tighter for smaller commands.
-                # At sigma=0.10, walk_back (vx_cmd=-0.3) gets 40.7% free tracking
-                # standing still. Adaptive: sigma = max(0.02, 0.40*vx_cmd²).
-                # vx_cmd=0.5: sigma=0.10 (unchanged). vx_cmd=0.3: sigma=0.036 (8.2% free).
-                walk_sigma = max(0.02, 0.40 * vx_cmd * vx_cmd)
+                walk_sigma = 0.10
                 r_vx_track_walk = math.exp(-(vx_ema - vx_cmd)**2 / walk_sigma)
                 r_vx_track_walk *= vx_cmd_scale  # gate for commanded DOF
 
@@ -1644,7 +1607,7 @@ class MiniCheetahEnv(gym.Env):
                 # v31l: Restored r_vx_lin (removing it made walk_fwd learn nothing — r/step=-4.61).
                 # Sprint exploit fixed by strong overshoot penalty -5.0 instead.
                 total = (
-                    5.0 * r_vx_track_walk    # v31m3: reverted from 8→5 (boost caused sprinting)
+                    8.0 * r_vx_track_walk    # v31m2: boosted 5→8 (walk_fwd r/step=0.89 vs stand=7.31)
                     + 2.0 * r_vx_lin         # monotonic forward gradient
                     + 3.0 * r_vy_track       # EMA-based (anti-oscillation)
                     + 2.0 * r_vy_lin         # monotonic lateral gradient
@@ -1657,13 +1620,13 @@ class MiniCheetahEnv(gym.Env):
                     - 2.5 * r_vy_unwanted    # anti-lateral-drift
                     - 4.0 * r_wz_unwanted    # anti-spin (dead zone softens)
                     - 1.0 * r_heading_drift  # heading correction
-                    - 5.0 * r_vx_overshoot   # sprint exploit prevention
+                    - 8.0 * r_vx_overshoot   # v31m2: scaled proportional to tracking (5→8)
                     - 1.5 * r_vy_overshoot   # lateral overshoot
                     - 3.0 * r_vx_var         # v31m: velocity smoothness (anti-lurch)
                     - 2.0 * r_vy_var         # v31m: lateral smoothness
                 )
                 scaled_components = {
-                    "r_vx_track": 5.0 * r_vx_track_walk,
+                    "r_vx_track": 8.0 * r_vx_track_walk,
                     "r_vx_lin": 2.0 * r_vx_lin,
                     "r_vy_track": 3.0 * r_vy_track,
                     "r_vy_lin": 2.0 * r_vy_lin,
@@ -1676,7 +1639,7 @@ class MiniCheetahEnv(gym.Env):
                     "r_vy_unwanted": -2.5 * r_vy_unwanted,
                     "r_wz_unwanted": -4.0 * r_wz_unwanted,
                     "r_heading_drift": -1.0 * r_heading_drift,
-                    "r_vx_overshoot": -5.0 * r_vx_overshoot,
+                    "r_vx_overshoot": -8.0 * r_vx_overshoot,
                     "r_vy_overshoot": -1.5 * r_vy_overshoot,
                     "r_vx_var": -3.0 * r_vx_var,
                     "r_vy_var": -2.0 * r_vy_var,

@@ -558,12 +558,6 @@ class MiniCheetahEnv(gym.Env):
         self._vx_ema = 0.0  # v23i5: smoothed forward velocity for reward
         self._vy_ema = 0.0
         self._wz_ema = 0.0  # v31: smoothed yaw rate for anti-oscillation tracking
-        # v31o: Fast EMA (α=0.3) for overshoot detection only.
-        # Slow EMA (α=0.1) lags ~20 steps → sprint exploit.
-        # Instantaneous (v31n) catches every gait-cycle spike → model freezes.
-        # Fast EMA: catches sustained sprints in 2-3 steps, ignores single-step noise.
-        self._vx_ema_fast = 0.0
-        self._vy_ema_fast = 0.0
 
         # v31m3: Persistent training step counter (survives resets) for curriculum
         if not hasattr(self, '_training_steps'):
@@ -677,8 +671,6 @@ class MiniCheetahEnv(gym.Env):
         self._vx_ema = 0.0
         self._vy_ema = 0.0
         self._wz_ema = 0.0  # v31
-        self._vx_ema_fast = 0.0  # v31o
-        self._vy_ema_fast = 0.0  # v31o
         self._cpg_phase = 0.0
         self._last_mode_change_step = 0
         self._ep_reward_sum = 0.0
@@ -761,13 +753,11 @@ class MiniCheetahEnv(gym.Env):
                     init_vx = float(rng.uniform(0.3, max(0.35, min(vx_cmd_abs, 1.0))))
                     self.data.qvel[0] = init_vx
                     self._vx_ema = init_vx * 0.5
-                    self._vx_ema_fast = init_vx * 0.5  # v31o
                 if vy_cmd_abs > 0.15:
                     # v30c: Bootstrap lateral velocity so policy experiences lateral motion
                     init_vy = float(rng.uniform(0.1, max(0.15, min(vy_cmd_abs, 0.5)))) * np.sign(self.command[1])
                     self.data.qvel[1] = init_vy
                     self._vy_ema = init_vy * 0.5
-                    self._vy_ema_fast = init_vy * 0.5  # v31o
                 wz_cmd_abs = abs(float(self.command[2]))
                 if wz_cmd_abs > 0.15:
                     # v30d: Bootstrap yaw angular velocity
@@ -1312,10 +1302,6 @@ class MiniCheetahEnv(gym.Env):
         self._vx_ema = (1 - _EMA_ALPHA) * self._vx_ema + _EMA_ALPHA * float(base_linvel[0])
         self._vy_ema = (1 - _EMA_ALPHA) * self._vy_ema + _EMA_ALPHA * float(base_linvel[1])
         self._wz_ema = (1 - _EMA_ALPHA) * self._wz_ema + _EMA_ALPHA * float(base_angvel[2])  # v31
-        # v31o: Fast EMA for overshoot detection (α=0.3, ~3-step window)
-        _EMA_ALPHA_FAST = 0.3
-        self._vx_ema_fast = (1 - _EMA_ALPHA_FAST) * self._vx_ema_fast + _EMA_ALPHA_FAST * float(base_linvel[0])
-        self._vy_ema_fast = (1 - _EMA_ALPHA_FAST) * self._vy_ema_fast + _EMA_ALPHA_FAST * float(base_linvel[1])
         r_fwd_vel = 0.0
         if mode in ("walk", "run"):
             if abs(vx_cmd) > 0.05:
@@ -1527,20 +1513,19 @@ class MiniCheetahEnv(gym.Env):
             else:
                 r_vy_lin = 0.0
 
-            # v31o: Overshoot penalties — use FAST EMA (α=0.3, ~3-step window).
-            # History: slow EMA (α=0.1, v31m) → sprint exploit (20-step lag).
-            #          Instantaneous (v31n) → model froze (gait-cycle spikes).
-            #          Fast EMA: catches sustained sprints in 2-3 steps, ignores
-            #          single-step gait oscillation. Best of both worlds.
+            # v31n: Overshoot penalties — use INSTANTANEOUS velocity (not EMA).
+            # Bug found: EMA lags ~20 steps behind actual velocity. Model exploits
+            # this by sprinting (vx=1.3 for cmd=0.5) while EMA is still near target.
+            # Result: high tracking + zero overshoot for 20 steps = free sprint window.
+            # Fix: instantaneous vx catches sprints IMMEDIATELY. 20% dead zone absorbs
+            # natural gait oscillation (±0.1 at cmd=0.5 → peak 0.6 = dead zone edge).
             _OVERSHOOT_DEADZONE = 1.20  # only penalize when >120% of commanded
-            vx_fast = self._vx_ema_fast
-            vy_fast = self._vy_ema_fast
             if abs(vx_cmd) > 0.05:
-                r_vx_overshoot = max(0.0, abs(vx_fast) - _OVERSHOOT_DEADZONE * abs(vx_cmd))
+                r_vx_overshoot = max(0.0, abs(vx) - _OVERSHOOT_DEADZONE * abs(vx_cmd))
             else:
                 r_vx_overshoot = 0.0
             if abs(vy_cmd) > 0.05:
-                r_vy_overshoot = max(0.0, abs(vy_fast) - _OVERSHOOT_DEADZONE * abs(vy_cmd))
+                r_vy_overshoot = max(0.0, abs(vy) - _OVERSHOOT_DEADZONE * abs(vy_cmd))
             else:
                 r_vy_overshoot = 0.0
 
