@@ -1588,13 +1588,14 @@ class MiniCheetahEnv(gym.Env):
                 # v31f: Add heading_drift to walk reward (was only in stand)
                 # Penalizes |wz - wz_cmd| always — even for small drift
                 # Combined with linear unwanted, prevents yaw instability
-                # v31l: Removed r_vx_lin from walk. It gave flat 2.0 for ANY forward motion,
-                # making sprint-and-crash profitable (r_vx_lin=2.0 offset overshoot penalty).
-                # v31k 900K: policy sprinted at 1.268 m/s (2.5x target 0.5), fell at 262 steps.
-                # Tracking reward (sigma=0.20) provides sufficient gradient: 1.43→5.0 from 0→0.5.
-                # Also increased overshoot penalty -2.0 → -5.0 to strongly punish sprinting.
+                # v31l: Restored r_vx_lin (removing it made walk_fwd learn nothing — r/step=-4.61).
+                # The gradient from r_vx_lin is needed to guide policy from standing to walking.
+                # Sprint exploit fixed by strong overshoot penalty -5.0 instead:
+                # At vx=1.268: lin=2.0, overshoot=-3.84, track=0.26 → net=-1.58 (unprofitable).
+                # At vx=0.5: lin=2.0, overshoot=0, track=5.0 → net=7.0 (clear peak).
                 total = (
                     5.0 * r_vx_track_walk    # forward tracking (v31h: wider sigma=0.20)
+                    + 2.0 * r_vx_lin         # monotonic forward gradient (restored from v31k)
                     + 3.0 * r_vy_track       # EMA-based (anti-oscillation)
                     + 2.0 * r_vy_lin         # monotonic lateral gradient
                     + 2.0 * r_wz_track       # EMA-based (anti-oscillation)
@@ -1611,6 +1612,7 @@ class MiniCheetahEnv(gym.Env):
                 )
                 scaled_components = {
                     "r_vx_track": 5.0 * r_vx_track_walk,
+                    "r_vx_lin": 2.0 * r_vx_lin,
                     "r_vy_track": 3.0 * r_vy_track,
                     "r_vy_lin": 2.0 * r_vy_lin,
                     "r_wz_track": 2.0 * r_wz_track,
