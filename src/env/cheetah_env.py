@@ -2030,7 +2030,12 @@ class MiniCheetahEnv(gym.Env):
                 height = float(rng.uniform(0.15, HEIGHT_MAX))  # normal walking
             self._start_height_ramp(height)
         elif mode == "run":
-            vx = float(rng.uniform(0.5, 2.0))  # v31s2: achievable range (was 4.0, model gives up)
+            # v31s5: biased run speed — 50% at [0.5,1.2] for gradient, 50% at [1.2,2.0] stretch
+            # Model does 60% at 1.0 m/s but 0% at 2.0. More low-speed samples = more learning signal.
+            if rng.random() < 0.5:
+                vx = float(rng.uniform(0.5, 1.2))
+            else:
+                vx = float(rng.uniform(1.2, 2.0))
             vy = float(rng.uniform(-0.5, 0.5))
             wz = float(rng.uniform(-0.5, 0.5))
             # Run height is more restricted (can't run fully crouched)
