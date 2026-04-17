@@ -959,14 +959,11 @@ class MiniCheetahEnv(gym.Env):
         yaw_gain = 0.50  # v31j: symmetric (was 0.40/0.55 — left turns weaker than right)
         yaw_diff = min(0.5, max(-0.5, wz_cmd * yaw_gain))
 
-        # v31h: Forward command bias — breaks reference symmetry for directional locomotion.
-        # Without this, reference is symmetric and policy must learn to bias the gait,
-        # which is fragile and regresses during multi-task training (walk_fwd dies at 1.5M+).
-        # Hip offset creates physical forward lean → ground reaction force → forward motion.
-        # v31j: Mode-dependent gain. Walk=0.10 (was 0.15 — caused 3.1x overshoot at vx_cmd=0.5,
-        # robot sprinted at 1.56 then nose-dived at step 188). Run keeps 0.15 for high speed.
-        fwd_gain = 0.15 if is_run else 0.10
-        hip_fwd_bias = vx_cmd * fwd_gain
+        # v31k: Constant forward command bias at gain=0.15.
+        # v31j showed gain=0.15 + overshoot penalty → walk_fwd=0.474 (95%) at 600K.
+        # gain=0.10 too weak (walk_fwd died). Feedback bias created stable equilibrium at 0.
+        # Solution: keep strong constant bias + overshoot penalty + more forward sampling (35%).
+        hip_fwd_bias = vx_cmd * 0.15
 
         for hip_i, knee_i, abd_i, is_diag1, is_rear, is_left in [
             (1, 2, 0, True, False, False),    # FR (right)
@@ -1862,21 +1859,22 @@ class MiniCheetahEnv(gym.Env):
             self._start_height_ramp(height)
         elif mode == "walk":
             # v31g: Dedicated sampling categories to prevent mode interference.
-            # Pure forward needs ~20% of walk to avoid regression at 2.5M+.
+            # v31k: 35% pure forward (was 20% — walk_fwd regresses past 600K with 20%).
             roll = float(rng.uniform(0, 1))
-            if roll < 0.20:
-                # v31g: Pure forward/backward — no lateral/yaw distraction
+            if roll < 0.35:
+                # v31k: Pure forward/backward — increased from 20% to 35%
+                # At 20%, walk_fwd learned by 600K then died by 900K (mode interference).
                 vx = float(rng.uniform(-0.3, 1.0))
                 vy = float(rng.uniform(-0.05, 0.05))
                 wz = float(rng.uniform(-0.05, 0.05))
-            elif roll < 0.40:
+            elif roll < 0.55:
                 # Lateral-dominant: small forward + large lateral/yaw
                 vx = float(rng.uniform(0.1, 0.3))
                 vy = float(rng.uniform(-0.4, 0.4))
                 wz = float(rng.uniform(-0.6, 0.6))
                 if abs(vy) < 0.15 and abs(wz) < 0.15:
                     vy = float(rng.choice([-0.3, 0.3]))
-            elif roll < 0.55:
+            elif roll < 0.70:
                 # Pure lateral (harder): vx≈0 but vy/wz large
                 vx = float(rng.uniform(-0.05, 0.1))
                 vy = float(rng.uniform(-0.4, 0.4))
