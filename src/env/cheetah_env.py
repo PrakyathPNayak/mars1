@@ -1665,18 +1665,12 @@ class MiniCheetahEnv(gym.Env):
             return True
 
         # v31f: Terminate on excessive heading drift in walk/run when yaw NOT commanded
-        # Prevents episodes from degenerating into circles
-        if self.command_mode in ("walk", "run") and abs(float(self.command[2])) < 0.1:
-            current_yaw = math.atan2(
-                2.0 * (quat[0] * quat[3] + quat[1] * quat[2]),
-                1.0 - 2.0 * (quat[2]**2 + quat[3]**2)
-            )
-            yaw_drift = abs(current_yaw - self._initial_yaw)
-            # Wrap to [-π, π]
-            if yaw_drift > math.pi:
-                yaw_drift = 2.0 * math.pi - yaw_drift
-            if yaw_drift > 1.8:  # v31g: relaxed from 1.2 (~103°) — more learning time
-                return True
+        # v31i: DISABLED for walk/run — termination punishes forward walking exploration.
+        # Robot learns "standing still = survive = more reward" instead of walking.
+        # Reward penalties (wz_unwanted + heading_drift) sufficient to prevent spinning.
+        # Heading termination only kept for stand mode (implicit via mode check below).
+        # if self.command_mode in ("walk", "run") and abs(float(self.command[2])) < 0.1:
+        #     ... (disabled — see v31h analysis showing walk_fwd dies at step 137)
 
         return False
 
