@@ -1588,9 +1588,13 @@ class MiniCheetahEnv(gym.Env):
                 # v31f: Add heading_drift to walk reward (was only in stand)
                 # Penalizes |wz - wz_cmd| always — even for small drift
                 # Combined with linear unwanted, prevents yaw instability
+                # v31l: Removed r_vx_lin from walk. It gave flat 2.0 for ANY forward motion,
+                # making sprint-and-crash profitable (r_vx_lin=2.0 offset overshoot penalty).
+                # v31k 900K: policy sprinted at 1.268 m/s (2.5x target 0.5), fell at 262 steps.
+                # Tracking reward (sigma=0.20) provides sufficient gradient: 1.43→5.0 from 0→0.5.
+                # Also increased overshoot penalty -2.0 → -5.0 to strongly punish sprinting.
                 total = (
                     5.0 * r_vx_track_walk    # forward tracking (v31h: wider sigma=0.20)
-                    + 2.0 * r_vx_lin         # v31h: restored from 1.0 (v31g reduced too much)
                     + 3.0 * r_vy_track       # EMA-based (anti-oscillation)
                     + 2.0 * r_vy_lin         # monotonic lateral gradient
                     + 2.0 * r_wz_track       # EMA-based (anti-oscillation)
@@ -1602,12 +1606,11 @@ class MiniCheetahEnv(gym.Env):
                     - 2.5 * r_vy_unwanted    # v31f: LINEAR anti-lateral-drift
                     - 4.0 * r_wz_unwanted    # v31f: LINEAR anti-spin (v31h: dead zone softens this)
                     - 1.0 * r_heading_drift  # v31h: reduced from -1.5 (was double-punishing with wz_unwanted)
-                    - 2.0 * r_vx_overshoot   # v31k: reduced from -3.0, with 20% dead zone
-                    - 1.5 * r_vy_overshoot   # v31k: reduced from -2.0, with 20% dead zone
+                    - 5.0 * r_vx_overshoot   # v31l: increased from -2.0 (sprint exploit)
+                    - 1.5 * r_vy_overshoot   # lateral overshoot
                 )
                 scaled_components = {
                     "r_vx_track": 5.0 * r_vx_track_walk,
-                    "r_vx_lin": 2.0 * r_vx_lin,
                     "r_vy_track": 3.0 * r_vy_track,
                     "r_vy_lin": 2.0 * r_vy_lin,
                     "r_wz_track": 2.0 * r_wz_track,
@@ -1619,7 +1622,7 @@ class MiniCheetahEnv(gym.Env):
                     "r_vy_unwanted": -2.5 * r_vy_unwanted,
                     "r_wz_unwanted": -4.0 * r_wz_unwanted,
                     "r_heading_drift": -1.0 * r_heading_drift,
-                    "r_vx_overshoot": -2.0 * r_vx_overshoot,
+                    "r_vx_overshoot": -5.0 * r_vx_overshoot,
                     "r_vy_overshoot": -1.5 * r_vy_overshoot,
                     "r_vx_ema": vx_ema,
                     "r_total": total,
