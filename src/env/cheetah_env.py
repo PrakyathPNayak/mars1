@@ -735,6 +735,11 @@ class MiniCheetahEnv(gym.Env):
                     init_vy = float(rng.uniform(0.1, max(0.15, min(vy_cmd_abs, 0.5)))) * np.sign(self.command[1])
                     self.data.qvel[1] = init_vy
                     self._vy_ema = init_vy * 0.5
+                wz_cmd_abs = abs(float(self.command[2]))
+                if wz_cmd_abs > 0.15:
+                    # v30d: Bootstrap yaw angular velocity
+                    init_wz = float(rng.uniform(0.1, max(0.15, min(wz_cmd_abs, 0.5)))) * np.sign(self.command[2])
+                    self.data.qvel[5] = init_wz  # qvel[3:6] = angular velocity
 
         return self._get_obs(), {}
 
@@ -1669,13 +1674,23 @@ class MiniCheetahEnv(gym.Env):
             height = float(rng.uniform(HEIGHT_MIN, HEIGHT_MAX))
             self._start_height_ramp(height)
         elif mode == "walk":
-            # v30c: 30% pure lateral/yaw episodes (vx≈0) to force lateral learning
-            if float(rng.uniform(0, 1)) < 0.30:
-                vx = float(rng.uniform(-0.05, 0.05))  # near-zero forward
+            # v30d: lateral-dominant episodes (small vx so robot is already stepping)
+            # Pure lateral (vx=0) fails — policy can't discover side-stepping from scratch.
+            # But diagonal works (walk_diag: vy=0.233 for cmd 0.3) — use this as bootstrap.
+            roll = float(rng.uniform(0, 1))
+            if roll < 0.25:
+                # Lateral-dominant: small forward + large lateral/yaw
+                vx = float(rng.uniform(0.1, 0.3))  # enough for stepping gait
                 vy = float(rng.uniform(-0.4, 0.4))
                 wz = float(rng.uniform(-0.6, 0.6))
-                # Ensure at least one lateral/yaw DOF is active
-                if abs(vy) < 0.1 and abs(wz) < 0.1:
+                if abs(vy) < 0.15 and abs(wz) < 0.15:
+                    vy = float(rng.choice([-0.3, 0.3]))
+            elif roll < 0.40:
+                # Pure lateral (harder): vx≈0 but vy/wz large
+                vx = float(rng.uniform(-0.05, 0.1))
+                vy = float(rng.uniform(-0.4, 0.4))
+                wz = float(rng.uniform(-0.6, 0.6))
+                if abs(vy) < 0.15 and abs(wz) < 0.15:
                     vy = float(rng.choice([-0.3, 0.3]))
             else:
                 vx = float(rng.uniform(0.0, 1.20))
