@@ -799,7 +799,7 @@ class MiniCheetahEnv(gym.Env):
         if self.command_mode == "walk":
             action_scaled = action * 0.5  # v28: more authority for speed modulation (was 0.3)
         elif self.command_mode == "run":
-            action_scaled = action * 0.8  # v25: run needs more authority (ref=0.7 m/s, cmd up to 4.0)
+            action_scaled = action * 0.5  # v31s2: reduced from 0.8 — model was using authority to fight reference
         else:
             action_scaled = action * 0.5
 
@@ -2016,7 +2016,7 @@ class MiniCheetahEnv(gym.Env):
             height = float(rng.uniform(HEIGHT_MIN, HEIGHT_MAX))
             self._start_height_ramp(height)
         elif mode == "run":
-            vx = float(rng.uniform(0.5, 4.0))  # v28: full speed range (real Go1 ≈ 3.7 m/s)
+            vx = float(rng.uniform(0.5, 2.0))  # v31s2: achievable range (was 4.0, model gives up)
             vy = float(rng.uniform(-0.5, 0.5))
             wz = float(rng.uniform(-0.5, 0.5))
             # Run height is more restricted (can't run fully crouched)
