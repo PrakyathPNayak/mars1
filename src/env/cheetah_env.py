@@ -740,17 +740,16 @@ class MiniCheetahEnv(gym.Env):
             if self.forced_mode and self.forced_mode in SKILL_MODES:
                 self.command_mode = self.forced_mode
             else:
-                # v31m3: Curriculum learning — walk-heavy early to prevent mode interference.
-                # walk_fwd gets ~5.7% of samples with default weights → undertrained.
-                # At 500K, walk_fwd starts learning. By 1M, other modes displace it.
-                # Fix: front-load walk training so it converges before displacement.
-                # Per-env steps: 8 envs → 62.5K env steps per 500K total steps.
+                # v31s3: Extended walk-heavy curriculum. Walk_fwd collapses when
+                # curriculum transitions too early (61%→-35% at 2.4M).
+                # Walk needs ~2M+ of heavy training before other modes can share.
+                # Per-env steps: 8 envs → 125K env steps per 1M total steps.
                 _es = self._training_steps
-                if _es < 62_500:      # ~0-500K total: walk-heavy
+                if _es < 250_000:     # ~0-2M total: walk-heavy
                     mode_weights = [0.08, 0.55, 0.17, 0.20]
-                elif _es < 187_500:   # ~500K-1.5M total: transition
+                elif _es < 500_000:   # ~2M-4M total: transition
                     mode_weights = [0.12, 0.45, 0.20, 0.23]
-                else:                 # ~1.5M+ total: default balanced
+                else:                 # ~4M+ total: default balanced
                     mode_weights = [0.15, 0.35, 0.25, 0.25]
                 self.command_mode = str(rng.choice(SKILL_MODES, p=mode_weights))
             self._randomize_command_for_mode(rng)
