@@ -564,6 +564,7 @@ class MiniCheetahEnv(gym.Env):
         self._vx_ema = 0.0  # v23i5: smoothed forward velocity for reward
         self._vy_ema = 0.0
         self._wz_ema = 0.0  # v31: smoothed yaw rate for anti-oscillation tracking
+        self._wz_ema_slow = 0.0  # v31s4: slow yaw EMA for drift detection (α=0.02)
         # v31o: Fast EMA (α=0.3) for overshoot detection only.
         # Slow EMA (α=0.1) lags ~20 steps → sprint exploit.
         # Instantaneous (v31n) catches every gait-cycle spike → model freezes.
@@ -683,6 +684,7 @@ class MiniCheetahEnv(gym.Env):
         self._vx_ema = 0.0
         self._vy_ema = 0.0
         self._wz_ema = 0.0  # v31
+        self._wz_ema_slow = 0.0  # v31s4
         self._vx_ema_fast = 0.0  # v31o
         self._vy_ema_fast = 0.0  # v31o
         self._cpg_phase = 0.0
@@ -779,6 +781,7 @@ class MiniCheetahEnv(gym.Env):
                     init_wz = float(rng.uniform(0.1, max(0.15, min(wz_cmd_abs, 0.5)))) * np.sign(self.command[2])
                     self.data.qvel[5] = init_wz  # qvel[3:6] = angular velocity
                     self._wz_ema = init_wz * 0.5  # v31: bootstrap wz EMA too
+                    self._wz_ema_slow = init_wz * 0.3  # v31s4: bootstrap slow EMA
 
         return self._get_obs(), {}
 
@@ -1326,6 +1329,8 @@ class MiniCheetahEnv(gym.Env):
         self._vx_ema = (1 - _EMA_ALPHA) * self._vx_ema + _EMA_ALPHA * float(base_linvel[0])
         self._vy_ema = (1 - _EMA_ALPHA) * self._vy_ema + _EMA_ALPHA * float(base_linvel[1])
         self._wz_ema = (1 - _EMA_ALPHA) * self._wz_ema + _EMA_ALPHA * float(base_angvel[2])  # v31
+        _EMA_ALPHA_SLOW = 0.02  # v31s4: ~50-step window for drift detection
+        self._wz_ema_slow = (1 - _EMA_ALPHA_SLOW) * self._wz_ema_slow + _EMA_ALPHA_SLOW * float(base_angvel[2])
         # v31o: Fast EMA for overshoot detection (α=0.3, ~3-step window)
         _EMA_ALPHA_FAST = 0.3
         self._vx_ema_fast = (1 - _EMA_ALPHA_FAST) * self._vx_ema_fast + _EMA_ALPHA_FAST * float(base_linvel[0])
@@ -1514,14 +1519,17 @@ class MiniCheetahEnv(gym.Env):
             # small wz/vy oscillation (~0.1) that must NOT be penalized.
             # Without dead zone: policy learns standing still is safer than walking.
             if mode in ("walk", "run"):
-                wz_deadzone = 0.05  # v31s4: tightened from 0.12 — yaw contamination
+                wz_deadzone = 0.10  # v31s4b: restored (slow EMA handles oscillation)
                 vy_deadzone = 0.04  # v31s4: tightened from 0.06
             else:
                 wz_deadzone = 0.0
                 vy_deadzone = 0.0
             r_vx_unwanted = abs(vx_ema) if abs(vx_cmd) < 0.05 else 0.0
             r_vy_unwanted = max(0.0, abs(vy_ema_val) - vy_deadzone) if abs(vy_cmd) < 0.05 else 0.0
-            r_wz_unwanted = max(0.0, abs(wz_ema_val) - wz_deadzone) if abs(wz_cmd) < 0.05 else 0.0
+            # v31s4b: Use SLOW wz EMA (α=0.02) for unwanted detection
+            # Fast EMA (α=0.1) oscillates with natural gait → penalizes walking
+            # Slow EMA converges to mean yaw → catches sustained turning only
+            r_wz_unwanted = max(0.0, abs(self._wz_ema_slow) - wz_deadzone) if abs(wz_cmd) < 0.05 else 0.0
 
             # Linear velocity bonus (provides monotonic gradient from standing)
             # Capped at command speed — no reward for overshooting
@@ -1708,7 +1716,7 @@ class MiniCheetahEnv(gym.Env):
                     - 1.5 * r_vy_overshoot   # prevent lateral overshoot
                     - 1.0 * r_vx_unwanted    # gentle: penalize fwd when not commanded
                     - 0.5 * r_vy_unwanted    # gentle: penalize lateral drift
-                    - 4.0 * r_wz_unwanted    # v31s4: strong yaw anti-contamination (was 1.0)
+                    - 8.0 * r_wz_unwanted    # v31s4b: strong yaw anti-contamination (slow EMA)
                     - 2.5 * r_effort         # penalize inaction (offsets reference free lunch)
                 )
                 scaled_components = {
@@ -1726,7 +1734,7 @@ class MiniCheetahEnv(gym.Env):
                     "r_vy_overshoot": -1.5 * r_vy_overshoot,
                     "r_vx_unwanted": -1.0 * r_vx_unwanted,
                     "r_vy_unwanted": -0.5 * r_vy_unwanted,
-                    "r_wz_unwanted": -4.0 * r_wz_unwanted,
+                    "r_wz_unwanted": -8.0 * r_wz_unwanted,
                     "r_effort": -2.5 * r_effort,
                     "r_total": total,
                 }
