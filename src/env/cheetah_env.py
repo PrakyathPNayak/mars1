@@ -559,6 +559,10 @@ class MiniCheetahEnv(gym.Env):
         self._vy_ema = 0.0
         self._wz_ema = 0.0  # v31: smoothed yaw rate for anti-oscillation tracking
 
+        # v31m3: Persistent training step counter (survives resets) for curriculum
+        if not hasattr(self, '_training_steps'):
+            self._training_steps = 0
+
         # CPG phase
         self._cpg_phase = 0.0
 
@@ -722,7 +726,18 @@ class MiniCheetahEnv(gym.Env):
             if self.forced_mode and self.forced_mode in SKILL_MODES:
                 self.command_mode = self.forced_mode
             else:
-                mode_weights = [0.15, 0.35, 0.25, 0.25]  # stand, walk, run, jump (v24: balanced, walk-heavy)
+                # v31m3: Curriculum learning — walk-heavy early to prevent mode interference.
+                # walk_fwd gets ~5.7% of samples with default weights → undertrained.
+                # At 500K, walk_fwd starts learning. By 1M, other modes displace it.
+                # Fix: front-load walk training so it converges before displacement.
+                # Per-env steps: 8 envs → 62.5K env steps per 500K total steps.
+                _es = self._training_steps
+                if _es < 62_500:      # ~0-500K total: walk-heavy
+                    mode_weights = [0.08, 0.55, 0.17, 0.20]
+                elif _es < 187_500:   # ~500K-1.5M total: transition
+                    mode_weights = [0.12, 0.45, 0.20, 0.23]
+                else:                 # ~1.5M+ total: default balanced
+                    mode_weights = [0.15, 0.35, 0.25, 0.25]
                 self.command_mode = str(rng.choice(SKILL_MODES, p=mode_weights))
             self._randomize_command_for_mode(rng)
             self.target_height = self._effective_target_height
@@ -806,6 +821,7 @@ class MiniCheetahEnv(gym.Env):
         self.prev_prev_action = self.prev_action.copy()
         self.prev_action = action.copy()
         self.step_count += 1
+        self._training_steps += 1  # v31m3: persistent counter for curriculum
 
         # Mid-episode command re-randomization (velocity/height only, keep mode)
         # v25: random duration [50, 1000] steps instead of fixed 200
@@ -1624,8 +1640,8 @@ class MiniCheetahEnv(gym.Env):
                     - 0.02 * r_smooth        # action smoothness
                     - 3.0 * r_vx_unwanted    # anti-forward-bias
                     - 2.5 * r_vy_unwanted    # anti-lateral-drift
-                    - 2.0 * r_wz_unwanted    # v31m3: reduced 4→2 (was -1.07, biggest walk_fwd drain)
-                    - 0.5 * r_heading_drift  # v31m3: reduced 1→0.5 (match run mode)
+                    - 4.0 * r_wz_unwanted    # anti-spin (dead zone softens)
+                    - 1.0 * r_heading_drift  # heading correction
                     - 5.0 * r_vx_overshoot   # sprint exploit prevention
                     - 1.5 * r_vy_overshoot   # lateral overshoot
                     - 3.0 * r_vx_var         # v31m: velocity smoothness (anti-lurch)
@@ -1643,8 +1659,8 @@ class MiniCheetahEnv(gym.Env):
                     "r_smooth": -0.02 * r_smooth,
                     "r_vx_unwanted": -3.0 * r_vx_unwanted,
                     "r_vy_unwanted": -2.5 * r_vy_unwanted,
-                    "r_wz_unwanted": -2.0 * r_wz_unwanted,
-                    "r_heading_drift": -0.5 * r_heading_drift,
+                    "r_wz_unwanted": -4.0 * r_wz_unwanted,
+                    "r_heading_drift": -1.0 * r_heading_drift,
                     "r_vx_overshoot": -5.0 * r_vx_overshoot,
                     "r_vy_overshoot": -1.5 * r_vy_overshoot,
                     "r_vx_var": -3.0 * r_vx_var,
