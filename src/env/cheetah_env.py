@@ -106,7 +106,7 @@ DEFAULT_STANCE = np.array([
 
 # ── Height targets ────────────────────────────────────────────────
 # Now all modes support continuous height from HEIGHT_MIN to HEIGHT_MAX
-HEIGHT_MIN = 0.10       # deep crouch
+HEIGHT_MIN = 0.08       # v31g: deeper crouch ("almost at ground level")
 HEIGHT_MAX = 0.30       # tall standing
 HEIGHT_DEFAULT = 0.27   # normal standing
 HEIGHT_RAMP_STEPS = 25  # smooth transition over 0.5s
@@ -932,12 +932,17 @@ class MiniCheetahEnv(gym.Env):
         freq = 3.0   # Hz
         phase = 2.0 * math.pi * freq * t
         knee_lead = math.pi / 3.0
-        rear_scale = 1.3
+        # v31g: Symmetric for run (rear_scale=1.3 created 0.76 rad/s yaw drift).
+        # Walk keeps asymmetry — policy learns to compensate at walk amplitudes.
+        rear_scale = 1.0 if is_run else 1.3
 
-        # v31e: Reduce forward thrust during lateral/yaw by splitting hip/knee boost
-        # hip_boost=0.10 (was 0.15): 41% less forward bias, 12% less lateral, 18% less yaw
-        # Combined with stronger vx_unwanted penalty, policy should zero-out forward drift
-        lat_boost_hip = 0.10 if has_lat_yaw else 0.0
+        # v31f: Minimal hip for pure lateral to eliminate forward bias while keeping stability.
+        # v31e lat_boost_hip=0.10 created vx=+0.307 forward bias for lat_R.
+        # Zero hip fixed lat_R but destabilized lat_L (early termination).
+        # Compromise: tiny hip=0.03 for stepping stability, no significant forward thrust.
+        # Yaw keeps 0.10 hip (differential stride needs hip swing).
+        needs_hip_stride = abs(vx_cmd) > 0.05 or abs(wz_cmd) > 0.1
+        lat_boost_hip = 0.10 if (has_lat_yaw and needs_hip_stride) else (0.03 if has_lat_yaw else 0.0)
         lat_boost_knee = 0.20 if has_lat_yaw else 0.0
         amp_hip = max(lat_boost_hip, speed_scale)
         amp_knee = max(lat_boost_knee, speed_scale * 1.33)
@@ -987,7 +992,12 @@ class MiniCheetahEnv(gym.Env):
         # v31b: Fade yaw trim when wz commanded — prevents fighting with yaw reference
         wz_cmd = float(self.command[2])
         trim_fade = max(0.0, 1.0 - abs(wz_cmd) / 0.3)
-        yaw_trim = 0.04 * trim_fade
+        # v31f: Scale trim with gait amplitude — run mode has larger hip swing (0.45 vs 0.32)
+        # so yaw drift is proportionally larger. Base trim calibrated for walk (amp_hip≈0.32).
+        vx_cmd = float(self.command[0])
+        is_run = self.command_mode == "run"
+        amp_scale = min(2.0, max(1.0, abs(vx_cmd) / 0.5)) if is_run else 1.0
+        yaw_trim = 0.04 * trim_fade * amp_scale
         corr[1]  += yaw_trim   # FR hip: forward
         corr[7]  += yaw_trim   # RR hip: forward
         corr[4]  -= yaw_trim   # FL hip: back
@@ -1529,7 +1539,7 @@ class MiniCheetahEnv(gym.Env):
                 # Combined with linear unwanted, prevents yaw instability
                 total = (
                     5.0 * r_vx_track_walk    # forward tracking (tight sigma)
-                    + 2.0 * r_vx_lin         # monotonic forward gradient
+                    + 1.0 * r_vx_lin         # v31g: reduced (was 2.0) — less overshoot
                     + 3.0 * r_vy_track       # EMA-based (anti-oscillation)
                     + 2.0 * r_vy_lin         # monotonic lateral gradient
                     + 2.0 * r_wz_track       # EMA-based (anti-oscillation)
@@ -1544,7 +1554,7 @@ class MiniCheetahEnv(gym.Env):
                 )
                 scaled_components = {
                     "r_vx_track": 5.0 * r_vx_track_walk,
-                    "r_vx_lin": 2.0 * r_vx_lin,
+                    "r_vx_lin": 1.0 * r_vx_lin,
                     "r_vy_track": 3.0 * r_vy_track,
                     "r_vy_lin": 2.0 * r_vy_lin,
                     "r_wz_track": 2.0 * r_wz_track,
@@ -1632,7 +1642,7 @@ class MiniCheetahEnv(gym.Env):
             # Wrap to [-π, π]
             if yaw_drift > math.pi:
                 yaw_drift = 2.0 * math.pi - yaw_drift
-            if yaw_drift > 1.2:  # ~69° — generous enough for natural gait wobble
+            if yaw_drift > 1.8:  # v31g: relaxed from 1.2 (~103°) — more learning time
                 return True
 
         return False
@@ -1719,7 +1729,7 @@ class MiniCheetahEnv(gym.Env):
           [12,48):  Arc — parabola peaking at 0.45
           [48,60]:  Land — stabilize at 0.27
         """
-        h_stand, h_crouch = HEIGHT_DEFAULT, HEIGHT_MIN + 0.08
+        h_stand, h_crouch = HEIGHT_DEFAULT, 0.18  # v31g: fixed prep height (was HEIGHT_MIN+0.08)
         prep_end, arc_end = 12, 48
 
         if step < 0:
@@ -1762,14 +1772,31 @@ class MiniCheetahEnv(gym.Env):
             )
 
     def _get_height_posture(self, target_height):
-        """Interpolate posture targets based on continuous height."""
+        """Interpolate posture targets based on continuous height.
+        v31g: Piecewise — normal range (0.27→0.12) uses original mapping,
+        deep range (0.12→0.08) extends further for deep crouch.
+        This prevents jump prep (h=0.18) from storing extra PD energy.
+        """
         stand_h = HEIGHT_DEFAULT  # 0.27
-        deep_h = HEIGHT_MIN      # 0.10
-        t = max(0.0, min(1.0, (stand_h - target_height) / (stand_h - deep_h)))
-        return {
-            "hip": 0.9 + (1.5 - 0.9) * t,      # 0.9 → 1.5 as height decreases
-            "knee": -1.8 + (-2.5 - (-1.8)) * t,  # -1.8 → -2.5 as height decreases
-        }
+        mid_h = 0.12             # transition point
+        deep_h = HEIGHT_MIN      # 0.08
+        # Posture at key heights (verified by simulation):
+        hip_stand, knee_stand = 0.9, -1.8    # h=0.27
+        hip_mid, knee_mid = 1.5, -2.5        # h=0.12 (original deep posture)
+        hip_deep, knee_deep = 1.8, -2.7      # h=0.08 (new deep crouch)
+
+        if target_height >= mid_h:
+            t = max(0.0, min(1.0, (stand_h - target_height) / (stand_h - mid_h)))
+            return {
+                "hip": hip_stand + (hip_mid - hip_stand) * t,
+                "knee": knee_stand + (knee_mid - knee_stand) * t,
+            }
+        else:
+            t = max(0.0, min(1.0, (mid_h - target_height) / (mid_h - deep_h)))
+            return {
+                "hip": hip_mid + (hip_deep - hip_mid) * t,
+                "knee": knee_mid + (knee_deep - knee_mid) * t,
+            }
 
     # ══════════════════════════════════════════════════════════════
     #  Command interface
@@ -1834,7 +1861,7 @@ class MiniCheetahEnv(gym.Env):
         self.command = np.array([vx, vy, wz], dtype=np.float32)
         # v29: Handle crouch as walk/stand at low height
         if mode == "crouch":
-            crouch_height = HEIGHT_MIN  # v31: almost ground level (0.10m, was 0.18m)
+            crouch_height = HEIGHT_MIN  # v31g: 0.08m — near ground level
             has_motion = abs(vx) > 0.05 or abs(vy) > 0.05 or abs(wz) > 0.05
             new_mode = "walk" if has_motion else "stand"
             height = crouch_height

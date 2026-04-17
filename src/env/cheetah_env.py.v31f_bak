@@ -934,10 +934,13 @@ class MiniCheetahEnv(gym.Env):
         knee_lead = math.pi / 3.0
         rear_scale = 1.3
 
-        # v31e: Reduce forward thrust during lateral/yaw by splitting hip/knee boost
-        # hip_boost=0.10 (was 0.15): 41% less forward bias, 12% less lateral, 18% less yaw
-        # Combined with stronger vx_unwanted penalty, policy should zero-out forward drift
-        lat_boost_hip = 0.10 if has_lat_yaw else 0.0
+        # v31f: Minimal hip for pure lateral to eliminate forward bias while keeping stability.
+        # v31e lat_boost_hip=0.10 created vx=+0.307 forward bias for lat_R.
+        # Zero hip fixed lat_R but destabilized lat_L (early termination).
+        # Compromise: tiny hip=0.03 for stepping stability, no significant forward thrust.
+        # Yaw keeps 0.10 hip (differential stride needs hip swing).
+        needs_hip_stride = abs(vx_cmd) > 0.05 or abs(wz_cmd) > 0.1
+        lat_boost_hip = 0.10 if (has_lat_yaw and needs_hip_stride) else (0.03 if has_lat_yaw else 0.0)
         lat_boost_knee = 0.20 if has_lat_yaw else 0.0
         amp_hip = max(lat_boost_hip, speed_scale)
         amp_knee = max(lat_boost_knee, speed_scale * 1.33)
@@ -987,7 +990,12 @@ class MiniCheetahEnv(gym.Env):
         # v31b: Fade yaw trim when wz commanded — prevents fighting with yaw reference
         wz_cmd = float(self.command[2])
         trim_fade = max(0.0, 1.0 - abs(wz_cmd) / 0.3)
-        yaw_trim = 0.04 * trim_fade
+        # v31f: Scale trim with gait amplitude — run mode has larger hip swing (0.45 vs 0.32)
+        # so yaw drift is proportionally larger. Base trim calibrated for walk (amp_hip≈0.32).
+        vx_cmd = float(self.command[0])
+        is_run = self.command_mode == "run"
+        amp_scale = min(2.0, max(1.0, abs(vx_cmd) / 0.5)) if is_run else 1.0
+        yaw_trim = 0.04 * trim_fade * amp_scale
         corr[1]  += yaw_trim   # FR hip: forward
         corr[7]  += yaw_trim   # RR hip: forward
         corr[4]  -= yaw_trim   # FL hip: back
