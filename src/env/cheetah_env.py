@@ -1525,7 +1525,7 @@ class MiniCheetahEnv(gym.Env):
                     "r_vx_unwanted": -2.0 * r_vx_unwanted,
                     "r_vy_unwanted": -1.5 * r_vy_unwanted,
                     "r_wz_unwanted": -2.0 * r_wz_unwanted,
-                    "r_heading_drift": -1.0 * r_heading_drift,
+                    "r_heading_drift": -0.5 * r_heading_drift,
                     "r_vx_ema": vx_ema,
                     "r_total": total,
                 }
