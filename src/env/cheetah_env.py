@@ -1810,18 +1810,22 @@ class MiniCheetahEnv(gym.Env):
             height = float(rng.uniform(HEIGHT_MIN, HEIGHT_MAX))
             self._start_height_ramp(height)
         elif mode == "walk":
-            # v30d: lateral-dominant episodes (small vx so robot is already stepping)
-            # Pure lateral (vx=0) fails — policy can't discover side-stepping from scratch.
-            # But diagonal works (walk_diag: vy=0.233 for cmd 0.3) — use this as bootstrap.
+            # v31g: Dedicated sampling categories to prevent mode interference.
+            # Pure forward needs ~20% of walk to avoid regression at 2.5M+.
             roll = float(rng.uniform(0, 1))
-            if roll < 0.25:
+            if roll < 0.20:
+                # v31g: Pure forward/backward — no lateral/yaw distraction
+                vx = float(rng.uniform(-0.3, 1.0))
+                vy = float(rng.uniform(-0.05, 0.05))
+                wz = float(rng.uniform(-0.05, 0.05))
+            elif roll < 0.40:
                 # Lateral-dominant: small forward + large lateral/yaw
-                vx = float(rng.uniform(0.1, 0.3))  # enough for stepping gait
+                vx = float(rng.uniform(0.1, 0.3))
                 vy = float(rng.uniform(-0.4, 0.4))
                 wz = float(rng.uniform(-0.6, 0.6))
                 if abs(vy) < 0.15 and abs(wz) < 0.15:
                     vy = float(rng.choice([-0.3, 0.3]))
-            elif roll < 0.40:
+            elif roll < 0.55:
                 # Pure lateral (harder): vx≈0 but vy/wz large
                 vx = float(rng.uniform(-0.05, 0.1))
                 vy = float(rng.uniform(-0.4, 0.4))
@@ -1829,6 +1833,7 @@ class MiniCheetahEnv(gym.Env):
                 if abs(vy) < 0.15 and abs(wz) < 0.15:
                     vy = float(rng.choice([-0.3, 0.3]))
             else:
+                # General mixed commands
                 vx = float(rng.uniform(0.0, 1.20))
                 vy = float(rng.uniform(-0.4, 0.4))
                 wz = float(rng.uniform(-0.6, 0.6))
