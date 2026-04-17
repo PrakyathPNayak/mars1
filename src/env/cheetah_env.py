@@ -1555,7 +1555,7 @@ class MiniCheetahEnv(gym.Env):
                 }
             else:
                 # v31d: Walk reward — fixed forward ref + height tracking + gated velocity
-                walk_sigma = 0.20  # v31h: wider gradient (was 0.10 — too tight, exp(-2.5) at vx=0 for cmd=0.5)
+                walk_sigma = 0.10  # v31l2: tightened from 0.20 (28.7% free at vx=0, cmd=0.5 → now 8.2%)
                 r_vx_track_walk = math.exp(-(vx - vx_cmd)**2 / walk_sigma)
                 r_vx_track_walk *= vx_cmd_scale  # gate for commanded DOF
 
