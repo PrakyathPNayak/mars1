@@ -897,9 +897,11 @@ class MiniCheetahEnv(gym.Env):
         if self.command_mode not in ("walk", "run"):
             return ref
 
-        # v30: Scale reference with forward command intent
+        # v30d: Zero reference for pure lateral/yaw — no forward bias
         vx_cmd = abs(float(self.command[0]))
-        vx_scale = min(1.0, max(0.10, vx_cmd / 0.5))
+        if vx_cmd < 0.05:
+            return ref  # all zeros — policy discovers lateral gait from scratch
+        vx_scale = min(1.0, vx_cmd / 0.5)
         speed_scale = 0.45 * vx_scale
 
         t = self.step_count * self.dt
