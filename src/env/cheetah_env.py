@@ -1512,29 +1512,32 @@ class MiniCheetahEnv(gym.Env):
                 r_vy_overshoot = 0.0
 
             if mode == "run":
-                # v29: Run reward — added r_vy_lin for lateral gradient.
-                # v31c: Remove oscillation penalty (EMA tracking already prevents gaming)
-                # v31f: LINEAR unwanted penalties + heading drift
+                # v31m: Use EMA for vx tracking (consistent with walk mode fix)
+                r_vx_track_run = math.exp(-(vx_ema - vx_cmd)**2 / TRACKING_SIGMA)
+                r_vx_track_run *= vx_cmd_scale
+                r_vx_var = (vx - vx_ema)**2 if abs(vx_cmd) > 0.05 else 0.0
+
                 total = (
-                    3.0 * r_vx_track         # exp tracking — primary
+                    3.0 * r_vx_track_run     # v31m: EMA-based tracking
                     + 1.5 * r_vx_lin         # monotonic speed bonus
-                    + 1.0 * r_vy_track       # v30: lateral tracking (was 0.3)
-                    + 0.5 * r_vy_lin         # v30: lateral gradient (was 0.3)
-                    + 1.0 * r_wz_track       # v30: yaw tracking (was 0.3)
-                    + 0.5 * r_gait           # gait quality (reduced vs walk)
-                    - 0.3 * r_orientation    # stay upright (reduced)
+                    + 1.0 * r_vy_track       # lateral tracking
+                    + 0.5 * r_vy_lin         # lateral gradient
+                    + 1.0 * r_wz_track       # yaw tracking
+                    + 0.5 * r_gait           # gait quality
+                    - 0.3 * r_orientation    # stay upright
                     - 0.05 * r_ang_vel_xy    # minimal wobble penalty
                     - 0.05 * r_lin_vel_z     # minimal bounce penalty
                     - 0.01 * r_smooth        # action smoothness
-                    - 2.0 * r_vx_unwanted    # v31f: LINEAR anti-forward-bias
-                    - 1.5 * r_vy_unwanted    # v31f: LINEAR anti-lateral-drift
-                    - 2.0 * r_wz_unwanted    # v31f: LINEAR anti-spin (v31h: dead zone softens)
-                    - 0.5 * r_heading_drift  # v31h: reduced from -1.0 (dead zone handles drift now)
-                    - 2.0 * r_vx_overshoot   # v31j: penalize exceeding commanded speed
-                    - 1.5 * r_vy_overshoot   # v31j: penalize exceeding commanded lat speed
+                    - 2.0 * r_vx_unwanted    # anti-forward-bias
+                    - 1.5 * r_vy_unwanted    # anti-lateral-drift
+                    - 2.0 * r_wz_unwanted    # anti-spin
+                    - 0.5 * r_heading_drift  # heading correction
+                    - 2.0 * r_vx_overshoot   # speed cap
+                    - 1.5 * r_vy_overshoot   # lateral overshoot
+                    - 2.0 * r_vx_var         # v31m: velocity smoothness
                 )
                 scaled_components = {
-                    "r_vx_track": 3.0 * r_vx_track,
+                    "r_vx_track": 3.0 * r_vx_track_run,
                     "r_vy_track": 1.0 * r_vy_track,
                     "r_vy_lin": 0.5 * r_vy_lin,
                     "r_wz_track": 1.0 * r_wz_track,
@@ -1550,13 +1553,19 @@ class MiniCheetahEnv(gym.Env):
                     "r_heading_drift": -0.5 * r_heading_drift,
                     "r_vx_overshoot": -2.0 * r_vx_overshoot,
                     "r_vy_overshoot": -1.5 * r_vy_overshoot,
+                    "r_vx_var": -2.0 * r_vx_var,
                     "r_vx_ema": vx_ema,
                     "r_total": total,
                 }
             else:
                 # v31d: Walk reward — fixed forward ref + height tracking + gated velocity
-                walk_sigma = 0.10  # v31l2: tightened from 0.20 (28.7% free at vx=0, cmd=0.5 → now 8.2%)
-                r_vx_track_walk = math.exp(-(vx - vx_cmd)**2 / walk_sigma)
+                # v31m: Use EMA for vx tracking (was instantaneous vx).
+                # Gait cycle creates natural vx oscillation (std=0.558 at 500K!).
+                # Instantaneous tracking penalizes this → r_vx_track=1.73/5.0 (35% efficient).
+                # EMA smooths oscillation → r_vx_track≈4.71/5.0 (94% efficient).
+                # Consistent with vy/wz tracking which already use EMA (lines 1454-1455).
+                walk_sigma = 0.10
+                r_vx_track_walk = math.exp(-(vx_ema - vx_cmd)**2 / walk_sigma)
                 r_vx_track_walk *= vx_cmd_scale  # gate for commanded DOF
 
                 # v31d: Height tracking for crouch support
@@ -1588,27 +1597,33 @@ class MiniCheetahEnv(gym.Env):
                 # v31f: Add heading_drift to walk reward (was only in stand)
                 # Penalizes |wz - wz_cmd| always — even for small drift
                 # Combined with linear unwanted, prevents yaw instability
+                # v31m: Velocity smoothness — penalize instantaneous vx deviating from EMA.
+                # At 500K, vx_std=0.558 (sprint/stop oscillation). This causes yaw drift
+                # AND kills tracking reward. Penalty is (vx - vx_ema)^2:
+                # Natural trot (±0.05): 0.0025 → negligible. Sprint/stop (±0.55): 0.30 → strong.
+                r_vx_var = (vx - vx_ema)**2 if abs(vx_cmd) > 0.05 else 0.0
+                r_vy_var = (vy - vy_ema_val)**2 if abs(vy_cmd) > 0.05 else 0.0
+
                 # v31l: Restored r_vx_lin (removing it made walk_fwd learn nothing — r/step=-4.61).
-                # The gradient from r_vx_lin is needed to guide policy from standing to walking.
-                # Sprint exploit fixed by strong overshoot penalty -5.0 instead:
-                # At vx=1.268: lin=2.0, overshoot=-3.84, track=0.26 → net=-1.58 (unprofitable).
-                # At vx=0.5: lin=2.0, overshoot=0, track=5.0 → net=7.0 (clear peak).
+                # Sprint exploit fixed by strong overshoot penalty -5.0 instead.
                 total = (
-                    5.0 * r_vx_track_walk    # forward tracking (v31h: wider sigma=0.20)
-                    + 2.0 * r_vx_lin         # monotonic forward gradient (restored from v31k)
+                    5.0 * r_vx_track_walk    # v31m: EMA-based tracking (was instantaneous)
+                    + 2.0 * r_vx_lin         # monotonic forward gradient
                     + 3.0 * r_vy_track       # EMA-based (anti-oscillation)
                     + 2.0 * r_vy_lin         # monotonic lateral gradient
                     + 2.0 * r_wz_track       # EMA-based (anti-oscillation)
-                    + 2.0 * r_height_walk    # v31d: height tracking (crouch)
+                    + 2.0 * r_height_walk    # height tracking (crouch)
                     + 0.5 * r_gait           # gait quality
                     - 0.1 * r_orientation    # prevent flipping only
                     - 0.02 * r_smooth        # action smoothness
-                    - 3.0 * r_vx_unwanted    # v31f: LINEAR anti-forward-bias
-                    - 2.5 * r_vy_unwanted    # v31f: LINEAR anti-lateral-drift
-                    - 4.0 * r_wz_unwanted    # v31f: LINEAR anti-spin (v31h: dead zone softens this)
-                    - 1.0 * r_heading_drift  # v31h: reduced from -1.5 (was double-punishing with wz_unwanted)
-                    - 5.0 * r_vx_overshoot   # v31l: increased from -2.0 (sprint exploit)
+                    - 3.0 * r_vx_unwanted    # anti-forward-bias
+                    - 2.5 * r_vy_unwanted    # anti-lateral-drift
+                    - 4.0 * r_wz_unwanted    # anti-spin (dead zone softens)
+                    - 1.0 * r_heading_drift  # heading correction
+                    - 5.0 * r_vx_overshoot   # sprint exploit prevention
                     - 1.5 * r_vy_overshoot   # lateral overshoot
+                    - 3.0 * r_vx_var         # v31m: velocity smoothness (anti-lurch)
+                    - 2.0 * r_vy_var         # v31m: lateral smoothness
                 )
                 scaled_components = {
                     "r_vx_track": 5.0 * r_vx_track_walk,
@@ -1626,6 +1641,8 @@ class MiniCheetahEnv(gym.Env):
                     "r_heading_drift": -1.0 * r_heading_drift,
                     "r_vx_overshoot": -5.0 * r_vx_overshoot,
                     "r_vy_overshoot": -1.5 * r_vy_overshoot,
+                    "r_vx_var": -3.0 * r_vx_var,
+                    "r_vy_var": -2.0 * r_vy_var,
                     "r_vx_ema": vx_ema,
                     "r_total": total,
                 }
