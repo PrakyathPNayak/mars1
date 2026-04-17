@@ -956,7 +956,7 @@ class MiniCheetahEnv(gym.Env):
         # v31b: Yaw via differential stride
         # Right-bigger creates positive wz (empirically verified)
         # v31e: Asymmetric gain — negative wz needs more diff to overcome rear_scale bias
-        yaw_gain = 0.40 if wz_cmd >= 0 else 0.55
+        yaw_gain = 0.50  # v31j: symmetric (was 0.40/0.55 — left turns weaker than right)
         yaw_diff = min(0.5, max(-0.5, wz_cmd * yaw_gain))
 
         # v31h: Forward command bias — breaks reference symmetry for directional locomotion.
@@ -1497,6 +1497,19 @@ class MiniCheetahEnv(gym.Env):
             else:
                 r_vy_lin = 0.0
 
+            # v31j: Overshoot penalties — penalize going faster than commanded.
+            # Without this, r_vx_lin gives flat +2.0 even at vx=1.6 for cmd=0.5,
+            # and tracking exp() has zero gradient far from target.
+            # Robot learned to sprint at 1.6+ and crash instead of walking at 0.5.
+            if abs(vx_cmd) > 0.05:
+                r_vx_overshoot = max(0.0, abs(vx_ema) - abs(vx_cmd))
+            else:
+                r_vx_overshoot = 0.0
+            if abs(vy_cmd) > 0.05:
+                r_vy_overshoot = max(0.0, abs(vy_ema) - abs(vy_cmd))
+            else:
+                r_vy_overshoot = 0.0
+
             if mode == "run":
                 # v29: Run reward — added r_vy_lin for lateral gradient.
                 # v31c: Remove oscillation penalty (EMA tracking already prevents gaming)
@@ -1516,6 +1529,8 @@ class MiniCheetahEnv(gym.Env):
                     - 1.5 * r_vy_unwanted    # v31f: LINEAR anti-lateral-drift
                     - 2.0 * r_wz_unwanted    # v31f: LINEAR anti-spin (v31h: dead zone softens)
                     - 0.5 * r_heading_drift  # v31h: reduced from -1.0 (dead zone handles drift now)
+                    - 2.0 * r_vx_overshoot   # v31j: penalize exceeding commanded speed
+                    - 1.5 * r_vy_overshoot   # v31j: penalize exceeding commanded lat speed
                 )
                 scaled_components = {
                     "r_vx_track": 3.0 * r_vx_track,
@@ -1532,6 +1547,8 @@ class MiniCheetahEnv(gym.Env):
                     "r_vy_unwanted": -1.5 * r_vy_unwanted,
                     "r_wz_unwanted": -2.0 * r_wz_unwanted,
                     "r_heading_drift": -0.5 * r_heading_drift,
+                    "r_vx_overshoot": -2.0 * r_vx_overshoot,
+                    "r_vy_overshoot": -1.5 * r_vy_overshoot,
                     "r_vx_ema": vx_ema,
                     "r_total": total,
                 }
@@ -1584,6 +1601,8 @@ class MiniCheetahEnv(gym.Env):
                     - 2.5 * r_vy_unwanted    # v31f: LINEAR anti-lateral-drift
                     - 4.0 * r_wz_unwanted    # v31f: LINEAR anti-spin (v31h: dead zone softens this)
                     - 1.0 * r_heading_drift  # v31h: reduced from -1.5 (was double-punishing with wz_unwanted)
+                    - 3.0 * r_vx_overshoot   # v31j: penalize exceeding commanded fwd speed
+                    - 2.0 * r_vy_overshoot   # v31j: penalize exceeding commanded lat speed
                 )
                 scaled_components = {
                     "r_vx_track": 5.0 * r_vx_track_walk,
@@ -1599,6 +1618,8 @@ class MiniCheetahEnv(gym.Env):
                     "r_vy_unwanted": -2.5 * r_vy_unwanted,
                     "r_wz_unwanted": -4.0 * r_wz_unwanted,
                     "r_heading_drift": -1.0 * r_heading_drift,
+                    "r_vx_overshoot": -3.0 * r_vx_overshoot,
+                    "r_vy_overshoot": -2.0 * r_vy_overshoot,
                     "r_vx_ema": vx_ema,
                     "r_total": total,
                 }

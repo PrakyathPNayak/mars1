@@ -963,7 +963,10 @@ class MiniCheetahEnv(gym.Env):
         # Without this, reference is symmetric and policy must learn to bias the gait,
         # which is fragile and regresses during multi-task training (walk_fwd dies at 1.5M+).
         # Hip offset creates physical forward lean → ground reaction force → forward motion.
-        hip_fwd_bias = vx_cmd * 0.15
+        # v31j: Mode-dependent gain. Walk=0.10 (was 0.15 — caused 3.1x overshoot at vx_cmd=0.5,
+        # robot sprinted at 1.56 then nose-dived at step 188). Run keeps 0.15 for high speed.
+        fwd_gain = 0.15 if is_run else 0.10
+        hip_fwd_bias = vx_cmd * fwd_gain
 
         for hip_i, knee_i, abd_i, is_diag1, is_rear, is_left in [
             (1, 2, 0, True, False, False),    # FR (right)
