@@ -1419,9 +1419,11 @@ class MiniCheetahEnv(gym.Env):
             r_vy_track = math.exp(-(vy_ema_val - vy_cmd)**2 / sigma_vy_track)  # v31: EMA
             r_wz_track = math.exp(-(wz_ema_val - wz_cmd)**2 / sigma_wz_track)  # v31: EMA
 
-            # v31: Oscillation penalty — penalize high-frequency vy/wz variance
-            r_osc_vy = (vy - vy_ema_val)**2
-            r_osc_wz = (wz - wz_ema_val)**2
+            # v31b: Oscillation penalty — only for COMMANDED DOFs
+            # Natural gait creates yaw/lateral oscillation that must NOT be penalized.
+            # Only penalize oscillation when that DOF is commanded (prevents gaming).
+            r_osc_vy = (vy - vy_ema_val)**2 * vy_cmd_scale
+            r_osc_wz = (wz - wz_ema_val)**2 * wz_cmd_scale
 
             # v31b: Gate tracking for commanded DOFs + penalty for unwanted motion
             r_vx_track *= vx_cmd_scale
@@ -1454,7 +1456,8 @@ class MiniCheetahEnv(gym.Env):
 
             if mode == "run":
                 # v29: Run reward — added r_vy_lin for lateral gradient.
-                # v31: added oscillation penalty
+                # v31c: Remove oscillation penalty (EMA tracking already prevents gaming)
+                # Reduce vx_unwanted (reference inherently creates forward bias)
                 total = (
                     3.0 * r_vx_track         # exp tracking — primary
                     + 1.5 * r_vx_lin         # monotonic speed bonus
@@ -1466,11 +1469,9 @@ class MiniCheetahEnv(gym.Env):
                     - 0.05 * r_ang_vel_xy    # minimal wobble penalty
                     - 0.05 * r_lin_vel_z     # minimal bounce penalty
                     - 0.01 * r_smooth        # action smoothness
-                    - 1.0 * r_osc_vy         # v31: penalize lateral oscillation
-                    - 1.0 * r_osc_wz         # v31: penalize yaw oscillation
-                    - 3.0 * r_vx_unwanted    # v31b: penalize forward bias
-                    - 2.0 * r_vy_unwanted    # v31b: penalize lateral drift
-                    - 1.0 * r_wz_unwanted    # v31b: penalize yaw drift
+                    - 1.5 * r_vx_unwanted    # v31c: reduced from 3.0
+                    - 1.0 * r_vy_unwanted    # v31b: penalize lateral drift
+                    - 0.5 * r_wz_unwanted    # v31c: reduced from 1.0
                 )
                 scaled_components = {
                     "r_vx_track": 3.0 * r_vx_track,
@@ -1483,11 +1484,9 @@ class MiniCheetahEnv(gym.Env):
                     "r_ang_vel_xy": -0.05 * r_ang_vel_xy,
                     "r_lin_vel_z": -0.05 * r_lin_vel_z,
                     "r_smooth": -0.01 * r_smooth,
-                    "r_osc_vy": -1.0 * r_osc_vy,
-                    "r_osc_wz": -1.0 * r_osc_wz,
-                    "r_vx_unwanted": -3.0 * r_vx_unwanted,
-                    "r_vy_unwanted": -2.0 * r_vy_unwanted,
-                    "r_wz_unwanted": -1.0 * r_wz_unwanted,
+                    "r_vx_unwanted": -1.5 * r_vx_unwanted,
+                    "r_vy_unwanted": -1.0 * r_vy_unwanted,
+                    "r_wz_unwanted": -0.5 * r_wz_unwanted,
                     "r_vx_ema": vx_ema,
                     "r_total": total,
                 }
@@ -1500,17 +1499,15 @@ class MiniCheetahEnv(gym.Env):
                 total = (
                     5.0 * r_vx_track_walk    # forward tracking (tight sigma)
                     + 2.0 * r_vx_lin         # monotonic forward gradient
-                    + 3.0 * r_vy_track       # v31: now uses EMA (anti-oscillation)
-                    + 2.0 * r_vy_lin         # v31: boosted monotonic lateral gradient (was 1.5)
-                    + 2.0 * r_wz_track       # v31: now uses EMA (anti-oscillation)
+                    + 3.0 * r_vy_track       # EMA-based (anti-oscillation)
+                    + 2.0 * r_vy_lin         # monotonic lateral gradient
+                    + 2.0 * r_wz_track       # EMA-based (anti-oscillation)
                     + 0.5 * r_gait           # gait quality
                     - 0.1 * r_orientation    # prevent flipping only
                     - 0.02 * r_smooth        # action smoothness
-                    - 2.0 * r_osc_vy         # v31: penalize lateral oscillation
-                    - 2.0 * r_osc_wz         # v31: penalize yaw oscillation
-                    - 5.0 * r_vx_unwanted    # v31b: penalize forward bias
-                    - 3.0 * r_vy_unwanted    # v31b: penalize lateral drift
-                    - 2.0 * r_wz_unwanted    # v31b: penalize yaw drift
+                    - 2.0 * r_vx_unwanted    # v31c: reduced from 5.0
+                    - 1.5 * r_vy_unwanted    # v31c: reduced from 3.0
+                    - 1.0 * r_wz_unwanted    # v31c: reduced from 2.0
                 )
                 scaled_components = {
                     "r_vx_track": 5.0 * r_vx_track_walk,
@@ -1521,11 +1518,9 @@ class MiniCheetahEnv(gym.Env):
                     "r_gait": 0.5 * r_gait,
                     "r_orientation": -0.1 * r_orientation,
                     "r_smooth": -0.02 * r_smooth,
-                    "r_osc_vy": -2.0 * r_osc_vy,
-                    "r_osc_wz": -2.0 * r_osc_wz,
-                    "r_vx_unwanted": -5.0 * r_vx_unwanted,
-                    "r_vy_unwanted": -3.0 * r_vy_unwanted,
-                    "r_wz_unwanted": -2.0 * r_wz_unwanted,
+                    "r_vx_unwanted": -2.0 * r_vx_unwanted,
+                    "r_vy_unwanted": -1.5 * r_vy_unwanted,
+                    "r_wz_unwanted": -1.0 * r_wz_unwanted,
                     "r_vx_ema": vx_ema,
                     "r_total": total,
                 }
