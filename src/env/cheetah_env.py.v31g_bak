@@ -1460,18 +1460,11 @@ class MiniCheetahEnv(gym.Env):
             r_wz_track *= wz_cmd_scale
 
             # v31f: LINEAR unwanted penalties (was quadratic in v31e)
-            # v31h: Add dead zones for walk/run — natural trot gait creates
-            # small wz/vy oscillation (~0.1) that must NOT be penalized.
-            # Without dead zone: policy learns standing still is safer than walking.
-            if mode in ("walk", "run"):
-                wz_deadzone = 0.12  # natural gait yaw oscillation
-                vy_deadzone = 0.06  # natural gait lateral oscillation
-            else:
-                wz_deadzone = 0.0
-                vy_deadzone = 0.0
+            # Quadratic was too weak for small drift: 0.1²=0.01 → penalty 0.04
+            # Linear: 0.1 → penalty 0.4 (10× stronger at small drift)
             r_vx_unwanted = abs(vx_ema) if abs(vx_cmd) < 0.05 else 0.0
-            r_vy_unwanted = max(0.0, abs(vy_ema_val) - vy_deadzone) if abs(vy_cmd) < 0.05 else 0.0
-            r_wz_unwanted = max(0.0, abs(wz_ema_val) - wz_deadzone) if abs(wz_cmd) < 0.05 else 0.0
+            r_vy_unwanted = abs(vy_ema_val) if abs(vy_cmd) < 0.05 else 0.0
+            r_wz_unwanted = abs(wz_ema_val) if abs(wz_cmd) < 0.05 else 0.0
 
             # Linear velocity bonus (provides monotonic gradient from standing)
             # Capped at command speed — no reward for overshooting
@@ -1508,8 +1501,8 @@ class MiniCheetahEnv(gym.Env):
                     - 0.01 * r_smooth        # action smoothness
                     - 2.0 * r_vx_unwanted    # v31f: LINEAR anti-forward-bias
                     - 1.5 * r_vy_unwanted    # v31f: LINEAR anti-lateral-drift
-                    - 2.0 * r_wz_unwanted    # v31f: LINEAR anti-spin (v31h: dead zone softens)
-                    - 0.5 * r_heading_drift  # v31h: reduced from -1.0 (dead zone handles drift now)
+                    - 2.0 * r_wz_unwanted    # v31f: LINEAR anti-spin
+                    - 1.0 * r_heading_drift  # v31f: always-on heading stabilizer
                 )
                 scaled_components = {
                     "r_vx_track": 3.0 * r_vx_track,
@@ -1531,7 +1524,7 @@ class MiniCheetahEnv(gym.Env):
                 }
             else:
                 # v31d: Walk reward — fixed forward ref + height tracking + gated velocity
-                walk_sigma = 0.20  # v31h: wider gradient (was 0.10 — too tight, exp(-2.5) at vx=0 for cmd=0.5)
+                walk_sigma = 0.10
                 r_vx_track_walk = math.exp(-(vx - vx_cmd)**2 / walk_sigma)
                 r_vx_track_walk *= vx_cmd_scale  # gate for commanded DOF
 
@@ -1565,8 +1558,8 @@ class MiniCheetahEnv(gym.Env):
                 # Penalizes |wz - wz_cmd| always — even for small drift
                 # Combined with linear unwanted, prevents yaw instability
                 total = (
-                    5.0 * r_vx_track_walk    # forward tracking (v31h: wider sigma=0.20)
-                    + 2.0 * r_vx_lin         # v31h: restored from 1.0 (v31g reduced too much)
+                    5.0 * r_vx_track_walk    # forward tracking (tight sigma)
+                    + 1.0 * r_vx_lin         # v31g: reduced (was 2.0) — less overshoot
                     + 3.0 * r_vy_track       # EMA-based (anti-oscillation)
                     + 2.0 * r_vy_lin         # monotonic lateral gradient
                     + 2.0 * r_wz_track       # EMA-based (anti-oscillation)
@@ -1576,12 +1569,12 @@ class MiniCheetahEnv(gym.Env):
                     - 0.02 * r_smooth        # action smoothness
                     - 3.0 * r_vx_unwanted    # v31f: LINEAR anti-forward-bias
                     - 2.5 * r_vy_unwanted    # v31f: LINEAR anti-lateral-drift
-                    - 4.0 * r_wz_unwanted    # v31f: LINEAR anti-spin (v31h: dead zone softens this)
-                    - 1.0 * r_heading_drift  # v31h: reduced from -1.5 (was double-punishing with wz_unwanted)
+                    - 4.0 * r_wz_unwanted    # v31f: LINEAR anti-spin
+                    - 1.5 * r_heading_drift  # v31f: always-on heading stabilizer
                 )
                 scaled_components = {
                     "r_vx_track": 5.0 * r_vx_track_walk,
-                    "r_vx_lin": 2.0 * r_vx_lin,
+                    "r_vx_lin": 1.0 * r_vx_lin,
                     "r_vy_track": 3.0 * r_vy_track,
                     "r_vy_lin": 2.0 * r_vy_lin,
                     "r_wz_track": 2.0 * r_wz_track,
@@ -1592,7 +1585,7 @@ class MiniCheetahEnv(gym.Env):
                     "r_vx_unwanted": -3.0 * r_vx_unwanted,
                     "r_vy_unwanted": -2.5 * r_vy_unwanted,
                     "r_wz_unwanted": -4.0 * r_wz_unwanted,
-                    "r_heading_drift": -1.0 * r_heading_drift,
+                    "r_heading_drift": -1.5 * r_heading_drift,
                     "r_vx_ema": vx_ema,
                     "r_total": total,
                 }
