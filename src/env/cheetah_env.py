@@ -964,17 +964,17 @@ class MiniCheetahEnv(gym.Env):
         freq = 3.0   # Hz
         phase = 2.0 * math.pi * freq * t
         knee_lead = math.pi / 3.0
-        # v31g: Symmetric for run (rear_scale=1.3 created 0.76 rad/s yaw drift).
-        # Walk keeps asymmetry — policy learns to compensate at walk amplitudes.
-        rear_scale = 1.0 if is_run else 1.3
+        # v31r: rear_scale=1.0 for pure yaw to eliminate positive yaw bias.
+        # Walk forward keeps 1.3 (natural gait). Pure yaw/lateral/run: symmetric.
+        has_fwd = abs(vx_cmd) > 0.05
+        rear_scale = 1.0 if (is_run or (not has_fwd and abs(wz_cmd) > 0.05)) else 1.3
 
-        # v31f: Minimal hip for pure lateral to eliminate forward bias while keeping stability.
-        # v31e lat_boost_hip=0.10 created vx=+0.307 forward bias for lat_R.
-        # Zero hip fixed lat_R but destabilized lat_L (early termination).
-        # Compromise: tiny hip=0.03 for stepping stability, no significant forward thrust.
-        # Yaw keeps 0.10 hip (differential stride needs hip swing).
-        needs_hip_stride = abs(vx_cmd) > 0.05 or abs(wz_cmd) > 0.1
-        lat_boost_hip = 0.10 if (has_lat_yaw and needs_hip_stride) else (0.03 if has_lat_yaw else 0.0)
+        # v31r: hip=0.03 for pure lateral AND pure yaw.
+        # Old: yaw used hip=0.10 → created vx=0.314 forward bias at zero-action.
+        # Fix: hip=0.03 eliminates 82% of forward bias (vx=0.056), yaw preserved (96%).
+        # Forward walking (vx_cmd>0) keeps hip=0.10 for stride authority.
+        needs_fwd_hip = has_fwd
+        lat_boost_hip = 0.10 if (has_lat_yaw and needs_fwd_hip) else (0.03 if has_lat_yaw else 0.0)
         lat_boost_knee = 0.20 if has_lat_yaw else 0.0
         amp_hip = max(lat_boost_hip, speed_scale)
         amp_knee = max(lat_boost_knee, speed_scale * 1.33)
@@ -988,7 +988,10 @@ class MiniCheetahEnv(gym.Env):
         # v31b: Yaw via differential stride
         # Right-bigger creates positive wz (empirically verified)
         # v31e: Asymmetric gain — negative wz needs more diff to overcome rear_scale bias
-        yaw_gain = 0.50  # v31j: symmetric (was 0.40/0.55 — left turns weaker than right)
+        # v31r: yaw_gain boosted 0.50→0.90 to compensate for reduced hip amplitude.
+        # With hip=0.03, the knee differential is the primary yaw mechanism.
+        # Higher gain gives more differential → preserves yaw authority.
+        yaw_gain = 0.90
         yaw_diff = min(0.5, max(-0.5, wz_cmd * yaw_gain))
 
         # v31k: Constant forward command bias at gain=0.15.
