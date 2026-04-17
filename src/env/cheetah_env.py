@@ -1566,7 +1566,11 @@ class MiniCheetahEnv(gym.Env):
                 # Instantaneous tracking penalizes this → r_vx_track=1.73/5.0 (35% efficient).
                 # EMA smooths oscillation → r_vx_track≈4.71/5.0 (94% efficient).
                 # Consistent with vy/wz tracking which already use EMA (lines 1454-1455).
-                walk_sigma = 0.10
+                # v31m3: Adaptive sigma — tighter for smaller commands.
+                # At sigma=0.10, walk_back (vx_cmd=-0.3) gets 40.7% free tracking
+                # standing still. Adaptive: sigma = max(0.02, 0.40*vx_cmd²).
+                # vx_cmd=0.5: sigma=0.10 (unchanged). vx_cmd=0.3: sigma=0.036 (8.2% free).
+                walk_sigma = max(0.02, 0.40 * vx_cmd * vx_cmd)
                 r_vx_track_walk = math.exp(-(vx_ema - vx_cmd)**2 / walk_sigma)
                 r_vx_track_walk *= vx_cmd_scale  # gate for commanded DOF
 
@@ -1609,7 +1613,7 @@ class MiniCheetahEnv(gym.Env):
                 # v31l: Restored r_vx_lin (removing it made walk_fwd learn nothing — r/step=-4.61).
                 # Sprint exploit fixed by strong overshoot penalty -5.0 instead.
                 total = (
-                    8.0 * r_vx_track_walk    # v31m2: boosted 5→8 (walk_fwd r/step=0.89 vs stand=7.31)
+                    5.0 * r_vx_track_walk    # v31m3: reverted from 8→5 (boost caused sprinting)
                     + 2.0 * r_vx_lin         # monotonic forward gradient
                     + 3.0 * r_vy_track       # EMA-based (anti-oscillation)
                     + 2.0 * r_vy_lin         # monotonic lateral gradient
@@ -1620,15 +1624,15 @@ class MiniCheetahEnv(gym.Env):
                     - 0.02 * r_smooth        # action smoothness
                     - 3.0 * r_vx_unwanted    # anti-forward-bias
                     - 2.5 * r_vy_unwanted    # anti-lateral-drift
-                    - 4.0 * r_wz_unwanted    # anti-spin (dead zone softens)
-                    - 1.0 * r_heading_drift  # heading correction
-                    - 8.0 * r_vx_overshoot   # v31m2: scaled proportional to tracking (5→8)
+                    - 2.0 * r_wz_unwanted    # v31m3: reduced 4→2 (was -1.07, biggest walk_fwd drain)
+                    - 0.5 * r_heading_drift  # v31m3: reduced 1→0.5 (match run mode)
+                    - 5.0 * r_vx_overshoot   # sprint exploit prevention
                     - 1.5 * r_vy_overshoot   # lateral overshoot
                     - 3.0 * r_vx_var         # v31m: velocity smoothness (anti-lurch)
                     - 2.0 * r_vy_var         # v31m: lateral smoothness
                 )
                 scaled_components = {
-                    "r_vx_track": 8.0 * r_vx_track_walk,
+                    "r_vx_track": 5.0 * r_vx_track_walk,
                     "r_vx_lin": 2.0 * r_vx_lin,
                     "r_vy_track": 3.0 * r_vy_track,
                     "r_vy_lin": 2.0 * r_vy_lin,
@@ -1639,9 +1643,9 @@ class MiniCheetahEnv(gym.Env):
                     "r_smooth": -0.02 * r_smooth,
                     "r_vx_unwanted": -3.0 * r_vx_unwanted,
                     "r_vy_unwanted": -2.5 * r_vy_unwanted,
-                    "r_wz_unwanted": -4.0 * r_wz_unwanted,
-                    "r_heading_drift": -1.0 * r_heading_drift,
-                    "r_vx_overshoot": -8.0 * r_vx_overshoot,
+                    "r_wz_unwanted": -2.0 * r_wz_unwanted,
+                    "r_heading_drift": -0.5 * r_heading_drift,
+                    "r_vx_overshoot": -5.0 * r_vx_overshoot,
                     "r_vy_overshoot": -1.5 * r_vy_overshoot,
                     "r_vx_var": -3.0 * r_vx_var,
                     "r_vy_var": -2.0 * r_vy_var,
