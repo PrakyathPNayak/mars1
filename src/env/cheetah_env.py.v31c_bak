@@ -911,23 +911,19 @@ class MiniCheetahEnv(gym.Env):
         if cmd_mag < 0.05:
             return ref  # truly standing still
 
-        # v31d: Mode-dependent gait amplitude
-        # Walk base=0.32 (normalized at 0.5 m/s), Run base=0.45 (normalized at 2.0 m/s)
-        # BUG FIX: v31b/c had extra 0.30 multiplier → amp_hip=0.096 for walk_fwd
-        # This made forward reference WEAKER than lateral lat_boost=0.15!
-        is_run = self.command_mode == "run"
-        vx_norm = 2.0 if is_run else 0.5
-        base_amp = 0.45 if is_run else 0.32
-        vx_scale = min(1.0, abs(vx_cmd) / vx_norm)
+        # Gait amplitude: scales with |vx|, boosted minimum when lateral/yaw commanded
+        vx_scale = min(1.0, abs(vx_cmd) / 0.5)
         has_lat_yaw = abs(vy_cmd) > 0.05 or abs(wz_cmd) > 0.05
-        speed_scale = base_amp * vx_scale
+        speed_scale = 0.32 * vx_scale
 
         t = self.step_count * self.dt
         freq = 3.0   # Hz
         phase = 2.0 * math.pi * freq * t
+        # v31b: Ensure legs lift enough for lateral/yaw stepping
+        # Action test showed amp_hip≈0.2 needed for lateral. Reference needs ≥0.15.
         lat_boost = 0.15 if has_lat_yaw else 0.0
-        amp_hip = max(lat_boost, speed_scale)
-        amp_knee = max(lat_boost * 1.33, speed_scale * 1.33)
+        amp_hip = max(lat_boost, 0.30 * speed_scale)
+        amp_knee = max(lat_boost * 1.33, 0.40 * speed_scale)
         knee_lead = math.pi / 3.0
         rear_scale = 1.3
 
@@ -1495,16 +1491,10 @@ class MiniCheetahEnv(gym.Env):
                     "r_total": total,
                 }
             else:
-                # v31d: Walk reward — fixed forward ref + height tracking + gated velocity
+                # v31b: Walk reward — gated tracking + unwanted velocity penalty + EMA
                 walk_sigma = 0.10
                 r_vx_track_walk = math.exp(-(vx - vx_cmd)**2 / walk_sigma)
                 r_vx_track_walk *= vx_cmd_scale  # gate for commanded DOF
-
-                # v31d: Height tracking for crouch support
-                # BODY_HEIGHT_SIGMA=0.10 is too loose (77% reward at h=0.26 for target 0.10)
-                # Use tight sigma=0.01 — forces policy to actually reach target height
-                walk_height_sigma = 0.01
-                r_height_walk = math.exp(-(effective_height - self._effective_target_height)**2 / walk_height_sigma)
 
                 total = (
                     5.0 * r_vx_track_walk    # forward tracking (tight sigma)
@@ -1512,7 +1502,6 @@ class MiniCheetahEnv(gym.Env):
                     + 3.0 * r_vy_track       # EMA-based (anti-oscillation)
                     + 2.0 * r_vy_lin         # monotonic lateral gradient
                     + 2.0 * r_wz_track       # EMA-based (anti-oscillation)
-                    + 2.0 * r_height_walk    # v31d: height tracking (crouch)
                     + 0.5 * r_gait           # gait quality
                     - 0.1 * r_orientation    # prevent flipping only
                     - 0.02 * r_smooth        # action smoothness
@@ -1526,7 +1515,6 @@ class MiniCheetahEnv(gym.Env):
                     "r_vy_track": 3.0 * r_vy_track,
                     "r_vy_lin": 2.0 * r_vy_lin,
                     "r_wz_track": 2.0 * r_wz_track,
-                    "r_height_walk": 2.0 * r_height_walk,
                     "r_gait": 0.5 * r_gait,
                     "r_orientation": -0.1 * r_orientation,
                     "r_smooth": -0.02 * r_smooth,
