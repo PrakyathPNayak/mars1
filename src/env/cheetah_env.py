@@ -1972,8 +1972,13 @@ class MiniCheetahEnv(gym.Env):
         mode = self.command_mode
         if mode == "stand":
             vx, vy, wz = 0.0, 0.0, 0.0
-            # Random height for stand (tests crouching in place)
-            height = float(rng.uniform(HEIGHT_MIN, HEIGHT_MAX))
+            # v31s3: Biased height sampling — 40% deep crouch, 60% normal range.
+            # Old uniform: only ~10% samples below 0.15 → policy barely learned crouch.
+            # Deep crouch needs more exposure to learn extreme postures.
+            if float(rng.uniform(0, 1)) < 0.40:
+                height = float(rng.uniform(HEIGHT_MIN, 0.15))  # deep crouch
+            else:
+                height = float(rng.uniform(0.15, HEIGHT_MAX))  # normal range
             self._start_height_ramp(height)
         elif mode == "walk":
             # v31g: Dedicated sampling categories to prevent mode interference.
@@ -2011,8 +2016,11 @@ class MiniCheetahEnv(gym.Env):
                 vx = float(rng.uniform(0.0, 1.20))
                 vy = float(rng.uniform(-0.4, 0.4))
                 wz = float(rng.uniform(-0.8, 0.8))
-            # v31: full height range for crouched walking training
-            height = float(rng.uniform(HEIGHT_MIN, HEIGHT_MAX))
+            # v31s3: Biased height — 30% deep crouch for walk+crouch training
+            if float(rng.uniform(0, 1)) < 0.30:
+                height = float(rng.uniform(HEIGHT_MIN, 0.15))  # crouched walking
+            else:
+                height = float(rng.uniform(0.15, HEIGHT_MAX))  # normal walking
             self._start_height_ramp(height)
         elif mode == "run":
             vx = float(rng.uniform(0.5, 2.0))  # v31s2: achievable range (was 4.0, model gives up)
