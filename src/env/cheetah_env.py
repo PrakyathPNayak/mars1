@@ -1514,8 +1514,8 @@ class MiniCheetahEnv(gym.Env):
             # small wz/vy oscillation (~0.1) that must NOT be penalized.
             # Without dead zone: policy learns standing still is safer than walking.
             if mode in ("walk", "run"):
-                wz_deadzone = 0.12  # natural gait yaw oscillation
-                vy_deadzone = 0.06  # natural gait lateral oscillation
+                wz_deadzone = 0.05  # v31s4: tightened from 0.12 — yaw contamination
+                vy_deadzone = 0.04  # v31s4: tightened from 0.06
             else:
                 wz_deadzone = 0.0
                 vy_deadzone = 0.0
@@ -1708,7 +1708,7 @@ class MiniCheetahEnv(gym.Env):
                     - 1.5 * r_vy_overshoot   # prevent lateral overshoot
                     - 1.0 * r_vx_unwanted    # gentle: penalize fwd when not commanded
                     - 0.5 * r_vy_unwanted    # gentle: penalize lateral drift
-                    - 1.0 * r_wz_unwanted    # gentle: penalize yaw drift
+                    - 4.0 * r_wz_unwanted    # v31s4: strong yaw anti-contamination (was 1.0)
                     - 2.5 * r_effort         # penalize inaction (offsets reference free lunch)
                 )
                 scaled_components = {
@@ -1726,9 +1726,8 @@ class MiniCheetahEnv(gym.Env):
                     "r_vy_overshoot": -1.5 * r_vy_overshoot,
                     "r_vx_unwanted": -1.0 * r_vx_unwanted,
                     "r_vy_unwanted": -0.5 * r_vy_unwanted,
-                    "r_wz_unwanted": -1.0 * r_wz_unwanted,
+                    "r_wz_unwanted": -4.0 * r_wz_unwanted,
                     "r_effort": -2.5 * r_effort,
-                    "r_vx_ema": vx_ema,
                     "r_total": total,
                 }
         elif mode == "jump":
