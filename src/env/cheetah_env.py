@@ -792,7 +792,7 @@ class MiniCheetahEnv(gym.Env):
         # Action magnitude penalty (r_action_mag) keeps corrections small
         # unless they clearly improve tracking/stability. Residual RL approach.
         if self.command_mode == "walk":
-            action_scaled = action * 0.5  # v28: more authority for speed modulation (was 0.3)
+            action_scaled = action * 0.30  # v31s8b: reduced from 0.5→0.30 — shared policy overshoot
         elif self.command_mode == "run":
             action_scaled = action * 0.20  # v31s8: reduced from 0.5→0.20 — model fights reference at higher scale
         else:
