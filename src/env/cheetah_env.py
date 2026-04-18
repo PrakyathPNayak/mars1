@@ -742,9 +742,8 @@ class MiniCheetahEnv(gym.Env):
             if self.forced_mode and self.forced_mode in SKILL_MODES:
                 self.command_mode = self.forced_mode
             else:
-                # v31s6: Balanced curriculum — no aggressive phase shifts.
-                # 55% run and 100% run phases both caused catastrophic forgetting.
-                # Moderate allocation lets all skills train simultaneously.
+                # v31s6b: Balanced curriculum — no aggressive phase shifts.
+                # Run-only experiment confirmed: run works but dies from pitch instability.
                 mode_weights = [0.10, 0.30, 0.30, 0.30]
                 self.command_mode = str(rng.choice(SKILL_MODES, p=mode_weights))
             self._randomize_command_for_mode(rng)
@@ -1597,9 +1596,9 @@ class MiniCheetahEnv(gym.Env):
                     + 0.5 * r_vy_lin         # lateral gradient
                     + 1.0 * r_wz_track       # yaw tracking
                     + 0.5 * r_gait           # gait quality
-                    - 0.3 * r_orientation    # stay upright
-                    - 0.05 * r_ang_vel_xy    # minimal wobble penalty
-                    - 0.05 * r_lin_vel_z     # minimal bounce penalty
+                    - 1.5 * r_orientation    # v31s7: boosted (0.3→1.5) — pitch collapse kills run
+                    - 0.5 * r_ang_vel_xy     # v31s7: boosted (0.05→0.5) — yaw spin prevention
+                    - 0.1 * r_lin_vel_z      # v31s7: boosted (0.05→0.1) — bounce control
                     - 0.01 * r_smooth        # action smoothness
                     - 2.0 * r_vx_unwanted    # anti-forward-bias
                     - 1.5 * r_vy_unwanted    # anti-lateral-drift
@@ -1617,9 +1616,9 @@ class MiniCheetahEnv(gym.Env):
                     "r_wz_track": 1.0 * r_wz_track,
                     "r_vx_lin": 3.0 * r_vx_lin,
                     "r_gait": 0.5 * r_gait,
-                    "r_orientation": -0.3 * r_orientation,
-                    "r_ang_vel_xy": -0.05 * r_ang_vel_xy,
-                    "r_lin_vel_z": -0.05 * r_lin_vel_z,
+                    "r_orientation": -1.5 * r_orientation,
+                    "r_ang_vel_xy": -0.5 * r_ang_vel_xy,
+                    "r_lin_vel_z": -0.1 * r_lin_vel_z,
                     "r_smooth": -0.01 * r_smooth,
                     "r_vx_unwanted": -2.0 * r_vx_unwanted,
                     "r_vy_unwanted": -1.5 * r_vy_unwanted,
