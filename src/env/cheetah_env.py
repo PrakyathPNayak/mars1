@@ -1020,7 +1020,15 @@ class MiniCheetahEnv(gym.Env):
         # v31s10g7: ASYMMETRIC yaw gain — negative yaw overshoots 170% at gain=0.90.
         # yaw+ converges to 91-104% at 0.90 (perfect). yaw- physics creates more torque.
         # Reduce negative gain: 0.90*(100/170)≈0.53, conservative=0.60
-        yaw_gain = 0.90 if wz_cmd >= 0 else 0.60
+        # v31s6g6: Reduce yaw_gain when forward is ALSO commanded.
+        # At gain=0.90, reference produces vx=0% + wz=105% (all energy to yaw).
+        # At gain=0.40, reference gives vx=26% + wz=66% — balanced starting point.
+        # Policy residual adds remaining forward + yaw. Pure yaw keeps high gain.
+        has_fwd_and_yaw = abs(vx_cmd) > 0.05 and abs(wz_cmd) > 0.1
+        if has_fwd_and_yaw:
+            yaw_gain = 0.40 if wz_cmd >= 0 else 0.50
+        else:
+            yaw_gain = 0.90 if wz_cmd >= 0 else 0.60
         yaw_diff = min(0.5, max(-0.5, wz_cmd * yaw_gain))
 
         # v31k: Constant forward command bias at gain=0.15.
