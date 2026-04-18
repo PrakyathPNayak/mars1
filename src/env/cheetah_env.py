@@ -1693,6 +1693,9 @@ class MiniCheetahEnv(gym.Env):
                 # At zero action: effort_penalty ≈ -4.0, tracking ≈ +3.5 → net ≈ -0.5
                 # At active walk: effort_penalty ≈ 0.0, tracking ≈ 8.0 → net ≈ 13.0
                 action_norm_sq = float(np.sum(action**2))
+                # v31s8b: Direct action magnitude penalty — prevents shared-policy
+                # spillover from run mode amplifying walk actions
+                r_action_mag = action_norm_sq
                 cmd_mag = abs(vx_cmd) + abs(vy_cmd) + abs(wz_cmd)
                 # Only penalize inaction when velocity is commanded (not crouch)
                 r_effort = math.exp(-action_norm_sq / 0.5) if cmd_mag > 0.05 else 0.0
@@ -1713,6 +1716,7 @@ class MiniCheetahEnv(gym.Env):
                     - 0.5 * r_vy_unwanted    # gentle: penalize lateral drift
                     - 12.0 * r_wz_unwanted   # v31s5: boosted (8→12) to fix wz=0.3 drift in fwd walk
                     - 2.5 * r_effort         # penalize inaction (offsets reference free lunch)
+                    - 0.5 * r_action_mag     # v31s8b: prevent run-mode magnitude spillover
                 )
                 scaled_components = {
                     "r_vx_track": 8.0 * r_vx_track_walk,
@@ -1731,6 +1735,7 @@ class MiniCheetahEnv(gym.Env):
                     "r_vy_unwanted": -0.5 * r_vy_unwanted,
                     "r_wz_unwanted": -12.0 * r_wz_unwanted,
                     "r_effort": -2.5 * r_effort,
+                    "r_action_mag": -0.5 * r_action_mag,
                     "r_total": total,
                 }
         elif mode == "jump":
