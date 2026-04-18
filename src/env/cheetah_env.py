@@ -1577,8 +1577,15 @@ class MiniCheetahEnv(gym.Env):
                 # v31s6: wider sigma (0.50→0.80) — model barely runs (vx=0.14).
                 # At σ=0.50, exp(-(0-0.8)²/0.5)=0.28. At σ=0.80, exp(-(0-0.8)²/0.8)=0.45.
                 # More reward for partial achievement → faster learning.
-                _RUN_SIGMA = 0.50  # v31s9: tightened 0.80→0.50, reference now aligned
-                r_vx_track_run = math.exp(-(vx_ema - vx_cmd)**2 / _RUN_SIGMA)
+                # v31s9b: asymmetric tracking — tighter sigma for overshoot
+                _RUN_SIGMA = 0.50
+                _vx_err = vx_ema - vx_cmd
+                if _vx_err > 0 and abs(vx_cmd) > 0.05:
+                    # Overshooting: use tighter sigma (0.20) to strongly penalize
+                    r_vx_track_run = math.exp(-_vx_err**2 / 0.20)
+                else:
+                    # Undershooting or no command: standard sigma
+                    r_vx_track_run = math.exp(-_vx_err**2 / _RUN_SIGMA)
                 r_vx_track_run *= vx_cmd_scale
                 r_vx_var = (vx - vx_ema)**2 if abs(vx_cmd) > 0.05 else 0.0
 
