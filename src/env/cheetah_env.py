@@ -109,7 +109,7 @@ DEFAULT_STANCE = np.array([
 HEIGHT_MIN = 0.08       # v31g: deeper crouch ("almost at ground level")
 HEIGHT_MAX = 0.30       # tall standing
 HEIGHT_DEFAULT = 0.27   # normal standing
-HEIGHT_RAMP_STEPS = 25  # smooth transition over 0.5s
+HEIGHT_RAMP_STEPS = 12  # v24: doubled transition speed (was 25 = 0.5s, now 12 = 0.24s at 50Hz)
 
 # Jump trajectory
 JUMP_TRAJECTORY_STEPS = 60   # 1.2s at 50Hz
@@ -238,7 +238,7 @@ MODE_REWARD_MULTIPLIERS = {
 
 # ── Termination ───────────────────────────────────────────────────
 TERMINATION_GRACE_STEPS = 100      # 2s after reset
-MODE_TRANSITION_GRACE_STEPS = 50   # 1s after mode change
+MODE_TRANSITION_GRACE_STEPS = 25   # v24: halved (was 50 = 1s) to match faster height transitions
 COMMAND_RESAMPLE_MIN = 50          # v25: random command duration [50, 1000] steps
 COMMAND_RESAMPLE_MAX = 1000        # v25: = [1s, 20s] at 50Hz
 JUMP_LANDING_COOLDOWN = 25         # v25: 0.5s cooldown after landing before next jump
