@@ -992,11 +992,9 @@ class MiniCheetahEnv(gym.Env):
         # Right-bigger creates positive wz (empirically verified)
         # v31e: Asymmetric gain — negative wz needs more diff to overcome rear_scale bias
         # v31r: yaw_gain boosted 0.50→0.90 to compensate for reduced hip amplitude.
-        # v31s6d: Set to 0 — gait oscillation std=0.69 gave 50%+ free yaw reward.
-        # At gain=0.90, zero-action wz_mean=0.36 → r_wz_track=57%. Total free lunch 50%+.
-        # At gain=0, zero-action wz_mean=0.06 → free lunch <10%. Model must learn yaw
-        # through residual actions. Only affects walk episodes with wz_cmd≠0.
-        yaw_gain = 0.0
+        # With hip=0.03, the knee differential is the primary yaw mechanism.
+        # Higher gain gives more differential → preserves yaw authority.
+        yaw_gain = 0.90
         yaw_diff = min(0.5, max(-0.5, wz_cmd * yaw_gain))
 
         # v31k: Constant forward command bias at gain=0.15.
@@ -1495,7 +1493,7 @@ class MiniCheetahEnv(gym.Env):
             # Instantaneous vy/wz reward let policy oscillate for brief spikes.
             # EMA forces SUSTAINED motion to earn reward.
             sigma_vy_track = max(LATERAL_SIGMA, abs(vy_cmd) * 0.15)  # v31: tighter (was 0.3)
-            sigma_wz_track = max(HEADING_SIGMA, abs(wz_cmd) * 0.15)  # v31: tight sigma — wider causes free lunch from reference oscillation
+            sigma_wz_track = max(HEADING_SIGMA, abs(wz_cmd) * 0.15)  # v31: tighter (was 0.3)
             r_vx_track = math.exp(-(vx - vx_cmd)**2 / TRACKING_SIGMA)
             r_vy_track = math.exp(-(vy_ema_val - vy_cmd)**2 / sigma_vy_track)  # v31: EMA
             r_wz_track = math.exp(-(wz_ema_val - wz_cmd)**2 / sigma_wz_track)  # v31: EMA
@@ -1703,8 +1701,8 @@ class MiniCheetahEnv(gym.Env):
                     + 3.0 * r_vx_lin         # monotonic forward gradient
                     + 3.0 * r_vy_track       # EMA-based lateral tracking
                     + 2.0 * r_vy_lin         # monotonic lateral gradient
-                    + 10.0 * r_wz_track      # v31s6d: boosted (6→10) — yaw 95%→66% gradient imbalance vs vx (11/step vs 5.5)
-                    + 5.0 * r_wz_lin         # v31s6d: boosted (3→5) — sustain yaw gradient
+                    + 6.0 * r_wz_track       # v31s6c: boosted (4→6) — yaw collapsed under run training
+                    + 3.0 * r_wz_lin         # v31s6c: boosted (2→3) — sustain yaw gradient
                     + 2.0 * r_height_walk    # height tracking (crouch)
                     + 0.5 * r_gait           # gait quality
                     - 0.1 * r_orientation    # prevent flipping only
@@ -1721,8 +1719,8 @@ class MiniCheetahEnv(gym.Env):
                     "r_vx_lin": 3.0 * r_vx_lin,
                     "r_vy_track": 3.0 * r_vy_track,
                     "r_vy_lin": 2.0 * r_vy_lin,
-                    "r_wz_track": 10.0 * r_wz_track,
-                    "r_wz_lin": 5.0 * r_wz_lin,
+                    "r_wz_track": 6.0 * r_wz_track,
+                    "r_wz_lin": 3.0 * r_wz_lin,
                     "r_height_walk": 2.0 * r_height_walk,
                     "r_gait": 0.5 * r_gait,
                     "r_orientation": -0.1 * r_orientation,
