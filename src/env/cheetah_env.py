@@ -950,7 +950,7 @@ class MiniCheetahEnv(gym.Env):
         # penalty makes zero-action unprofitable. Policy must ACTIVELY walk.
         is_run = self.command_mode == "run"
         vx_norm = 2.0 if is_run else 0.5
-        base_amp = 0.45 if is_run else 0.10
+        base_amp = 0.40 if is_run else 0.10  # v31s8b: reduced from 0.45→0.40 — overshoot fix
         vx_scale = min(1.0, abs(vx_cmd) / vx_norm)
         has_lat_yaw = abs(vy_cmd) > 0.05 or abs(wz_cmd) > 0.05
         speed_scale = base_amp * vx_scale
@@ -1560,7 +1560,7 @@ class MiniCheetahEnv(gym.Env):
             #          Instantaneous (v31n) → model froze (gait-cycle spikes).
             #          Fast EMA: catches sustained sprints in 2-3 steps, ignores
             #          single-step gait oscillation. Best of both worlds.
-            _OVERSHOOT_DEADZONE = 1.20  # only penalize when >120% of commanded
+            _OVERSHOOT_DEADZONE = 1.15  # v31s9: tightened 1.20→1.15
             vx_fast = self._vx_ema_fast
             vy_fast = self._vy_ema_fast
             if abs(vx_cmd) > 0.05:
@@ -1577,7 +1577,7 @@ class MiniCheetahEnv(gym.Env):
                 # v31s6: wider sigma (0.50→0.80) — model barely runs (vx=0.14).
                 # At σ=0.50, exp(-(0-0.8)²/0.5)=0.28. At σ=0.80, exp(-(0-0.8)²/0.8)=0.45.
                 # More reward for partial achievement → faster learning.
-                _RUN_SIGMA = 0.80
+                _RUN_SIGMA = 0.50  # v31s9: tightened 0.80→0.50, reference now aligned
                 r_vx_track_run = math.exp(-(vx_ema - vx_cmd)**2 / _RUN_SIGMA)
                 r_vx_track_run *= vx_cmd_scale
                 r_vx_var = (vx - vx_ema)**2 if abs(vx_cmd) > 0.05 else 0.0
@@ -1611,6 +1611,7 @@ class MiniCheetahEnv(gym.Env):
                     - 1.5 * r_vy_overshoot   # lateral overshoot
                     - 2.0 * r_vx_var         # v31m: velocity smoothness
                     - 5.0 * r_stall          # v31s2: anti-stall penalty
+                    - 0.3 * r_action_mag     # v31s9: action magnitude penalty (lighter than walk's 0.5)
                 )
                 scaled_components = {
                     "r_vx_track": 4.0 * r_vx_track_run,
@@ -1631,6 +1632,7 @@ class MiniCheetahEnv(gym.Env):
                     "r_vy_overshoot": -1.5 * r_vy_overshoot,
                     "r_vx_var": -2.0 * r_vx_var,
                     "r_stall": -5.0 * r_stall,
+                    "r_action_mag": -0.3 * r_action_mag,
                     "r_vx_ema": vx_ema,
                     "r_total": total,
                 }
