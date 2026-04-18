@@ -794,7 +794,7 @@ class MiniCheetahEnv(gym.Env):
         if self.command_mode == "walk":
             action_scaled = action * 0.30  # v31s10g: overshoot fix (0.5→0.30)
         elif self.command_mode == "run":
-            action_scaled = action * 0.20  # v31s10g9: 0.15→0.20 more authority for speed range
+            action_scaled = action * 0.15  # v31s10g: overshoot fix (0.20→0.15)
         else:
             action_scaled = action * 0.5
 
@@ -967,11 +967,12 @@ class MiniCheetahEnv(gym.Env):
         # Policy learns remaining 50%. Backward also benefits (vx=-0.220→-0.345).
         if abs(vx_cmd) > 0.05 and not is_run:
             speed_scale = max(speed_scale, 0.10)
-        # v31s10g9: Run speed_scale floor — reduced from 0.15 to 0.12 (less overshoot at low speeds).
-        # Cap at 0.22 — above this reference destabilizes (run_1.2 falls at 0.24).
+        # v31s10g10: Run speed_scale floor 0.12 (less overshoot at low speeds).
+        # Cap at 0.20 — the proven sweet spot. Above 0.22 reference destabilizes.
+        # Policy uses residual authority (action_scale=0.15) for speed above ~1.0 m/s.
         if abs(vx_cmd) > 0.05 and is_run:
             speed_scale = max(speed_scale, 0.12)
-            speed_scale = min(speed_scale, 0.22)
+            speed_scale = min(speed_scale, 0.20)
         # v31s10g: yaw needs stepping to produce differential torque.
         # Without this floor, pure yaw gets amp_hip=0 → zero yaw reference.
         if abs(wz_cmd) > 0.1:
