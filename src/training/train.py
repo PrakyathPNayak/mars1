@@ -276,6 +276,15 @@ def train(args):
             if args.finetune_lr is not None:
                 model.learning_rate = args.finetune_lr
                 print(f"  Fine-tune LR: {args.finetune_lr}")
+            # v31s5: Sync curriculum step counter so it doesn't reset on resume.
+            # Without this, curriculum restarts at walk-heavy phase → run/jump forget.
+            resumed_steps = model.num_timesteps
+            per_env_steps = resumed_steps // args.n_envs
+            base_env = vec_env.venv if hasattr(vec_env, 'venv') else vec_env
+            for i in range(args.n_envs):
+                env_i = base_env.envs[i]
+                env_i._training_steps = per_env_steps
+            print(f"  Curriculum synced: {resumed_steps:,} total → {per_env_steps:,} per-env steps")
     else:
         n_epochs = getattr(args, "n_epochs", 5)
         # n_steps=4096: long rollouts improve GAE advantage estimates for locomotion.
