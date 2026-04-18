@@ -1560,7 +1560,7 @@ class MiniCheetahEnv(gym.Env):
             #          Instantaneous (v31n) → model froze (gait-cycle spikes).
             #          Fast EMA: catches sustained sprints in 2-3 steps, ignores
             #          single-step gait oscillation. Best of both worlds.
-            _OVERSHOOT_DEADZONE = 1.15  # v31s9: tightened 1.20→1.15
+            _OVERSHOOT_DEADZONE = 1.05  # v31s9d: tightened 1.15→1.05 — model stuck at 24% overshoot
             vx_fast = self._vx_ema_fast
             vy_fast = self._vy_ema_fast
             if abs(vx_cmd) > 0.05:
@@ -1614,7 +1614,7 @@ class MiniCheetahEnv(gym.Env):
                     - 1.5 * r_vy_unwanted    # anti-lateral-drift
                     - 8.0 * r_wz_unwanted    # v31s6: boosted (2→8) — robot spinning in run mode
                     - 0.5 * r_heading_drift  # heading correction
-                    - 6.0 * r_vx_overshoot   # v31s9c: boosted 2→6 — model stuck at 24% overshoot
+                    - 10.0 * r_vx_overshoot  # v31s9d: boosted 6→10, deadzone 1.15→1.05 — gap 2.9/step at vx=1.24
                     - 1.5 * r_vy_overshoot   # lateral overshoot
                     - 2.0 * r_vx_var         # v31m: velocity smoothness
                     - 5.0 * r_stall          # v31s2: anti-stall penalty
@@ -1635,7 +1635,7 @@ class MiniCheetahEnv(gym.Env):
                     "r_vy_unwanted": -1.5 * r_vy_unwanted,
                     "r_wz_unwanted": -8.0 * r_wz_unwanted,
                     "r_heading_drift": -0.5 * r_heading_drift,
-                    "r_vx_overshoot": -6.0 * r_vx_overshoot,
+                    "r_vx_overshoot": -10.0 * r_vx_overshoot,
                     "r_vy_overshoot": -1.5 * r_vy_overshoot,
                     "r_vx_var": -2.0 * r_vx_var,
                     "r_stall": -5.0 * r_stall,
