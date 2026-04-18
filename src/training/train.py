@@ -121,10 +121,14 @@ def train(args):
 
         def _on_step(self) -> bool:
             if self.num_timesteps % (self._save_freq * self.training_env.num_envs) < self.training_env.num_envs:
+                # Save latest (overwritten each checkpoint)
                 norm_path = os.path.join(self._save_path, "vec_normalize.pkl")
                 self.training_env.save(norm_path)
+                # v31s10d: Also save per-checkpoint pkl so old checkpoints remain evaluable
+                ts_path = os.path.join(self._save_path, f"vec_normalize_{self.num_timesteps}.pkl")
+                self.training_env.save(ts_path)
                 if self.verbose:
-                    print(f"  Saved VecNormalize stats: {norm_path}")
+                    print(f"  Saved VecNormalize stats: {norm_path} + {ts_path}")
             return True
 
     class ProgressLogger(BaseCallback):

@@ -792,9 +792,9 @@ class MiniCheetahEnv(gym.Env):
         # Action magnitude penalty (r_action_mag) keeps corrections small
         # unless they clearly improve tracking/stability. Residual RL approach.
         if self.command_mode == "walk":
-            action_scaled = action * 0.5  # v28: more authority for speed modulation (was 0.3)
+            action_scaled = action * 0.30  # v31s10d: structural overshoot fix (was 0.5)
         elif self.command_mode == "run":
-            action_scaled = action * 0.20  # v31s8: reduced from 0.5→0.20 — model fights reference at higher scale
+            action_scaled = action * 0.15  # v31s10d: structural overshoot fix (was 0.20)
         else:
             action_scaled = action * 0.5
 
@@ -952,7 +952,7 @@ class MiniCheetahEnv(gym.Env):
         # penalty makes zero-action unprofitable. Policy must ACTIVELY walk.
         is_run = self.command_mode == "run"
         vx_norm = 2.0 if is_run else 0.5
-        base_amp = 0.45 if is_run else 0.10
+        base_amp = 0.40 if is_run else 0.10
         vx_scale = min(1.0, abs(vx_cmd) / vx_norm)
         has_lat = abs(vy_cmd) > 0.05  # v31s6g: remove wz_cmd — yaw via residual actions only
         speed_scale = base_amp * vx_scale
@@ -1718,7 +1718,7 @@ class MiniCheetahEnv(gym.Env):
                     - 2.0 * r_vx_overshoot   # prevent sprinting past target
                     - 1.5 * r_vy_overshoot   # prevent lateral overshoot
                     - 3.0 * r_vx_unwanted    # v31s3: boosted from 1.0 — pure lat/yaw had vx=+0.15 drift
-                    - 0.5 * r_vy_unwanted    # gentle: penalize lateral drift
+                    - 1.5 * r_vy_unwanted    # v31s10d: moderate (was 0.5) — drift fix without collapse
                     - 12.0 * r_wz_unwanted   # v31s5: boosted (8→12) to fix wz=0.3 drift in fwd walk
                     - 2.5 * r_effort         # penalize inaction (offsets reference free lunch)
                 )
@@ -1736,7 +1736,7 @@ class MiniCheetahEnv(gym.Env):
                     "r_vx_overshoot": -2.0 * r_vx_overshoot,
                     "r_vy_overshoot": -1.5 * r_vy_overshoot,
                     "r_vx_unwanted": -3.0 * r_vx_unwanted,
-                    "r_vy_unwanted": -0.5 * r_vy_unwanted,
+                    "r_vy_unwanted": -1.5 * r_vy_unwanted,
                     "r_wz_unwanted": -12.0 * r_wz_unwanted,
                     "r_effort": -2.5 * r_effort,
                     "r_total": total,
