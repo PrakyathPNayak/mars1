@@ -638,3 +638,65 @@ Crouch stuck 0.088m. Jump stable ~0.76m.
 - All other metrics stable or improving
 
 **Next:** monitor at 1M, 2M. Watch lateral convergence.
+
+## v31s6g8 @ 1M — Yaw Asymmetry RETURNING
+
+| Scenario | 500K | 1M | Trend |
+|----------|------|-----|-------|
+| walk_fwd | 85% | 90% | ↑↑ |
+| walk_back | 82% | 78% | ↓ slight |
+| lat_L | 149% | 149% | stable (overshoot) |
+| lat_R | 133% | 130% | ↓ converging |
+| yaw_L | 98% | 103% | ↑ slight |
+| yaw_R | 96% | 83% | ↓↓ CONCERNING |
+| fwd_yaw_L vx | 84% | 81% | stable |
+| fwd_yaw_L wz | 90% | 126% | ↑↑ overshoot |
+| fwd_yaw_R vx | 81% | 83% | stable |
+| fwd_yaw_R wz | 89% | 109% | ↑ |
+| run_1.0 | 100% | 101% | stable |
+| run_2.0 | 78% | 78% | stable |
+| jump | 0.772m | 0.773m | stable |
+| crouch | 0.089m | 0.088m | minimal |
+
+**Yaw asymmetry returning**: L=103% vs R=83% (20pp gap, was 2pp at 500K).
+Symmetric gains (0.80) helped at 500K but policy adapting back to asymmetry.
+
+**Root cause analysis**:
+- Reference trajectory IS symmetric (verified mathematically)
+- Balance corrections are OFF during yaw (trim_fade=0 at wz=0.5)
+- PHYSICAL model is left-right symmetric
+- Most likely: observation encoding NOT symmetric (FR,FL,RR,RL ordering).
+  Network weights develop asymmetric features without bilateral symmetry enforcement.
+  Papers (Walk These Ways, legged_gym) use symmetric losses or mirror augmentation.
+
+**Decision**: Wait for 1.5M and 2M. If gap keeps growing, implement mirror augmentation.
+
+**ALSO**: Parallel session committed AGAIN (36443ed) — reverted our yaw fix.
+Our training PID 1218218 running with correct code (7b3a354).
+
+## v31s6g8 @ 1.5M — YAW RECOVERING, WALK STRONG
+
+| Scenario | 500K | 1M | 1.5M | Trend |
+|----------|------|-----|------|-------|
+| walk_fwd | 85% | 90% | 93% | ↑↑ best ever |
+| walk_back | 82% | 78% | 89% | ↑↑ bounce |
+| lat_L | 149% | 149% | 147% | ↓ slow |
+| lat_R | 133% | 130% | 134% | ↔ |
+| yaw_L | 98% | 103% | 98% | ✅ stable |
+| yaw_R | 96% | 83% | 90% | ↑ recovering |
+| fwd_yaw_L vx | 84% | 81% | 81% | stable |
+| fwd_yaw_L wz | 90% | 126% | 120% | ↓ from peak |
+| fwd_yaw_R vx | 81% | 83% | 83% | stable |
+| fwd_yaw_R wz | 89% | 109% | 118% | ↑ |
+| run_1.0 | 100% | 101% | 102% | stable |
+| run_2.0 | 78% | 78% | 80% | ↑ |
+| jump | 0.772m | 0.773m | 0.775m | stable |
+| crouch | 0.089m | 0.088m | 0.088m | stuck |
+
+**Yaw gap trajectory**: 2pp→20pp→8pp. Peaked at 1M, now recovering.
+Symmetric gains working. Policy needed adaptation time.
+
+**fwd_yaw wz**: Now symmetric! L=120%, R=118%. Both overshooting.
+The wz_overshoot penalty (-10.0) should gradually correct this.
+
+**Decision**: Continue training. All trends positive. Monitor at 2M, 2.5M.

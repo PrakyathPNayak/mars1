@@ -143,14 +143,6 @@ ABD_JOINT_INDICES  = np.array([0, 3, 6, 9],  dtype=np.int32)
 HIP_JOINT_INDICES  = np.array([1, 4, 7, 10], dtype=np.int32)
 KNEE_JOINT_INDICES = np.array([2, 5, 8, 11], dtype=np.int32)
 
-# ── Mirror augmentation (bilateral symmetry enforcement) ─────────
-# Swap FR(0-2)↔FL(3-5), RR(6-8)↔RL(9-11) for joints/actions
-_JOINT_MIRROR_IDX = np.array([3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8])
-# Negate abduction: same axis [1,0,0] but swapped range for L vs R legs
-_JOINT_MIRROR_SIGN = np.array([-1, 1, 1, -1, 1, 1, -1, 1, 1, -1, 1, 1], dtype=np.float32)
-# Swap foot order: FR(0)↔FL(1), RR(2)↔RL(3)
-_FOOT_MIRROR_IDX = np.array([1, 0, 3, 2])
-
 # ── Posture targets ───────────────────────────────────────────────
 POSTURE_TARGETS = {
     "stand":   {"hip": 0.9,  "knee": -1.8},
@@ -618,9 +610,6 @@ class MiniCheetahEnv(gym.Env):
         self._ep_reward_sum = 0.0
         self._initial_base_pos = np.zeros(3)
 
-        # Mirror augmentation: disabled by default, enabled during training
-        self._mirror_lr = False
-
         self._init_simulator()
 
     def _find_model(self):
@@ -787,23 +776,10 @@ class MiniCheetahEnv(gym.Env):
                     self._wz_ema = init_wz * 0.5  # v31: bootstrap wz EMA too
                     self._wz_ema_slow = init_wz * 0.3  # v31s4: bootstrap slow EMA
 
-        # v31s6g9: Mirror augmentation — 50% chance of left-right mirror per episode.
-        # Forces bilateral symmetry in the learned policy by making the network
-        # unable to distinguish real from mirrored observations.
-        if self.randomize_commands:
-            self._mirror_lr = bool(rng.random() < 0.5)
-        else:
-            self._mirror_lr = False
-
         return self._get_obs(), {}
 
     def step(self, action: np.ndarray):
         action = np.clip(action, -1.0, 1.0).astype(np.float32)
-
-        # v31s6g9: Mirror augmentation — unmirror policy action to physical frame.
-        # Policy sees mirrored obs, outputs mirrored action. We unmirror before physics.
-        if self._mirror_lr:
-            action = action[_JOINT_MIRROR_IDX] * _JOINT_MIRROR_SIGN
 
         # Advance height control
         self._update_height_ramp()
@@ -1241,69 +1217,8 @@ class MiniCheetahEnv(gym.Env):
         # Manual normalization (fixed scales, no running stats)
         obs = obs / OBS_SCALES
 
-        # v31s6g9: Mirror augmentation — transform obs to mirrored frame
-        if self._mirror_lr:
-            obs = self._mirror_obs(obs)
-
         # NO sensor noise — perfect sensors for advanced training
         return obs
-
-    def _mirror_obs(self, obs: np.ndarray) -> np.ndarray:
-        """Left-right mirror observation for bilateral symmetry enforcement.
-
-        Swaps FR↔FL and RR↔RL joints, negates lateral/yaw quantities,
-        flips heightmap columns. Applied after OBS_SCALES normalization
-        (all mirrored groups have uniform scales, so order is safe).
-        """
-        m = obs.copy()
-
-        # qpos [0:12]: swap FR↔FL, RR↔RL, negate abd
-        m[0:12] = obs[_JOINT_MIRROR_IDX] * _JOINT_MIRROR_SIGN
-
-        # qvel [12:24]: same permutation and sign
-        m[12:24] = obs[12 + _JOINT_MIRROR_IDX] * _JOINT_MIRROR_SIGN
-
-        # base_linvel [24:27]: negate vy (lateral)
-        m[25] = -obs[25]
-
-        # base_angvel [27:30]: negate wx (roll) and wz (yaw)
-        m[27] = -obs[27]
-        m[29] = -obs[29]
-
-        # gravity_body [30:33]: negate gy (lateral component)
-        m[31] = -obs[31]
-
-        # prev_action [33:45]: joint mirror
-        m[33:45] = obs[33 + _JOINT_MIRROR_IDX] * _JOINT_MIRROR_SIGN
-
-        # command [45:49]: negate vy_cmd (46), negate wz_cmd (47)
-        m[46] = -obs[46]
-        m[47] = -obs[47]
-
-        # skill_onehot [49:53]: unchanged
-
-        # cmd_decomp [53:59]: negate sin(heading)(54), negate lat_sign(58)
-        m[54] = -obs[54]
-        m[58] = -obs[58]
-
-        # base_height [59:60]: unchanged
-
-        # foot_contacts [60:64]: swap FR↔FL, RR↔RL
-        m[60:64] = obs[60 + _FOOT_MIRROR_IDX]
-
-        # cpg_phase [64:66]: negate both (shift by π for trot diagonal swap)
-        m[64:66] = -obs[64:66]
-
-        # height_control [66:71]: unchanged
-
-        # foot_heights [71:75]: swap FR↔FL, RR↔RL
-        m[71:75] = obs[71 + _FOOT_MIRROR_IDX]
-
-        # heightmap [75:196]: flip columns (lateral flip on 11×11 grid)
-        hm = obs[75:196].reshape(HEIGHTMAP_ROWS, HEIGHTMAP_COLS)
-        m[75:196] = hm[:, ::-1].flatten()
-
-        return m
 
     # ══════════════════════════════════════════════════════════════
     #  Reward
