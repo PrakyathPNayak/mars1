@@ -35,12 +35,11 @@ TEST_SCENARIOS = [
     ("run",    1.5,  0.0,  0.0, "run forward 1.5"),
     ("run",    2.0,  0.0,  0.0, "run fast 2.0"),
     ("run",    1.0,  0.3,  0.0, "run + lateral"),
-    ("crouch", 0.0,  0.0,  0.0, "crouch still"),
     ("jump",   0.2,  0.0,  0.0, "jump"),
 ]
 
 HEIGHT_TARGETS = {
-    "stand": 0.27, "walk": 0.27, "run": 0.27, "crouch": 0.18, "jump": 0.35,
+    "stand": 0.27, "walk": 0.27, "run": 0.27, "jump": 0.35,
 }
 
 
@@ -52,10 +51,11 @@ def evaluate_scenario(env, policy, normalize_fn, mode, vx, vy, wz, n_steps=500):
     env.command = np.array([vx, vy, wz], dtype=np.float32)
     env.target_height = HEIGHT_TARGETS[mode]
 
-    # Re-encode skill one-hot in observation after mode change
-    skill_idx = {"stand": 0, "walk": 1, "run": 2, "crouch": 3, "jump": 4}[mode]
-    obs[54:59] = 0.0
-    obs[54 + skill_idx] = 1.0
+    # Re-encode skill one-hot in observation after mode change.
+    # In v23 env, skill one-hot is at obs[49:53] (4 modes: stand/walk/run/jump).
+    skill_idx = {"stand": 0, "walk": 1, "run": 2, "jump": 3}[mode]
+    obs[49:53] = 0.0
+    obs[49 + skill_idx] = 1.0
     obs[45:49] = [vx, vy, wz, env.target_height]
 
     total_r = 0.0

@@ -14,14 +14,14 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.env.cheetah_env import HEIGHT_TARGETS, MiniCheetahEnv
-
+from src.env.cheetah_env import HEIGHT_DEFAULT, MiniCheetahEnv, SKILL_MODES
 
 def run_diag(mode: str, steps: int = 200) -> None:
     env = MiniCheetahEnv(render_mode="none", randomize_domain=False)
     env.randomize_commands = False
     env.command_mode = mode
-    env.target_height = HEIGHT_TARGETS.get(mode, 0.27)
+    # In v23 crouch is just a lower target height
+    env.target_height = 0.18 if mode == "crouch" else HEIGHT_DEFAULT
     env.command = np.zeros(3, dtype=np.float32)
     env.reset(seed=42)
 
@@ -51,7 +51,7 @@ def run_diag(mode: str, steps: int = 200) -> None:
 
 
 def main() -> None:
-    valid_modes = list(HEIGHT_TARGETS.keys())
+    valid_modes = list(SKILL_MODES) + ["crouch"]
     parser = argparse.ArgumentParser(description="Reward component diagnostic")
     parser.add_argument(
         "--mode",

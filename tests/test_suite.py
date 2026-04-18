@@ -28,6 +28,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 os.chdir(PROJECT_ROOT)
 
+# Import OBS_DIM so all assertions stay in sync with the environment.
+try:
+    from src.env.cheetah_env import OBS_DIM as ENV_OBS_DIM
+except ImportError:
+    ENV_OBS_DIM = 196  # fallback if env import fails during collection
+
 
 # ---------------------------------------------------------------------------
 # Data classes for test results
@@ -159,10 +165,10 @@ class TestSuite:
         from src.env.cheetah_env import MiniCheetahEnv
         env = MiniCheetahEnv(render_mode="none", randomize_domain=False)
         obs, info = env.reset(seed=42)
-        assert obs.shape == (54,), f"Expected (54,), got {obs.shape}"
+        assert obs.shape == (ENV_OBS_DIM,), f"Expected ({ENV_OBS_DIM},), got {obs.shape}"
         assert obs.dtype == np.float32
         env.close()
-        return {"obs_dim": 54}
+        return {"obs_dim": ENV_OBS_DIM}
 
     def _test_env_step(self):
         from src.env.cheetah_env import MiniCheetahEnv
@@ -170,7 +176,7 @@ class TestSuite:
         env.reset(seed=42)
         action = np.zeros(12, dtype=np.float32)
         obs, reward, done, trunc, info = env.step(action)
-        assert obs.shape == (54,)
+        assert obs.shape == (ENV_OBS_DIM,)
         assert isinstance(reward, float)
         env.close()
         return {"reward": reward}
@@ -179,14 +185,18 @@ class TestSuite:
         from src.env.cheetah_env import MiniCheetahEnv
         env = MiniCheetahEnv(render_mode="none")
         assert env.action_space.shape == (12,)
-        assert float(env.action_space.low[0]) == -0.5
-        assert float(env.action_space.high[0]) == 0.5
+        assert float(env.action_space.low[0]) == -1.0, (
+            f"Expected action low=-1.0, got {env.action_space.low[0]}"
+        )
+        assert float(env.action_space.high[0]) == 1.0, (
+            f"Expected action high=1.0, got {env.action_space.high[0]}"
+        )
         env.close()
 
     def _test_observation_space(self):
         from src.env.cheetah_env import MiniCheetahEnv
         env = MiniCheetahEnv(render_mode="none", randomize_domain=False)
-        assert env.observation_space.shape == (54,)
+        assert env.observation_space.shape == (ENV_OBS_DIM,)
         obs, _ = env.reset()
         assert env.observation_space.contains(obs)
         env.close()
@@ -300,7 +310,8 @@ class TestSuite:
         from src.training.advanced_policy import HierarchicalTransformerPolicy
         policy = HierarchicalTransformerPolicy(d_model=64, n_transformer_layers=2,
                                                 n_experts=2)
-        obs = torch.randn(2, 1, 54)
+        # Use ENV_OBS_DIM (196) so sensory group slices don't go out of range
+        obs = torch.randn(2, 1, ENV_OBS_DIM)
         step_count = torch.zeros(2)
         out = policy(obs, step_count=step_count)
         assert out["action_mean"].shape == (2, 12)
@@ -407,7 +418,7 @@ class TestSuite:
             TransformerActorCriticPolicy, env,
             n_steps=32, batch_size=32, verbose=0, device="cpu",
             policy_kwargs=dict(d_model=64, n_heads=2, n_layers=1, n_experts=2,
-                               history_len=8, obs_dim=54),
+                               history_len=8, obs_dim=ENV_OBS_DIM),
         )
         model.learn(total_timesteps=64)
         n_params = sum(p.numel() for p in model.policy.parameters())
@@ -420,10 +431,11 @@ class TestSuite:
         env = MiniCheetahEnv(render_mode="none", randomize_domain=False)
         wrapped = HistoryWrapper(env, history_len=8)
         obs, _ = wrapped.reset()
-        # HistoryWrapper may return (history_len, obs_dim) or (history_len * obs_dim,)
-        assert obs.size == 8 * 54, f"Expected 432 elements, got {obs.size}"
+        # HistoryWrapper returns (history_len * obs_dim,) flattened
+        expected_size = 8 * ENV_OBS_DIM
+        assert obs.size == expected_size, f"Expected {expected_size} elements, got {obs.size}"
         obs2, _, _, _, _ = wrapped.step(np.zeros(12, dtype=np.float32))
-        assert obs2.size == 8 * 54, f"Expected 432 elements, got {obs2.size}"
+        assert obs2.size == expected_size, f"Expected {expected_size} elements, got {obs2.size}"
         wrapped.close()
         return {"obs_shape": list(obs.shape)}
 
@@ -819,8 +831,8 @@ class TestSuite:
 <h2>Environment Info</h2>
 <pre>
 Project: Unitree Go1 Locomotion
-Base Obs Dim: 49   |  Terrain Obs Dim: 57
-Action Dim: 12     |  Control: PD (kp=100, kd=0)
+Base Obs Dim: {ENV_OBS_DIM}  |  Terrain Obs Dim: 57
+Action Dim: 12     |  Control: PD (kp=60, kd=0.5)
 Terrain Types: {', '.join(TerrainGenerator.TERRAIN_TYPES) if 'TerrainGenerator' in dir() else 'flat, rough, slope_up, slope_down, stairs_up, stairs_down, gaps, stepping_stones, random_blocks, mixed'}
 Skill Modes: {', '.join(SKILL_MODES.keys()) if 'SKILL_MODES' in dir() else 'walk, trot, run, jump, crouch, stand'}
 </pre>

@@ -1,0 +1,26 @@
+Fatal Python error: Segmentation fault
+
+Current thread 0x00007174797fa6c0 (most recent call first):
+  File "/home/sindhu/Downloads/MARS_sin/mars1/venv/lib/python3.12/site-packages/mujoco/viewer.py", line 525 in _launch_internal
+  File "/usr/lib/python3.12/threading.py", line 1010 in run
+  File "/usr/lib/python3.12/threading.py", line 1073 in _bootstrap_inner
+  File "/usr/lib/python3.12/threading.py", line 1030 in _bootstrap
+
+Thread 0x00007175ccfb7740 (most recent call first):
+  File "/home/sindhu/Downloads/MARS_sin/mars1/venv/lib/python3.12/site-packages/glfw/__init__.py", line 832 in terminate
+
+Extension modules: numpy._core._multiarray_umath, numpy.linalg._umath_linalg, torch._C, torch._C._dynamo.autograd_compiler, torch._C._dynamo.eval_frame, torch._C._dynamo.guards, torch._C._dynamo.utils, torch._C._fft, torch._C._linalg, torch._C._nested, torch._C._nn, torch._C._sparse, torch._C._special, numpy.random._common, numpy.random.bit_generator, numpy.random._bounded_integers, numpy.random._pcg64, numpy.random._generator, numpy.random._mt19937, numpy.random._philox, numpy.random._sfc64, numpy.random.mtrand, google._upb._message, PIL._imaging, kiwisolver._cext, _cyutility, pandas._libs._cyutility, pandas._libs.tslibs.ccalendar, pandas._libs.tslibs.np_datetime, pandas._libs.tslibs.dtypes, pandas._libs.tslibs.base, pandas._libs.tslibs.nattype, pandas._libs.tslibs.timezones, pandas._libs.properties, pandas._libs.tslibs.fields, pandas._libs.tslibs.timedeltas, pandas._libs.tslibs.tzconversion, pandas._libs.tslibs.timestamps, pandas._libs.tslibs.offsets, pandas._libs.tslibs.strptime, pandas._libs.tslibs.parsing, pandas._libs.tslibs.conversion, pandas._libs.tslibs.periodmalloc(): unsorted double linked list corrupted
+, pandas._libs.tslibs.vectorized, pandas._libs.ops_dispatchFatal Python error: , Abortedpandas._libs.missing
+
+Thread 0x, 00007174797fa6c0pandas._libs.hashtable (most recent call first):
+  File , "pandas._libs.algos/home/sindhu/Downloads/MARS_sin/mars1/venv/lib/python3.12/site-packages/mujoco/viewer.py", , line pandas._libs.interval525 in _launch_internal, 
+pandas._libs.lib  File "/usr/lib/python3.12/threading.py, "pandas._libs.ops, line 1010 in , runpandas._libs.hashing
+  File , "pandas._libs.arrays/usr/lib/python3.12/threading.py", , line pandas._libs.tslib1073 in , _bootstrap_innerpandas._libs.sparse
+  File , "pandas._libs.internals/usr/lib/python3.12/threading.py", , line pandas._libs.indexing1030 in _bootstrap, 
+pandas._libs.index
+Current thread 0x, 00007175ccfb7740pandas._libs.writers (most recent call first):
+  File , "pandas._libs.join/usr/lib/python3.12/weakref.py", line , 637pandas._libs.window.aggregations in _select_for_exit
+,   File pandas._libs.window.indexers"/usr/lib/python3.12/weakref.py", , line pandas._libs.reshape656 in , _exitfuncpandas._libs.groupby
+, pandas._libs.json, pandas._libs.parsers, pandas._libs.testing, psutil._psutil_linux (total: 68)
+
+Extension modules: 

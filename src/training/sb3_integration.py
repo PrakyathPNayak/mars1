@@ -168,6 +168,15 @@ class TransformerExtractor(BaseFeaturesExtractor):
 
         self._init_weights()
 
+    def reset_step_counter(self):
+        """Reset the per-episode step counter used by GaitPhaseOscillator.
+
+        Must be called at the start of each new episode/rollout so the
+        oscillator phase is episode-relative, not monotonically increasing.
+        Without this the phase wraps randomly relative to gait timing.
+        """
+        self._step_counter_buf.zero_()
+
     def _init_weights(self):
         import math
         for module in self.modules():
@@ -471,8 +480,13 @@ class WorldModelCallback(BaseCallback):
         obs = torch.tensor(buf.observations[indices], dtype=torch.float32, device=device)
         actions = torch.tensor(buf.actions[indices], dtype=torch.float32, device=device)
 
-        # For next obs, use index + 1 (when available)
-        next_indices = np.minimum(indices + 1, buf.buffer_size - 1)
+        # For next obs, use index + 1 clamped to the valid written range.
+        # ISSUE-11 fix: using buf.buffer_size - 1 caused the last slot to be
+        # its own target (f(s_T, a_T) = s_T), corrupting WM learning.
+        # buf.pos is SB3's write pointer — observations before pos are valid.
+        valid_end = buf.pos if not buf.full else buf.buffer_size
+        valid_end = max(valid_end - 1, 0)  # last *complete* transition
+        next_indices = np.minimum(indices + 1, valid_end)
         next_obs = torch.tensor(
             buf.observations[next_indices], dtype=torch.float32, device=device
         )
@@ -494,6 +508,33 @@ class WorldModelCallback(BaseCallback):
 
         if self.verbose > 0:
             print(f"  [WM] loss={loss.item():.4f}")
+
+
+
+# ── Phase Oscillator Reset Callback ─────────────────────────────────
+
+class PhaseOscillatorResetCallback(BaseCallback):
+    """Resets the TransformerExtractor step counter at rollout start.
+
+    ISSUE-12 fix: Without this, _step_counter_buf grows monotonically across
+    episodes. The GaitPhaseOscillator uses it to compute sin/cos phases, so
+    a monotonically-growing counter produces meaningless phases relative to
+    the actual gait cycle within an episode.
+
+    Resetting at _on_rollout_start() means each rollout sees step counts
+    starting from ~0, keeping the oscillator in sync with the episode phase.
+    """
+
+    def _on_rollout_start(self) -> None:
+        try:
+            extractor = self.model.policy.features_extractor
+            if hasattr(extractor, "reset_step_counter"):
+                extractor.reset_step_counter()
+        except AttributeError:
+            pass  # non-Transformer policy; no-op
+
+    def _on_step(self) -> bool:
+        return True
 
 
 # ── Curriculum Callback ──────────────────────────────────────────────
