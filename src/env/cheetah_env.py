@@ -1650,7 +1650,7 @@ class MiniCheetahEnv(gym.Env):
                     "r_heading_drift": -0.5 * r_heading_drift,
                     "r_vx_overshoot": -2.0 * r_vx_overshoot,
                     "r_vy_overshoot": -1.5 * r_vy_overshoot,
-                    "r_wz_overshoot": -2.0 * r_wz_overshoot,
+                    "r_wz_overshoot": -8.0 * r_wz_overshoot,
                     "r_vx_var": -2.0 * r_vx_var,
                     "r_stall": -5.0 * r_stall,
                     "r_vx_ema": vx_ema,
