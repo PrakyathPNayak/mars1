@@ -792,9 +792,9 @@ class MiniCheetahEnv(gym.Env):
         # Action magnitude penalty (r_action_mag) keeps corrections small
         # unless they clearly improve tracking/stability. Residual RL approach.
         if self.command_mode == "walk":
-            action_scaled = action * 0.30  # v31s10d: structural overshoot fix (was 0.5)
+            action_scaled = action * 0.5  # v28: more authority for speed modulation (was 0.3)
         elif self.command_mode == "run":
-            action_scaled = action * 0.15  # v31s10d: structural overshoot fix (was 0.20)
+            action_scaled = action * 0.20  # v31s8: reduced from 0.5→0.20 — model fights reference at higher scale
         else:
             action_scaled = action * 0.5
 
@@ -943,7 +943,12 @@ class MiniCheetahEnv(gym.Env):
         # v31s6g: Remove wz_cmd from gait activation — pure yaw gave +0.127 free wz
         # from trot dynamics. Model must learn to step for yaw via residual actions.
         cmd_mag = abs(vx_cmd) + abs(vy_cmd)
-        if cmd_mag < 0.05:
+        # v31s6g2: Provide minimal gait for pure yaw so model can discover stepping.
+        # Without this, pure yaw has zero reference and model stuck at 0%.
+        # 0.15 gives small steps (~30% of normal walk) — enough to learn from.
+        if cmd_mag < 0.05 and abs(wz_cmd) > 0.1:
+            cmd_mag = 0.15
+        elif cmd_mag < 0.05:
             return ref  # truly standing still
 
         # v31q: Walk reference — moderate bootstrapping + action effort penalty.
@@ -952,7 +957,7 @@ class MiniCheetahEnv(gym.Env):
         # penalty makes zero-action unprofitable. Policy must ACTIVELY walk.
         is_run = self.command_mode == "run"
         vx_norm = 2.0 if is_run else 0.5
-        base_amp = 0.40 if is_run else 0.10
+        base_amp = 0.45 if is_run else 0.10
         vx_scale = min(1.0, abs(vx_cmd) / vx_norm)
         has_lat = abs(vy_cmd) > 0.05  # v31s6g: remove wz_cmd — yaw via residual actions only
         speed_scale = base_amp * vx_scale
@@ -998,7 +1003,7 @@ class MiniCheetahEnv(gym.Env):
         # At gain=0.90, zero-action wz_mean=0.36 → r_wz_track=57%. Total free lunch 50%+.
         # At gain=0, zero-action wz_mean=0.06 → free lunch <10%. Model must learn yaw
         # through residual actions. Only affects walk episodes with wz_cmd≠0.
-        yaw_gain = 0.05  # v31s6g: small directional cue when gait active from vx/vy
+        yaw_gain = 0.10  # v31s6g2: boosted 0.05→0.10 for stronger directional reference
         yaw_diff = min(0.5, max(-0.5, wz_cmd * yaw_gain))
 
         # v31k: Constant forward command bias at gain=0.15.
@@ -1718,7 +1723,7 @@ class MiniCheetahEnv(gym.Env):
                     - 2.0 * r_vx_overshoot   # prevent sprinting past target
                     - 1.5 * r_vy_overshoot   # prevent lateral overshoot
                     - 3.0 * r_vx_unwanted    # v31s3: boosted from 1.0 — pure lat/yaw had vx=+0.15 drift
-                    - 1.5 * r_vy_unwanted    # v31s10d: moderate (was 0.5) — drift fix without collapse
+                    - 0.5 * r_vy_unwanted    # gentle: penalize lateral drift
                     - 12.0 * r_wz_unwanted   # v31s5: boosted (8→12) to fix wz=0.3 drift in fwd walk
                     - 2.5 * r_effort         # penalize inaction (offsets reference free lunch)
                 )
@@ -1736,7 +1741,7 @@ class MiniCheetahEnv(gym.Env):
                     "r_vx_overshoot": -2.0 * r_vx_overshoot,
                     "r_vy_overshoot": -1.5 * r_vy_overshoot,
                     "r_vx_unwanted": -3.0 * r_vx_unwanted,
-                    "r_vy_unwanted": -1.5 * r_vy_unwanted,
+                    "r_vy_unwanted": -0.5 * r_vy_unwanted,
                     "r_wz_unwanted": -12.0 * r_wz_unwanted,
                     "r_effort": -2.5 * r_effort,
                     "r_total": total,
