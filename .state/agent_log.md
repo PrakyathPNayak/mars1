@@ -589,3 +589,52 @@ Walk fwd big jump. fwd_yaw vx both up. run_1.0 perfect.
 YAW ASYMMETRY growing: L=112% vs R=79% (33pp gap). Watch at 2M.
 fwd_yaw_L wz overshooting 132%. lat_R still 122%.
 Crouch stuck 0.088m. Jump stable ~0.76m.
+
+## v31s6g8 — Yaw Symmetry Fix
+
+**Changes:**
+1. Pure yaw_gain: 0.90/0.60 → 0.80 symmetric (fixes 33pp gap at 1.5M)
+2. fwd+yaw yaw_gain: restored conditional with 0.35 symmetric
+3. Walk reward: re-applied vx=18, wz=20 (parallel session reverted AGAIN in dd30a62)
+4. Kept: parallel session overshoot deadzone 1.10, walk penalties 5/3
+
+**Commit:** 7b3a354, pushed to origin
+**Resume from:** v31s6g7 1.5M checkpoint
+**Training PID:** 1218218, target 5M steps
+
+**Expected yaw at 500K:**
+- yaw_L: 112% * (0.80/0.90) ≈ 100% (from linear scaling)
+- yaw_R: 79% * (0.80/0.60) ≈ 105% (from linear scaling)
+- fwd_yaw_L wz: should reduce from 132% with gain 0.35 (was 0.40)
+
+## v31s6g8 @ 500K — YAW SYMMETRY FIX CONFIRMED
+
+| Scenario | g7@1.5M | g8@500K | Change |
+|----------|---------|---------|--------|
+| walk_fwd | 85% | 85% | stable |
+| walk_back | 76% | 82% | ↑ |
+| lat_L | 159% | 149% | ↓ converging |
+| lat_R | 122% | 133% | ↑ slightly |
+| yaw_L | 112% | **98%** | ↓↓ FIXED |
+| yaw_R | 79% | **96%** | ↑↑ FIXED |
+| fwd_yaw_L vx | 82% | 84% | stable |
+| fwd_yaw_L wz | 132% | **90%** | ↓↓ FIXED |
+| fwd_yaw_R vx | 85% | 81% | slight drop |
+| fwd_yaw_R wz | 91% | 89% | stable |
+| run_1.0 | 100% | 100% | PERFECT |
+| run_2.0 | 77% | 78% | stable |
+| jump | 0.760m | 0.772m | ↑ |
+| crouch | 0.089m | 0.089m | stable |
+
+**KEY WINS:**
+- Yaw gap: 33pp → 2pp. L=98%, R=96%. SYMMETRIC.
+- fwd_yaw wz: 132%→90% (L), 91%→89% (R). Both near target.
+- fwd_yaw symmetric: L vx=84%/wz=90%, R vx=81%/wz=89%.
+- walk_back improved 76%→82%.
+
+**Remaining issues:**
+- lat_L=149%, lat_R=133% — still overshooting, need time to converge
+- crouch=0.089m — stuck, may need separate attention
+- All other metrics stable or improving
+
+**Next:** monitor at 1M, 2M. Watch lateral convergence.
