@@ -359,3 +359,37 @@ ALL run speeds now STABLE at zero-action. Cap works.
 
 KEY: run_1.2 UNLOCKED — first time working ever!
 Training PID 1465538, waiting for 2M evaluation.
+
+## v31s6g6 — fwd_yaw reward rebalance (2025-04-19)
+
+### Problem
+fwd_yaw tracking: -29% vx (robot walks BACKWARD while turning perfectly).
+Root cause: wz reward total=27 (track=12 + lin=15) vs vx total=11 (track=8 + lin=3).
+Model rationally ignores forward velocity — 2.5x more reward from yaw.
+
+### Fix (commit 5bde947)
+- r_vx_track_walk: 8→14, r_vx_lin: 3→4 (vx total: 11→18)
+- r_wz_lin: 15→8 (wz total: 27→20)  
+- r_wz_overshoot: -2→-6 (compensate reduced wz_lin)
+- Added fwd+yaw sampling category (10% of walk)
+- New balance: vx=18 vs wz=20 (was 11 vs 27)
+
+### v31s6g5 final eval @ 3.1M (OLD rewards, pre-fix baseline)
+| Scenario | Tracking |
+|----------|----------|
+| walk_fwd | 41% (regressed from 73% at 3M) |
+| walk_back | 72% |
+| lat_L | 84% |
+| lat_R | 65% |
+| yaw_L | 66% (regressed from 98% at 3M) |
+| yaw_R | 34% |
+| fwd_yaw_L | vx:-29%, wz:94% THE PROBLEM | 
+| fwd_yaw_R | vx:33%, wz:35% |
+| run_1.0 | 106% |
+| run_2.0 | 0% (collapsed) |
+
+### Training
+- Resume from: v31s6g5 best_2M_run81_yaw90.zip (best all-around)
+- PID: 2751368, started 19:16
+- Watch: fwd_yaw recovery, yaw maintenance, run_2.0 stability
+
