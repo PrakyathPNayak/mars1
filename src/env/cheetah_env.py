@@ -792,9 +792,9 @@ class MiniCheetahEnv(gym.Env):
         # Action magnitude penalty (r_action_mag) keeps corrections small
         # unless they clearly improve tracking/stability. Residual RL approach.
         if self.command_mode == "walk":
-            action_scaled = action * 0.30  # v31s10e: overshoot fix (was 0.5)
+            action_scaled = action * 0.5  # v28: more authority for speed modulation (was 0.3)
         elif self.command_mode == "run":
-            action_scaled = action * 0.15  # v31s10e: overshoot fix (was 0.20)
+            action_scaled = action * 0.20  # v31s8: reduced from 0.5→0.20 — model fights reference at higher scale
         else:
             action_scaled = action * 0.5
 
@@ -947,7 +947,7 @@ class MiniCheetahEnv(gym.Env):
         # Without this, pure yaw has zero reference and model stuck at 0%.
         # 0.15 gives small steps (~30% of normal walk) — enough to learn from.
         if cmd_mag < 0.05 and abs(wz_cmd) > 0.1:
-            cmd_mag = 0.30  # v31s10e: boosted 0.15→0.30 — yaw needs larger steps for discovery
+            cmd_mag = 0.15
         elif cmd_mag < 0.05:
             return ref  # truly standing still
 
@@ -957,7 +957,7 @@ class MiniCheetahEnv(gym.Env):
         # penalty makes zero-action unprofitable. Policy must ACTIVELY walk.
         is_run = self.command_mode == "run"
         vx_norm = 2.0 if is_run else 0.5
-        base_amp = 0.40 if is_run else 0.10  # v31s10e: structural overshoot fix (0.45→0.40)
+        base_amp = 0.45 if is_run else 0.10
         vx_scale = min(1.0, abs(vx_cmd) / vx_norm)
         has_lat = abs(vy_cmd) > 0.05  # v31s6g: remove wz_cmd — yaw via residual actions only
         speed_scale = base_amp * vx_scale
@@ -967,11 +967,6 @@ class MiniCheetahEnv(gym.Env):
         # Policy learns remaining 50%. Backward also benefits (vx=-0.220→-0.345).
         if abs(vx_cmd) > 0.05 and not is_run:
             speed_scale = max(speed_scale, 0.10)
-        # v31s10e: Yaw needs stepping to generate torque. Without stepping amplitude,
-        # yaw_gain differential creates static lean, not rotation.
-        # Floor of 0.10 gives small steps during pure yaw for discovery.
-        if abs(wz_cmd) > 0.1 and speed_scale < 0.10:
-            speed_scale = 0.10
 
         t = self.step_count * self.dt
         # v31s6: Run uses higher gait frequency for stability at speed.
@@ -1008,7 +1003,7 @@ class MiniCheetahEnv(gym.Env):
         # At gain=0.90, zero-action wz_mean=0.36 → r_wz_track=57%. Total free lunch 50%+.
         # At gain=0, zero-action wz_mean=0.06 → free lunch <10%. Model must learn yaw
         # through residual actions. Only affects walk episodes with wz_cmd≠0.
-        yaw_gain = 0.40  # v31s10e: boosted 0.10→0.40 — yaw dead at 0.10 after 600K
+        yaw_gain = 0.10  # v31s6g2: boosted 0.05→0.10 for stronger directional reference
         yaw_diff = min(0.5, max(-0.5, wz_cmd * yaw_gain))
 
         # v31k: Constant forward command bias at gain=0.15.

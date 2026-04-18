@@ -31,7 +31,8 @@ checkpoints/
 *.mp4
 
 # State tracking
-.state/
+#.state/
+# commented to get the status from the remote pc.
 
 # Jupyter
 .ipynb_checkpoints/
