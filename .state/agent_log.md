@@ -565,3 +565,27 @@ Analysis:
 - Next iteration needs: vx/vy overshoot penalty (like r_wz_overshoot).
 
 ### Letting training continue to 5M. Will pick best checkpoint after.
+
+## v31s6g7 @ 1.5M Eval
+
+| Scenario | 1M | 1.5M | Trend |
+|----------|-----|------|-------|
+| walk_fwd | 75% | 85% | ↑↑ great |
+| walk_back | 75% | 76% | stable |
+| lat_L | 170% | 159% | ↓ converging |
+| lat_R | 113% | 122% | ↑ slight diverge |
+| yaw_L | 101% | 112% | ↑ overshooting |
+| yaw_R | 92% | 79% | ↓↓ CONCERNING |
+| fwd_yaw_L vx | 77% | 82% | ↑ |
+| fwd_yaw_L wz | 99% | 132% | ↑↑ overshooting |
+| fwd_yaw_R vx | 74% | 85% | ↑↑ |
+| fwd_yaw_R wz | 93% | 91% | stable |
+| run_1.0 | 96% | 100% | PERFECT |
+| run_2.0 | 75% | 77% | stable |
+| jump | 0.764m | 0.760m | stable |
+| crouch | 0.088m | 0.088m | stuck |
+
+Walk fwd big jump. fwd_yaw vx both up. run_1.0 perfect.
+YAW ASYMMETRY growing: L=112% vs R=79% (33pp gap). Watch at 2M.
+fwd_yaw_L wz overshooting 132%. lat_R still 122%.
+Crouch stuck 0.088m. Jump stable ~0.76m.
