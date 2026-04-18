@@ -157,6 +157,11 @@ POSTURE_TARGETS = {
 # Stand (easy, 7.4) × 0.40 = 3.0. Jump (9.8) × 0.35 = 3.4. Walk/run stay at 1.0.
 MODE_REWARD_SCALE = {"stand": 0.40, "walk": 1.0, "run": 1.0, "jump": 0.35}
 
+# v24: Mode-specific speed correction factors.
+# Empirical testing showed walk speed ~15% too high, run speed ~30% too high.
+# These factors scale the reference gait forward bias and training command ranges.
+MODE_SPEED_SCALE = {"stand": 1.0, "walk": 0.85, "run": 0.70, "jump": 1.0}
+
 # ── Reward scales (legged_gym / RMA aligned) ─────────────────────
 REWARD_SCALES = {
     # Positive tracking rewards
@@ -1010,7 +1015,10 @@ class MiniCheetahEnv(gym.Env):
         # v31j showed gain=0.15 + overshoot penalty → walk_fwd=0.474 (95%) at 600K.
         # gain=0.10 too weak (walk_fwd died). Feedback bias created stable equilibrium at 0.
         # Solution: keep strong constant bias + overshoot penalty + more forward sampling (35%).
-        hip_fwd_bias = vx_cmd * 0.10  # v31s6g: reduced walk speed ~25% per user request
+        # v24: Apply mode-specific speed correction to forward bias.
+        # Walk was ~15% too fast, run ~30% too fast. MODE_SPEED_SCALE compensates.
+        speed_correction = MODE_SPEED_SCALE.get(self.command_mode, 1.0)
+        hip_fwd_bias = vx_cmd * 0.10 * speed_correction  # v31s6g base × v24 correction
 
         for hip_i, knee_i, abd_i, is_diag1, is_rear, is_left in [
             (1, 2, 0, True, False, False),    # FR (right)
@@ -2003,22 +2011,23 @@ class MiniCheetahEnv(gym.Env):
         elif mode == "walk":
             # v31g: Dedicated sampling categories to prevent mode interference.
             # v31k: 35% pure forward (was 20% — walk_fwd regresses past 600K with 20%).
+            # v24: All walk vx ranges scaled by 0.85 (walk was ~15% too fast)
             roll = float(rng.uniform(0, 1))
             if roll < 0.30:
-                # v31k: Pure forward/backward
-                vx = float(rng.uniform(-0.5, 1.0))
+                # v31k: Pure forward/backward (v24: 1.0→0.85 max)
+                vx = float(rng.uniform(-0.425, 0.85))
                 vy = float(rng.uniform(-0.05, 0.05))
                 wz = float(rng.uniform(-0.05, 0.05))
             elif roll < 0.45:
-                # Lateral-dominant: small forward + large lateral/yaw
-                vx = float(rng.uniform(0.1, 0.3))
+                # Lateral-dominant: small forward + large lateral/yaw (v24: scaled vx)
+                vx = float(rng.uniform(0.085, 0.255))
                 vy = float(rng.uniform(-0.4, 0.4))
                 wz = float(rng.uniform(-0.8, 0.8))
                 if abs(vy) < 0.15 and abs(wz) < 0.15:
                     vy = float(rng.choice([-0.3, 0.3]))
             elif roll < 0.60:
                 # Pure lateral (harder): vx≈0 but vy/wz large
-                vx = float(rng.uniform(-0.05, 0.1))
+                vx = float(rng.uniform(-0.05, 0.085))
                 vy = float(rng.uniform(-0.4, 0.4))
                 wz = float(rng.uniform(-0.8, 0.8))
                 if abs(vy) < 0.15 and abs(wz) < 0.15:
@@ -2032,8 +2041,8 @@ class MiniCheetahEnv(gym.Env):
                 if abs(wz) < 0.2:
                     wz = float(rng.choice([-0.8, 0.8]))
             else:
-                # General mixed commands
-                vx = float(rng.uniform(0.0, 1.20))
+                # General mixed commands (v24: 1.20→1.02 max)
+                vx = float(rng.uniform(0.0, 1.02))
                 vy = float(rng.uniform(-0.4, 0.4))
                 wz = float(rng.uniform(-0.8, 0.8))
             # v31s3: Biased height — 30% deep crouch for walk+crouch training
@@ -2044,13 +2053,14 @@ class MiniCheetahEnv(gym.Env):
             self._start_height_ramp(height)
         elif mode == "run":
             # v31s6: model barely does 0.14 m/s run. Lower targets to build gait first.
-            # 60% achievable [0.3,0.8], 40% stretch [0.8,1.5]
+            # v24: All run vx ranges scaled by 0.70 (run was ~30% too fast)
+            # 60% achievable [0.21,0.56], 40% stretch [0.56,1.05]
             if rng.random() < 0.6:
-                vx = float(rng.uniform(0.3, 0.8))
+                vx = float(rng.uniform(0.21, 0.56))
             else:
-                vx = float(rng.uniform(0.8, 1.5))
-            vy = float(rng.uniform(-0.5, 0.5))
-            wz = float(rng.uniform(-0.5, 0.5))
+                vx = float(rng.uniform(0.56, 1.05))
+            vy = float(rng.uniform(-0.35, 0.35))  # v24: scaled from ±0.5
+            wz = float(rng.uniform(-0.35, 0.35))  # v24: scaled from ±0.5
             # Run height is more restricted (can't run fully crouched)
             height = float(rng.uniform(0.22, HEIGHT_MAX))
             self._start_height_ramp(height)
