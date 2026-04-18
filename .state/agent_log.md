@@ -294,3 +294,24 @@ v31s6g4 training COMPLETE. 5M steps total.
 
 **Remaining weaknesses:** lat_L regression, walk_back low, run_2.0 dead.
 **Next:** v31s6g5 — boost lateral sampling, extend run range, resume from 3M balanced.
+
+### s10g8 Evaluation Progress
+| Test | 300K | 1M | 2M | Trend |
+|------|------|-----|-----|-------|
+| walk_fwd_0.5 | 103% | 99% | 100% | ✅ stable |
+| walk_fwd_1.0 | 95% | 96% | 96% | ✅ stable |
+| yaw+0.5 | 83% | 83% | 88% | ✅ recovering |
+| yaw-0.5 | 109% | 106% | 110% | ⚠️ oscillating |
+| lat+0.3 | 103% | 100% | 98% | ✅✅ SOLVED |
+| lat-0.3 | 95% | 95% | 96% | ✅ stable |
+| run_0.5 | 112% | 112% | 113% | ✅ SOLVED |
+| run_1.0 | 107% | 108% | 108% | ✅ stable |
+| run_1.5 | 76% | 118% | 74% | ⚠️ oscillating |
+| run_2.0 | N/A | 0% | 0% | ❌ broken |
+| crouch | 0.099 | 0.098 | 0.099 | ✅ SOLVED |
+| jump | 0.635 | 0.637 | 0.647 | ✅ best ever |
+
+### KEY: Remaining issues
+- run_1.5 oscillating (76→118→74%) — policy can't stably maintain 1.5 m/s
+- run_2.0 still 0% — max amplitude too aggressive
+- yaw- slight overshoot 106-110% — within deadzone (1.15x)
