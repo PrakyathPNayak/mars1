@@ -1710,8 +1710,9 @@ class MiniCheetahEnv(gym.Env):
                     + 3.0 * r_wz_lin         # v31s6c: boosted (2→3) — sustain yaw gradient
                     + 2.0 * r_height_walk    # height tracking (crouch)
                     + 0.5 * r_gait           # gait quality
-                    - 0.1 * r_orientation    # prevent flipping only
-                    - 0.02 * r_smooth        # action smoothness
+                    - 0.5 * r_orientation    # v31s9: boosted 0.1→0.5 — walk pitch cascade prevention
+                    - 0.3 * r_ang_vel_xy     # v31s9: NEW — dampen pitch/roll oscillation
+                    - 0.05 * r_smooth        # v31s9: boosted 0.02→0.05 — slow action changes
                     - 2.0 * r_vx_overshoot   # prevent sprinting past target
                     - 1.5 * r_vy_overshoot   # prevent lateral overshoot
                     - 3.0 * r_vx_unwanted    # v31s3: boosted from 1.0 — pure lat/yaw had vx=+0.15 drift
@@ -1729,8 +1730,9 @@ class MiniCheetahEnv(gym.Env):
                     "r_wz_lin": 3.0 * r_wz_lin,
                     "r_height_walk": 2.0 * r_height_walk,
                     "r_gait": 0.5 * r_gait,
-                    "r_orientation": -0.1 * r_orientation,
-                    "r_smooth": -0.02 * r_smooth,
+                    "r_orientation": -0.5 * r_orientation,
+                    "r_ang_vel_xy": -0.3 * r_ang_vel_xy,
+                    "r_smooth": -0.05 * r_smooth,
                     "r_vx_overshoot": -2.0 * r_vx_overshoot,
                     "r_vy_overshoot": -1.5 * r_vy_overshoot,
                     "r_vx_unwanted": -3.0 * r_vx_unwanted,
