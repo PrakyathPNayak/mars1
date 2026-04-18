@@ -49,3 +49,28 @@ Training v31s10g5 from s10g/600K checkpoint. PID ~898951. ~1.1M steps.
 2. If yaw- plateaus at 160%+, increase penalty to -10.0
 3. Investigate crouch regression (0.265 vs 0.083)
 4. Investigate lat+ asymmetry (68% vs 95%)
+
+---
+## v31s6g4 — 500K Eval (rear_scale=1.0 symmetric fix)
+Resume from v31s6g3 2M. Code: commit 65b1866.
+
+| Scenario | v31s6g3 2M | v31s6g4 500K | Notes |
+|----------|-----------|-------------|-------|
+| walk_fwd | 110% | 20% 🔴 | crashed, wz=0.652 drift |
+| walk_back | — | 26% | |
+| lat_L | 96% | 89% | ok |
+| lat_R | 100% | 79% | slight drop |
+| yaw_L | 30% | 26% | similar |
+| yaw_R | 7% | 20% ✅ | improved! |
+| fwd_yaw_L | 109% | 51% | recovering |
+| fwd_yaw_R | -6% | 25% ✅ | FIXED wrong direction |
+| run_1.0 | 116% | 116% | perfect |
+| run_2.0 | 0% | 0% | still dead |
+| jump | 0.727 | 0.746 ✅ | new ATB! |
+| crouch | 0.081 | 0.281 | still bad |
+
+**Key findings:**
+- Symmetry fix WORKING: yaw_R 7%→20%, fwd_yaw_R -6%→+25%
+- walk_fwd temporary crash expected — model adapting to symmetric reference
+- Jump new ATB 0.746
+- Need more training time for walk_fwd recovery
