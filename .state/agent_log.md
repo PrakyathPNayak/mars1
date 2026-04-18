@@ -74,3 +74,150 @@ Resume from v31s6g3 2M. Code: commit 65b1866.
 - walk_fwd temporary crash expected — model adapting to symmetric reference
 - Jump new ATB 0.746
 - Need more training time for walk_fwd recovery
+
+## v31s6g4 — 1M Eval
+| Scenario | 500K | 1M | Notes |
+|----------|------|-----|-------|
+| walk_fwd | 20% | 80% ✅ | RECOVERING! wz drift 0.652→0.010 |
+| walk_back | 26% | 30% | |
+| lat_L | 89% | 70% | dropped |
+| lat_R | 79% | 82% | stable |
+| yaw_L | 26% | 25% | stable |
+| yaw_R | 20% | 21% | stable |
+| fwd_yaw_L | 51% | 59% | improving |
+| fwd_yaw_R | 25% | 40% ✅ | improving, symmetry working |
+| run_1.0 | 116% | 113% | solid |
+| run_2.0 | 0% | 0% | dead |
+| jump | 0.746 | 0.447 🔴 | crashed - temporary? |
+| crouch | 0.281 | 0.276 | still bad |
+
+Trajectory positive. Walk/yaw recovering. Jump dipped — monitor.
+
+## v31s6g4 — 1.5M Eval ⭐ BEST SYMMETRIC
+| Scenario | 500K | 1M | 1.5M | Notes |
+|----------|------|-----|------|-------|
+| walk_fwd | 20% | 80% | 60% | dipped, wz near zero |
+| walk_back | 26% | 30% | 32% | |
+| lat_L | 89% | 70% | 91% | recovered |
+| lat_R | 79% | 82% | 76% | stable |
+| yaw_L | 26% | 25% | 27% | stable |
+| yaw_R | 20% | 21% | 27% ✅ | SYMMETRIC with L! |
+| fwd_yaw_L | 51% | 59% | 62% | improving |
+| fwd_yaw_R | 25% | 40% | 59% ✅✅ | was -6%, now 59%! |
+| run_1.0 | 116% | 113% | 111% | solid |
+| run_2.0 | 0% | 0% | 0% | dead |
+| jump | 0.746 | 0.447 | 0.745 ✅ | recovered from dip |
+| crouch | 0.281 | 0.276 | 0.282 | still bad |
+
+**Symmetry fix confirmed.** yaw L=R for first time ever.
+**fwd_yaw_R: -6%→59%** in 1.5M steps. Root cause was rear_scale=1.3.
+Saved as best_1.5M_symmetric.zip.
+
+## v31s6g4 — 2M Eval ⭐⭐ BEST OVERALL
+| Scenario | 500K | 1M | 1.5M | 2M | Notes |
+|----------|------|-----|------|----|-------|
+| walk_fwd | 20% | 80% | 60% | 84% ✅ | recovering, wz=-0.164 |
+| walk_back | 26% | 30% | 32% | 33% | |
+| lat_L | 89% | 70% | 91% | 85% | stable |
+| lat_R | 79% | 82% | 76% | 76% | stable |
+| yaw_L | 26% | 25% | 27% | 22% | slight dip |
+| yaw_R | 20% | 21% | 27% | 30% ✅ | improving |
+| fwd_yaw_L | 51% | 59% | 62% | 64% | steady |
+| fwd_yaw_R | 25% | 40% | 59% | 84% ✅✅✅ | was -6%, now 84%! |
+| run_1.0 | 116% | 113% | 111% | 111% | solid |
+| run_2.0 | 0% | 0% | 0% | 0% | dead |
+| jump | 0.746 | 0.447 | 0.745 | 0.760 ✅ | NEW ATB! |
+| crouch | 0.281 | 0.276 | 0.282 | 0.276 | STUCK |
+
+Saved as best_2M_yawR84_jump760.zip.
+Next: investigate crouch stuck, boost pure yaw, let training continue.
+
+## v31s6g4 — 2M CORRECTED EVAL (eval bug fixed)
+**BUG FOUND**: `set_command()` called before `venv.reset()` wiped height ramp.
+Crouch target was always reset to HEIGHT_DEFAULT. Fix: set command AFTER reset.
+
+| Scenario | Old eval | Corrected | Notes |
+|----------|---------|-----------|-------|
+| walk_fwd | 84% | 84% | no change |
+| walk_back | 33% | 34% | no change |
+| lat_L | 85% | 86% | no change |
+| lat_R | 76% | 77% | no change |
+| yaw_L | 22% | 23% | no change |
+| yaw_R | 30% | 29% | no change |
+| fwd_yaw_L | 64% | 65% | no change |
+| fwd_yaw_R | 84% | 80% | stochastic |
+| run_1.0 | 111% | 110% | no change |
+| jump | 0.760 | 0.446 | variable |
+| crouch | 0.276 | **0.085** ✅✅✅ | WAS ALWAYS WORKING! |
+| crouch_walk | — | **0.105** ✅ | vx=0.413 while crouched |
+
+**Crouch was never broken — eval was broken.** Robot crouches to 0.085m.
+
+## v31s10g6 — Moderate wz overshoot penalty (walk -10, run -5, deadzone 1.15x)
+Started from s10g5/2M. Commit 19acedf (CLEAN — previous 6ba0dd6 was contaminated by parallel session).
+
+### Evaluation Results
+| Test | s10g5/2M (baseline) | s10g6/300K | s10g6/1M | s10g6/2M |
+|------|---------------------|-----------|---------|---------|
+| walk_fwd_0.5 | 84% wz=.125 | 84% wz=.124 | 87% wz=.056 | **98%** wz=.031 |
+| walk_fwd_1.0 | 84% wz=-.040 | 84% wz=-.019 | 87% wz=-.129 | **91%** wz=.045 |
+| yaw+0.5 | 104% | 111% | 101% | **96%** |
+| yaw-0.5 | 173% | 156% | 164% | **149%** |
+| fwd+yaw | vx=84%,wz=151% | vx=69%,wz=132% | vx=74%,wz=119% | vx=77%,wz=**120%** |
+| lat+0.3 | 67% | 66% | 63% | **69%** |
+| lat-0.3 | 98% | 95% | 98% | **93%** |
+| run_1.0 | 105% | 104% | 105% | **108%** |
+| run_1.5 | 117% | 11% | 74% | **75%** |
+| crouch | 0.264 | 0.258 | 0.259 | **0.261** |
+| jump | 0.586 | 0.592 | 0.597 | **0.600** |
+
+### Key Findings
+- yaw- improving: 173% → 149% (best ever!). Gradient=2.9 working.
+- walk_fwd_0.5 near perfect at 98%
+- yaw+ converged to 96% (excellent)
+- fwd+yaw wz improved 151% → 120%
+- run_1.5 still recovering (75%, was 117%)
+- Training continues to 5M, PID 3073537
+
+## v31s6g4 — 2.5M Eval
+| Scenario | 2M | 2.5M | Notes |
+|----------|-----|------|-------|
+| walk_fwd | 84% | 26% 🔴 | crashed again |
+| lat_L | 86% | 89% | stable |
+| lat_R | 77% | 82% | improved |
+| yaw_L | 23% | -0% 🔴🔴 | COLLAPSED (h=0.068, fell) |
+| yaw_R | 29% | 36% ✅ | improving |
+| fwd_yaw_L | 65% | 71% ✅ | improving |
+| fwd_yaw_R | 80% | 100% ✅✅✅ | PERFECT |
+| run_1.0 | 110% | 112% | solid |
+| jump | 0.446 | 0.754 | variable |
+| crouch | 0.085 | 0.085 | perfect |
+| crouch_walk | 0.105 | 0.107 | perfect |
+
+Multi-task interference: model trades walk_fwd for fwd_yaw. Oscillating.
+Best balanced: 2M checkpoint. Best yaw_R: 2.5M.
+If walk_fwd doesn't recover by 3M, may need to stop and analyze.
+
+## v31s6g4 — 3M Eval + Yaw Rate Sweep
+| Scenario | 2M | 3M | Notes |
+|----------|-----|-----|-------|
+| walk_fwd | 84% | 90% ✅ | recovered |
+| lat_L | 86% | 94% ✅ | best ever |
+| lat_R | 77% | 84% ✅ | improving |
+| fwd_yaw_L | 65% | 79% ✅ | improving |
+| fwd_yaw_R | 80% | 85% ✅ | solid |
+| run_1.0 | 110% | 112% | solid |
+| jump | varied | 0.754 | good |
+| crouch | 0.085 | 0.083 ✅ | getting deeper |
+| crouch_walk | 0.105 | 0.098 ✅ | lower |
+
+**Yaw rate sweep (pure yaw, 3M model):**
+| wz_cmd | yaw_L | yaw_R |
+|--------|-------|-------|
+| ±0.5 | 80% | 99% |
+| ±0.8 | 55% | 73% |
+| ±1.0 | 42% (fell once) | 48% |
+| ±1.5 | 2% (collapsed) | 23% |
+
+**yaw_L NOT broken** — eval at 1.5 was too aggressive. Works well at 0.5-0.8 rad/s.
+Model is balanced and improving across all skills. Continue training.

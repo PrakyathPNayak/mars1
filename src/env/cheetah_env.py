@@ -1007,7 +1007,10 @@ class MiniCheetahEnv(gym.Env):
         # At gain=0.90, zero-action wz_mean=0.36 → r_wz_track=57%. Total free lunch 50%+.
         # At gain=0, zero-action wz_mean=0.06 → free lunch <10%. Model must learn yaw
         # through residual actions. Only affects walk episodes with wz_cmd≠0.
-        yaw_gain = 0.90  # v31s10g: only value that produced stable 78% yaw at s10b/600K
+        # v31s10g7: ASYMMETRIC yaw gain — negative yaw overshoots 170% at gain=0.90.
+        # yaw+ converges to 91-104% at 0.90 (perfect). yaw- physics creates more torque.
+        # Reduce negative gain: 0.90*(100/170)≈0.53, conservative=0.60
+        yaw_gain = 0.90 if wz_cmd >= 0 else 0.60
         yaw_diff = min(0.5, max(-0.5, wz_cmd * yaw_gain))
 
         # v31k: Constant forward command bias at gain=0.15.
