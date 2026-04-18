@@ -315,3 +315,47 @@ v31s6g4 training COMPLETE. 5M steps total.
 - run_1.5 oscillating (76→118→74%) — policy can't stably maintain 1.5 m/s
 - run_2.0 still 0% — max amplitude too aggressive
 - yaw- slight overshoot 106-110% — within deadzone (1.15x)
+
+### v31s10g9 — FAILED EXPERIMENT
+- action_scale 0.15→0.20 for run: globally destabilized policy
+- After 1M steps, run modes still overshooting (127%) or falling
+- yaw- regressed from 110% to 125%
+- LESSON: never change action_scale when resuming from trained checkpoint
+
+### v31s10g10 — Run speed_scale cap at 0.20
+Changes from s10g8:
+- speed_scale cap = 0.20 for run (prevents unstable reference above 0.22)
+- speed_scale floor = 0.12 for run (was 0.15 — less overshoot at low speeds)
+- action_scale unchanged at 0.15
+
+Zero-action verification:
+| run_cmd | s10g8 | s10g10 |
+|---------|-------|--------|
+| 0.3 | 168% | 67% |
+| 0.5 | 117% | 42% |
+| 1.0 | 95% | 95% |
+| 1.2 | FALLS | 81% |
+| 1.5 | FALLS/137% | 69% |
+| 2.0 | 0% | 56% |
+
+ALL run speeds now STABLE at zero-action. Cap works.
+
+### s10g10 / 600K Evaluation
+| Test | Result | vs s10g8/2M |
+|------|--------|-------------|
+| walk_fwd_0.5 | 93% | ↓ adapting |
+| walk_fwd_1.0 | 109% | ↑ |
+| yaw+ | 87% | same |
+| yaw- | 102% | ✅ FIXED (was 110%) |
+| lat+ | 95% | same |
+| lat- | 96% | same |
+| run_0.5 | 50% | ↓ floor reduced |
+| run_1.0 | 121% | ↑ overshooting |
+| run_1.2 | 118% | ✅✅ WAS FALLING |
+| run_1.5 | FALLS | needs time |
+| run_2.0 | FALLS | needs time |
+| crouch | 0.067 | ✅ (was 0.099) |
+| jump | 0.644 | same |
+
+KEY: run_1.2 UNLOCKED — first time working ever!
+Training PID 1465538, waiting for 2M evaluation.
