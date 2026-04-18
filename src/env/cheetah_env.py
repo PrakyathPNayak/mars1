@@ -1744,12 +1744,12 @@ class MiniCheetahEnv(gym.Env):
                 # Only penalize inaction when velocity is commanded (not crouch)
                 r_effort = math.exp(-action_norm_sq / 0.5) if cmd_mag > 0.05 else 0.0
                 total = (
-                    8.0 * r_vx_track_walk    # dominant: Gaussian peak at target speed
-                    + 3.0 * r_vx_lin         # monotonic forward gradient
+                    14.0 * r_vx_track_walk   # v31s6g6: boosted 8→14 — fwd_yaw fix (vx was 11 vs wz 27)
+                    + 4.0 * r_vx_lin         # v31s6g6: boosted 3→4
                     + 3.0 * r_vy_track       # EMA-based lateral tracking
                     + 2.0 * r_vy_lin         # monotonic lateral gradient
-                    + 12.0 * r_wz_track      # v31s6g: boosted (10→12) — yaw 95%→66% gradient imbalance vs vx (11/step vs 5.5)
-                    + 10.0 * r_wz_lin         # v31s10g5: reduced 15→10 — overshoot fix (15 gave 173% yaw-)
+                    + 12.0 * r_wz_track      # v31s6g: boosted (10→12) — yaw gradient
+                    + 8.0 * r_wz_lin         # v31s6g6: reduced 10→8 — fwd_yaw fix (now vx=18, wz=20)
                     + 2.0 * r_height_walk    # height tracking (crouch)
                     + 0.5 * r_gait           # gait quality
                     - 0.1 * r_orientation    # prevent flipping only
@@ -1763,12 +1763,12 @@ class MiniCheetahEnv(gym.Env):
                     - 2.5 * r_effort         # penalize inaction (offsets reference free lunch)
                 )
                 scaled_components = {
-                    "r_vx_track": 8.0 * r_vx_track_walk,
-                    "r_vx_lin": 3.0 * r_vx_lin,
+                    "r_vx_track": 14.0 * r_vx_track_walk,
+                    "r_vx_lin": 4.0 * r_vx_lin,
                     "r_vy_track": 3.0 * r_vy_track,
                     "r_vy_lin": 2.0 * r_vy_lin,
                     "r_wz_track": 12.0 * r_wz_track,
-                    "r_wz_lin": 10.0 * r_wz_lin,
+                    "r_wz_lin": 8.0 * r_wz_lin,
                     "r_height_walk": 2.0 * r_height_walk,
                     "r_gait": 0.5 * r_gait,
                     "r_orientation": -0.1 * r_orientation,

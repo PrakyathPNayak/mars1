@@ -393,3 +393,17 @@ Model rationally ignores forward velocity — 2.5x more reward from yaw.
 - PID: 2751368, started 19:16
 - Watch: fwd_yaw recovery, yaw maintenance, run_2.0 stability
 
+
+### v31s6g6b — yaw_gain fix for fwd+yaw (second training run)
+
+Key discovery: reference trajectory produces vx=0% + wz=105% for fwd+yaw.
+Yaw differential stride (L=0.55x, R=1.45x) destroys forward force.
+Fix: reduce yaw_gain when BOTH fwd and yaw commanded:
+  fwd+yaw+: 0.90→0.40 (ref: vx=26%, wz=66%)
+  fwd+yaw-: 0.60→0.50 (ref: vx=48%, wz=33%)
+
+Also committed: reward rebalance from v31s6g6 (vx=18, wz=20)
+
+Resumed from v31s6g6 1M checkpoint (yaw=95/102%, run_2.0=72%)
+PID: 515988, started 20:13
+
