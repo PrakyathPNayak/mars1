@@ -742,16 +742,10 @@ class MiniCheetahEnv(gym.Env):
             if self.forced_mode and self.forced_mode in SKILL_MODES:
                 self.command_mode = self.forced_mode
             else:
-                # v31s3: Extended walk-heavy curriculum. Walk_fwd collapses when
-                # curriculum transitions too early (61%→-35% at 2.4M).
-                # v31s5b: Run-recovery curriculum. Run died from catastrophic forgetting.
-                # Phase 1: 55% run to recover run capability fast
-                # Phase 2: balanced for all modes
-                _es = self._training_steps
-                if _es < 150_000:     # ~0-1.2M total: RUN RECOVERY
-                    mode_weights = [0.05, 0.15, 0.55, 0.25]
-                else:                 # ~1.2M+: balanced
-                    mode_weights = [0.10, 0.25, 0.30, 0.35]
+                # v31s6: Balanced curriculum — no aggressive phase shifts.
+                # 55% run and 100% run phases both caused catastrophic forgetting.
+                # Moderate allocation lets all skills train simultaneously.
+                mode_weights = [0.10, 0.30, 0.30, 0.30]
                 self.command_mode = str(rng.choice(SKILL_MODES, p=mode_weights))
             self._randomize_command_for_mode(rng)
             self.target_height = self._effective_target_height
