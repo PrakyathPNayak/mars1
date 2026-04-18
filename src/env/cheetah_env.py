@@ -1717,7 +1717,7 @@ class MiniCheetahEnv(gym.Env):
                     - 2.0 * r_vx_overshoot   # prevent sprinting past target
                     - 1.5 * r_vy_overshoot   # prevent lateral overshoot
                     - 3.0 * r_vx_unwanted    # v31s3: boosted from 1.0 — pure lat/yaw had vx=+0.15 drift
-                    - 0.5 * r_vy_unwanted    # gentle: penalize lateral drift
+                    - 3.0 * r_vy_unwanted    # v31s10c: boosted (0.5→3.0) — walk had vy=0.28 drift at 600K
                     - 12.0 * r_wz_unwanted   # v31s5: boosted (8→12) to fix wz=0.3 drift in fwd walk
                     - 2.5 * r_effort         # penalize inaction
                     - 0.5 * r_action_mag     # v31s10b
@@ -1737,7 +1737,7 @@ class MiniCheetahEnv(gym.Env):
                     "r_vx_overshoot": -2.0 * r_vx_overshoot,
                     "r_vy_overshoot": -1.5 * r_vy_overshoot,
                     "r_vx_unwanted": -3.0 * r_vx_unwanted,
-                    "r_vy_unwanted": -0.5 * r_vy_unwanted,
+                    "r_vy_unwanted": -3.0 * r_vy_unwanted,
                     "r_wz_unwanted": -12.0 * r_wz_unwanted,
                     "r_effort": -2.5 * r_effort,
                     "r_action_mag": -0.5 * r_action_mag,
