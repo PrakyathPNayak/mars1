@@ -2030,12 +2030,12 @@ class MiniCheetahEnv(gym.Env):
                 height = float(rng.uniform(0.15, HEIGHT_MAX))  # normal walking
             self._start_height_ramp(height)
         elif mode == "run":
-            # v31s6: model barely does 0.14 m/s run. Lower targets to build gait first.
-            # 60% achievable [0.3,0.8], 40% stretch [0.8,1.5]
+            # v31s8b: Cap at 1.2 — reference trajectory unstable above this
+            # Zero-action at 1.5 falls in 139 steps with wild pitch oscillation
             if rng.random() < 0.6:
                 vx = float(rng.uniform(0.3, 0.8))
             else:
-                vx = float(rng.uniform(0.8, 1.5))
+                vx = float(rng.uniform(0.8, 1.2))
             vy = float(rng.uniform(-0.5, 0.5))
             wz = float(rng.uniform(-0.5, 0.5))
             # Run height is more restricted (can't run fully crouched)
