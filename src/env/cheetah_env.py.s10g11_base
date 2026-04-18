@@ -1020,13 +1020,7 @@ class MiniCheetahEnv(gym.Env):
         # v31s10g7: ASYMMETRIC yaw gain — negative yaw overshoots 170% at gain=0.90.
         # yaw+ converges to 91-104% at 0.90 (perfect). yaw- physics creates more torque.
         # Reduce negative gain: 0.90*(100/170)≈0.53, conservative=0.60
-        # v31s10g14: symmetric yaw_gain=0.90 (was 0.90/0.60 asymmetric)
-        # yaw- overshot 170% at gain=0.90 in s10g7, but that was before
-        # wz_overshoot penalty (-10.0, deadzone 1.15x) was added.
-        # At 170%: wz_reward=9.84 vs 100%=22.0 — strong gradient now exists.
-        # yaw+ at 89% = 99% of 0.90 ref — near-perfect, needs same ref.
-        # yaw- at 109% = 182% of 0.60 ref — massive overshoot of weak ref.
-        yaw_gain = 0.90
+        yaw_gain = 0.90 if wz_cmd >= 0 else 0.60
         yaw_diff = min(0.5, max(-0.5, wz_cmd * yaw_gain))
 
         # v31k: Constant forward command bias at gain=0.15.

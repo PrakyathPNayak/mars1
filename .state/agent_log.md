@@ -700,3 +700,54 @@ Symmetric gains working. Policy needed adaptation time.
 The wz_overshoot penalty (-10.0) should gradually correct this.
 
 **Decision**: Continue training. All trends positive. Monitor at 2M, 2.5M.
+
+## s10g12 FAILED — explicit penalty too weak
+- Tightened deadzone 1.20→1.10, boosted weights
+- walk_fwd_0.5 STILL 114% overshoot (penalty only 0.095/step = 1% of reward)
+- Explicit penalty approach fundamentally too weak vs 13/step total reward
+
+## s10g13 @ 1.5M — asymmetric tracking sigma
+| Test | s10g11/1.2M | s10g13/1.5M | Delta |
+|------|-------------|-------------|-------|
+| walk_fwd_0.5 | 101% | 101% | ✅ HELD (was growing to 110%!) |
+| walk_fwd_1.0 | 100% | 110% | ⚠️ still overshoot |
+| yaw+0.5 | 89% | 86% | ⚠️ |
+| yaw-0.5 | 109% | 121% | ❌ REGRESSED |
+| lat+0.3 | 98% | 85% | ❌ declined |
+| run_1.0 | 124% | 126% | ⚠️ unchanged |
+| run_1.2 | 123% | 125% | ⚠️ unchanged |
+| crouch | 0.081 | 0.079 | ✅ |
+| jump | 0.649 | 0.395 | ❌ dip (may recover) |
+
+Analysis: asymmetric sigma helps for walk_fwd_0.5 but NOT run mode.
+Run overshoot likely from reference-residual mismatch (speed_scale cap).
+yaw- regression from reward balance shift. Continuing to 3M.
+
+## v31s6g9 — Mirror Augmentation for Bilateral Symmetry
+
+**Started**: Resumed from v31s6g8 @ 2.2M, PID 1251744
+**Key change**: Mirror augmentation (50% per episode)
+- Swap FR↔FL, RR↔RL in obs/actions, negate abd
+- Negate vy, wz, roll, lateral gravity, CPG phase
+- Flip heightmap columns laterally
+- Forces policy to learn symmetric behavior
+
+**v31s6g8 final eval @ 2.2M:**
+| Scenario | 2.0M | 2.2M | Trend |
+|----------|------|------|-------|
+| walk_fwd | 101% | 97% | ↓ (less overshoot) |
+| walk_back | 86% | 87% | stable |
+| lat_L | 155% | 155% | stuck overshoot |
+| lat_R | 131% | 130% | stable |
+| yaw_L | 117% | 109% | ↓ improving |
+| yaw_R | 74% | 82% | ↑ improving |
+| fwd_yaw_L wz | 145% | 135% | ↓ improving |
+| fwd_yaw_R wz | 100% | 107% | ↑ slight |
+| run_1.0 | 105% | 104% | stable |
+| run_2.0 | 81% | 81% | stable |
+| jump | 0.771 | 0.776 | stable |
+| crouch | 0.088 | 0.088 | stuck |
+
+Yaw gap: 43pp→27pp from 2M→2.2M. Improving but oscillatory.
+Mirror augmentation should fix this structurally.
+
