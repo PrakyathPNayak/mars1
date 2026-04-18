@@ -1565,17 +1565,8 @@ class MiniCheetahEnv(gym.Env):
             wz_ema_for_lin = self._wz_ema
             if wz_cmd > 0.05:
                 r_wz_lin = max(-1.0, min(wz_ema_for_lin, wz_cmd)) / max(wz_cmd, 0.1)
-                # v31s10g4: reduce r_wz_lin when overshooting >120% — yaw- was 173%
-                # At 172%: reduction=(0.86-0.6)/0.5=0.52, r_wz_lin=0.48 (was 1.0)
-                if wz_ema_for_lin > wz_cmd * 1.2:
-                    os_frac = (wz_ema_for_lin - wz_cmd * 1.2) / max(wz_cmd, 0.1)
-                    r_wz_lin = max(0.0, r_wz_lin - os_frac)
             elif wz_cmd < -0.05:
                 r_wz_lin = max(-1.0, min(-wz_ema_for_lin, -wz_cmd)) / max(-wz_cmd, 0.1)
-                # v31s10g4: same overshoot reduction for negative yaw
-                if -wz_ema_for_lin > -wz_cmd * 1.2:
-                    os_frac = (-wz_ema_for_lin - (-wz_cmd) * 1.2) / max(-wz_cmd, 0.1)
-                    r_wz_lin = max(0.0, r_wz_lin - os_frac)
             else:
                 r_wz_lin = 0.0
 
@@ -1736,14 +1727,14 @@ class MiniCheetahEnv(gym.Env):
                     + 3.0 * r_vy_track       # EMA-based lateral tracking
                     + 2.0 * r_vy_lin         # monotonic lateral gradient
                     + 12.0 * r_wz_track      # v31s6g: boosted (10→12) — yaw 95%→66% gradient imbalance vs vx (11/step vs 5.5)
-                    + 15.0 * r_wz_lin         # v31s6g: boosted (5→15) — massive directional penalty — sustain yaw gradient
+                    + 10.0 * r_wz_lin         # v31s10g5: reduced 15→10 — overshoot fix (15 gave 173% yaw-)
                     + 2.0 * r_height_walk    # height tracking (crouch)
                     + 0.5 * r_gait           # gait quality
                     - 0.1 * r_orientation    # prevent flipping only
                     - 0.02 * r_smooth        # action smoothness
                     - 2.0 * r_vx_overshoot   # prevent sprinting past target
                     - 1.5 * r_vy_overshoot   # prevent lateral overshoot
-                    - 2.0 * r_wz_overshoot   # v31s10g4: yaw overshoot (boosted from -2.0)
+                    - 6.0 * r_wz_overshoot   # v31s10g5: boosted -2→-6 for yaw- overshoot
                     - 3.0 * r_vx_unwanted    # v31s3: boosted from 1.0 — pure lat/yaw had vx=+0.15 drift
                     - 1.5 * r_vy_unwanted    # v31s10g: moderate drift penalty (was 0.5)
                     - 12.0 * r_wz_unwanted   # v31s5: boosted (8→12) to fix wz=0.3 drift in fwd walk
@@ -1755,14 +1746,14 @@ class MiniCheetahEnv(gym.Env):
                     "r_vy_track": 3.0 * r_vy_track,
                     "r_vy_lin": 2.0 * r_vy_lin,
                     "r_wz_track": 12.0 * r_wz_track,
-                    "r_wz_lin": 15.0 * r_wz_lin,
+                    "r_wz_lin": 10.0 * r_wz_lin,
                     "r_height_walk": 2.0 * r_height_walk,
                     "r_gait": 0.5 * r_gait,
                     "r_orientation": -0.1 * r_orientation,
                     "r_smooth": -0.02 * r_smooth,
                     "r_vx_overshoot": -2.0 * r_vx_overshoot,
                     "r_vy_overshoot": -1.5 * r_vy_overshoot,
-                    "r_wz_overshoot": -2.0 * r_wz_overshoot,
+                    "r_wz_overshoot": -6.0 * r_wz_overshoot,
                     "r_vx_unwanted": -3.0 * r_vx_unwanted,
                     "r_vy_unwanted": -1.5 * r_vy_unwanted,
                     "r_wz_unwanted": -12.0 * r_wz_unwanted,
