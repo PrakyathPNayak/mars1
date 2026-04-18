@@ -792,9 +792,9 @@ class MiniCheetahEnv(gym.Env):
         # Action magnitude penalty (r_action_mag) keeps corrections small
         # unless they clearly improve tracking/stability. Residual RL approach.
         if self.command_mode == "walk":
-            action_scaled = action * 0.30  # v31s10g: overshoot fix (0.5→0.30)
+            action_scaled = action * 0.5  # v28: more authority for speed modulation (was 0.3)
         elif self.command_mode == "run":
-            action_scaled = action * 0.15  # v31s10g: overshoot fix (0.20→0.15)
+            action_scaled = action * 0.20  # v31s8: reduced from 0.5→0.20 — model fights reference at higher scale
         else:
             action_scaled = action * 0.5
 
@@ -957,9 +957,10 @@ class MiniCheetahEnv(gym.Env):
         # penalty makes zero-action unprofitable. Policy must ACTIVELY walk.
         is_run = self.command_mode == "run"
         vx_norm = 2.0 if is_run else 0.5
-        base_amp = 0.40 if is_run else 0.10  # v31s10g: reduced run base_amp
+        base_amp = 0.45 if is_run else 0.10
         vx_scale = min(1.0, abs(vx_cmd) / vx_norm)
         has_lat = abs(vy_cmd) > 0.05  # v31s6g: remove wz_cmd — yaw via residual actions only
+        is_pure_yaw = abs(vx_cmd) < 0.05 and abs(vy_cmd) < 0.05 and abs(wz_cmd) > 0.1
         speed_scale = base_amp * vx_scale
         # v31r: Minimum gait amplitude floor for forward/backward walking.
         # Below speed_scale≈0.08, MuJoCo trot bifurcates to zero velocity.
@@ -967,10 +968,11 @@ class MiniCheetahEnv(gym.Env):
         # Policy learns remaining 50%. Backward also benefits (vx=-0.220→-0.345).
         if abs(vx_cmd) > 0.05 and not is_run:
             speed_scale = max(speed_scale, 0.10)
-        # v31s10g: yaw needs stepping to produce differential torque.
-        # Without this floor, pure yaw gets amp_hip=0 → zero yaw reference.
-        if abs(wz_cmd) > 0.1:
-            speed_scale = max(speed_scale, 0.12)
+        # v31s6g3: Pure yaw needs gait oscillation for differential stride.
+        # Without this, amp_hip=0 → no stepping → no yaw torque at all.
+        # Floor=0.10 matches walk floor; with yaw_gain=0.15, gives ~20% free wz.
+        if is_pure_yaw:
+            speed_scale = max(speed_scale, 0.10)
 
         t = self.step_count * self.dt
         # v31s6: Run uses higher gait frequency for stability at speed.
@@ -981,7 +983,10 @@ class MiniCheetahEnv(gym.Env):
         # v31r: rear_scale=1.0 for pure yaw to eliminate positive yaw bias.
         # Walk forward keeps 1.3 (natural gait). Pure yaw/lateral/run: symmetric.
         has_fwd = abs(vx_cmd) > 0.05
-        rear_scale = 1.0 if is_run else 1.3  # v31s6g: remove wz_cmd leak
+        # v31s6g4: rear_scale=1.0 for ALL walk — 1.3 created massive +wz bias.
+        # At 2M: fwd_yaw_L=109% but fwd_yaw_R=-6% (wrong dir), walk_fwd wz=+0.237 drift.
+        # The 1.3 was never biomechanically motivated. Symmetric gait for fair L/R learning.
+        rear_scale = 1.0
 
         # v31r: hip=0.03 for pure lateral AND pure yaw.
         # Old: yaw used hip=0.10 → created vx=0.314 forward bias at zero-action.
@@ -1007,14 +1012,15 @@ class MiniCheetahEnv(gym.Env):
         # At gain=0.90, zero-action wz_mean=0.36 → r_wz_track=57%. Total free lunch 50%+.
         # At gain=0, zero-action wz_mean=0.06 → free lunch <10%. Model must learn yaw
         # through residual actions. Only affects walk episodes with wz_cmd≠0.
-        yaw_gain = 0.90  # v31s10g: only value that produced stable 78% yaw at s10b/600K
+        # v31s6g3: Pure yaw gets higher gain — no vx reward to bootstrap learning.
+        yaw_gain = 0.15 if is_pure_yaw else 0.10
         yaw_diff = min(0.5, max(-0.5, wz_cmd * yaw_gain))
 
-        # v31k: Constant forward command bias at gain=0.15.
-        # v31j showed gain=0.15 + overshoot penalty → walk_fwd=0.474 (95%) at 600K.
-        # gain=0.10 too weak (walk_fwd died). Feedback bias created stable equilibrium at 0.
-        # Solution: keep strong constant bias + overshoot penalty + more forward sampling (35%).
         hip_fwd_bias = vx_cmd * 0.10  # v31s6g: reduced walk speed ~25% per user request
+        # v31s6g3: Pure yaw needs small forward push — differential stride produces
+        # yaw torque only when legs have forward ground contact force.
+        if is_pure_yaw:
+            hip_fwd_bias = 0.05
 
         for hip_i, knee_i, abd_i, is_diag1, is_rear, is_left in [
             (1, 2, 0, True, False, False),    # FR (right)
@@ -1035,26 +1041,17 @@ class MiniCheetahEnv(gym.Env):
         return ref
 
     def _compute_balance_corrections(self) -> np.ndarray:
-        """v23i9g-fix4: Static trim to cancel systematic yaw drift.
-
-        The asymmetric trot (rear_scale=1.3) creates net rightward yaw torque
-        (+41° over 500 steps). Instead of dynamic feedback (which disrupts
-        the gait), use a small static differential hip bias to trim the yaw.
-        v31b: Fade trim out when yaw is commanded so trim doesn't fight reference.
+        """v31s6g4: Yaw trim reduced — rear_scale=1.0 eliminates most yaw drift.
+        Small residual trim kept for any remaining asymmetry from MuJoCo dynamics.
         """
         corr = np.zeros(NUM_JOINTS, dtype=np.float32)
         if self.command_mode not in ("walk", "run"):
             return corr
 
-        # v31b: Fade yaw trim when wz commanded — prevents fighting with yaw reference
         wz_cmd = float(self.command[2])
         trim_fade = max(0.0, 1.0 - abs(wz_cmd) / 0.3)
-        # v31f: Scale trim with gait amplitude — run mode has larger hip swing (0.45 vs 0.32)
-        # so yaw drift is proportionally larger. Base trim calibrated for walk (amp_hip≈0.32).
-        vx_cmd = float(self.command[0])
-        is_run = self.command_mode == "run"
-        amp_scale = min(2.0, max(1.0, abs(vx_cmd) / 0.5)) if is_run else 1.0
-        yaw_trim = 0.04 * trim_fade * amp_scale
+        # v31s6g4: Reduced from 0.04 to 0.01 — rear_scale=1.0 removes main drift source.
+        yaw_trim = 0.01 * trim_fade
         corr[1]  += yaw_trim   # FR hip: forward
         corr[7]  += yaw_trim   # RR hip: forward
         corr[4]  -= yaw_trim   # FL hip: back
@@ -1586,8 +1583,8 @@ class MiniCheetahEnv(gym.Env):
                 r_vy_overshoot = max(0.0, abs(vy_fast) - _OVERSHOOT_DEADZONE * abs(vy_cmd))
             else:
                 r_vy_overshoot = 0.0
-            # v31s10g: yaw overshoot penalty — yaw- was 173% at 1M without this
-            wz_fast = self._wz_ema  # no separate fast EMA for wz, use regular
+            # v31s6g3: yaw overshoot penalty — prevents spinning past command
+            wz_fast = self._wz_ema
             if abs(wz_cmd) > 0.1:
                 r_wz_overshoot = max(0.0, abs(wz_fast) - _OVERSHOOT_DEADZONE * abs(wz_cmd))
             else:
@@ -1631,7 +1628,7 @@ class MiniCheetahEnv(gym.Env):
                     - 0.5 * r_heading_drift  # heading correction
                     - 2.0 * r_vx_overshoot   # speed cap
                     - 1.5 * r_vy_overshoot   # lateral overshoot
-                    - 2.0 * r_wz_overshoot   # v31s10g: yaw overshoot (yaw- was 173%)
+                    - 2.0 * r_wz_overshoot   # v31s6g3: yaw overshoot
                     - 2.0 * r_vx_var         # v31m: velocity smoothness
                     - 5.0 * r_stall          # v31s2: anti-stall penalty
                 )
@@ -1727,16 +1724,16 @@ class MiniCheetahEnv(gym.Env):
                     + 3.0 * r_vy_track       # EMA-based lateral tracking
                     + 2.0 * r_vy_lin         # monotonic lateral gradient
                     + 12.0 * r_wz_track      # v31s6g: boosted (10→12) — yaw 95%→66% gradient imbalance vs vx (11/step vs 5.5)
-                    + 10.0 * r_wz_lin         # v31s10g5: reduced 15→10 — overshoot fix (15 gave 173% yaw-)
+                    + 15.0 * r_wz_lin         # v31s6g: boosted (5→15) — massive directional penalty — sustain yaw gradient
                     + 2.0 * r_height_walk    # height tracking (crouch)
                     + 0.5 * r_gait           # gait quality
                     - 0.1 * r_orientation    # prevent flipping only
                     - 0.02 * r_smooth        # action smoothness
                     - 2.0 * r_vx_overshoot   # prevent sprinting past target
                     - 1.5 * r_vy_overshoot   # prevent lateral overshoot
-                    - 6.0 * r_wz_overshoot   # v31s10g5: boosted -2→-6 for yaw- overshoot
+                    - 2.0 * r_wz_overshoot   # v31s6g3: prevent yaw overshoot
                     - 3.0 * r_vx_unwanted    # v31s3: boosted from 1.0 — pure lat/yaw had vx=+0.15 drift
-                    - 1.5 * r_vy_unwanted    # v31s10g: moderate drift penalty (was 0.5)
+                    - 0.5 * r_vy_unwanted    # gentle: penalize lateral drift
                     - 12.0 * r_wz_unwanted   # v31s5: boosted (8→12) to fix wz=0.3 drift in fwd walk
                     - 2.5 * r_effort         # penalize inaction (offsets reference free lunch)
                 )
@@ -1746,16 +1743,16 @@ class MiniCheetahEnv(gym.Env):
                     "r_vy_track": 3.0 * r_vy_track,
                     "r_vy_lin": 2.0 * r_vy_lin,
                     "r_wz_track": 12.0 * r_wz_track,
-                    "r_wz_lin": 10.0 * r_wz_lin,
+                    "r_wz_lin": 15.0 * r_wz_lin,
                     "r_height_walk": 2.0 * r_height_walk,
                     "r_gait": 0.5 * r_gait,
                     "r_orientation": -0.1 * r_orientation,
                     "r_smooth": -0.02 * r_smooth,
                     "r_vx_overshoot": -2.0 * r_vx_overshoot,
                     "r_vy_overshoot": -1.5 * r_vy_overshoot,
-                    "r_wz_overshoot": -6.0 * r_wz_overshoot,
+                    "r_wz_overshoot": -2.0 * r_wz_overshoot,
                     "r_vx_unwanted": -3.0 * r_vx_unwanted,
-                    "r_vy_unwanted": -1.5 * r_vy_unwanted,
+                    "r_vy_unwanted": -0.5 * r_vy_unwanted,
                     "r_wz_unwanted": -12.0 * r_wz_unwanted,
                     "r_effort": -2.5 * r_effort,
                     "r_total": total,
