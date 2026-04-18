@@ -17,9 +17,11 @@ except ImportError:
 
 
 class KeyboardController:
-    SPEED_WALK = 0.5
-    SPEED_TROT = 1.5
-    SPEED_RUN = 3.0
+    # v24: Reduced walk speed by 15% (0.5→0.425) and run speed by 30% (3.0→2.1)
+    # to match corrected velocity targets — walk and run were overshooting.
+    SPEED_WALK = 0.425
+    SPEED_TROT = 1.275   # scaled proportionally with walk (-15%)
+    SPEED_RUN = 2.1
     SPEED_STRAFE = 0.8
     SPEED_TURN = 1.0
 
