@@ -1546,16 +1546,14 @@ class MiniCheetahEnv(gym.Env):
             else:
                 r_vy_lin = 0.0
 
-            # v31s6e: SIGNED yaw linear reward — provides gradient for WRONG direction.
-            # Old code used max(0,...) which clipped negative → zero gradient when
-            # turning wrong way. Model collapsed to right-turn bias (yaw_L=-39%).
-            # Signed version: negative reward for wrong direction, positive for correct.
-            # Clamped to [-1, 1] to prevent excessive penalties from large wz_ema.
+            # v31s: Yaw linear bonus (monotonic gradient for wz commands)
+            # Without this, yaw has no gradient from zero → target.
+            # Gaussian tracking (r_wz_track) is near-zero at wz=0 for large wz_cmd.
             wz_ema_for_lin = self._wz_ema
             if wz_cmd > 0.05:
-                r_wz_lin = max(-1.0, min(wz_ema_for_lin, wz_cmd)) / max(wz_cmd, 0.1)
+                r_wz_lin = max(0.0, min(wz_ema_for_lin, wz_cmd)) / max(wz_cmd, 0.1)
             elif wz_cmd < -0.05:
-                r_wz_lin = max(-1.0, min(-wz_ema_for_lin, -wz_cmd)) / max(-wz_cmd, 0.1)
+                r_wz_lin = max(0.0, min(-wz_ema_for_lin, -wz_cmd)) / max(-wz_cmd, 0.1)
             else:
                 r_wz_lin = 0.0
 
