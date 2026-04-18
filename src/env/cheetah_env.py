@@ -1601,7 +1601,7 @@ class MiniCheetahEnv(gym.Env):
 
                 total = (
                     4.0 * r_vx_track_run     # v31s2: boosted tracking (was 3.0)
-                    + 3.0 * r_vx_lin         # v31s2: boosted gradient (was 1.5)
+                    + 0.5 * r_vx_lin         # v31s9c: reduced 3.0→0.5 — model overshoots, doesn't need gradient
                     + 1.0 * r_vy_track       # lateral tracking
                     + 0.5 * r_vy_lin         # lateral gradient
                     + 1.0 * r_wz_track       # yaw tracking
@@ -1614,7 +1614,7 @@ class MiniCheetahEnv(gym.Env):
                     - 1.5 * r_vy_unwanted    # anti-lateral-drift
                     - 8.0 * r_wz_unwanted    # v31s6: boosted (2→8) — robot spinning in run mode
                     - 0.5 * r_heading_drift  # heading correction
-                    - 2.0 * r_vx_overshoot   # speed cap
+                    - 6.0 * r_vx_overshoot   # v31s9c: boosted 2→6 — model stuck at 24% overshoot
                     - 1.5 * r_vy_overshoot   # lateral overshoot
                     - 2.0 * r_vx_var         # v31m: velocity smoothness
                     - 5.0 * r_stall          # v31s2: anti-stall penalty
@@ -1625,7 +1625,7 @@ class MiniCheetahEnv(gym.Env):
                     "r_vy_track": 1.0 * r_vy_track,
                     "r_vy_lin": 0.5 * r_vy_lin,
                     "r_wz_track": 1.0 * r_wz_track,
-                    "r_vx_lin": 3.0 * r_vx_lin,
+                    "r_vx_lin": 0.5 * r_vx_lin,
                     "r_gait": 0.5 * r_gait,
                     "r_orientation": -0.8 * r_orientation,
                     "r_ang_vel_xy": -0.2 * r_ang_vel_xy,
@@ -1635,7 +1635,7 @@ class MiniCheetahEnv(gym.Env):
                     "r_vy_unwanted": -1.5 * r_vy_unwanted,
                     "r_wz_unwanted": -8.0 * r_wz_unwanted,
                     "r_heading_drift": -0.5 * r_heading_drift,
-                    "r_vx_overshoot": -2.0 * r_vx_overshoot,
+                    "r_vx_overshoot": -6.0 * r_vx_overshoot,
                     "r_vy_overshoot": -1.5 * r_vy_overshoot,
                     "r_vx_var": -2.0 * r_vx_var,
                     "r_stall": -5.0 * r_stall,
