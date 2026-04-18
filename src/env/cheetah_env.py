@@ -961,7 +961,9 @@ class MiniCheetahEnv(gym.Env):
             speed_scale = max(speed_scale, 0.10)
 
         t = self.step_count * self.dt
-        freq = 3.0   # Hz
+        # v31s6: Run uses higher gait frequency for stability at speed.
+        # Real quadrupeds increase stride frequency when running.
+        freq = 4.5 if is_run else 3.0
         phase = 2.0 * math.pi * freq * t
         knee_lead = math.pi / 3.0
         # v31r: rear_scale=1.0 for pure yaw to eliminate positive yaw bias.
@@ -1571,10 +1573,10 @@ class MiniCheetahEnv(gym.Env):
 
             if mode == "run":
                 # v31m: Use EMA for vx tracking (consistent with walk mode fix)
-                # v31s2: wider sigma for run (0.25→0.5) — Gaussian gives gradient
-                # at large velocity deficits. At σ=0.25, exp(-9)≈0 for cmd=1.5,vx=0.
-                # At σ=0.5: exp(-4.5)≈0.011 — still faint but 90x more gradient.
-                _RUN_SIGMA = 0.50
+                # v31s6: wider sigma (0.50→0.80) — model barely runs (vx=0.14).
+                # At σ=0.50, exp(-(0-0.8)²/0.5)=0.28. At σ=0.80, exp(-(0-0.8)²/0.8)=0.45.
+                # More reward for partial achievement → faster learning.
+                _RUN_SIGMA = 0.80
                 r_vx_track_run = math.exp(-(vx_ema - vx_cmd)**2 / _RUN_SIGMA)
                 r_vx_track_run *= vx_cmd_scale
                 r_vx_var = (vx - vx_ema)**2 if abs(vx_cmd) > 0.05 else 0.0
@@ -1792,7 +1794,12 @@ class MiniCheetahEnv(gym.Env):
         height_above_terrain = base_z - terrain_h
 
         # Terminate if too low (fallen)
-        if height_above_terrain < 0.05:
+        # v31s6: Run mode uses tighter threshold (0.12 vs 0.05).
+        # Robot survives at h=0.177 in "half-fallen" state getting huge negative
+        # rewards → model learns to avoid running. Terminate earlier = shorter
+        # bad episodes = faster learning of stable gaits.
+        _min_h = 0.12 if self.command_mode == "run" else 0.05
+        if height_above_terrain < _min_h:
             return True
 
         # Terminate if too tilted (>60° from vertical)
@@ -2022,12 +2029,12 @@ class MiniCheetahEnv(gym.Env):
                 height = float(rng.uniform(0.15, HEIGHT_MAX))  # normal walking
             self._start_height_ramp(height)
         elif mode == "run":
-            # v31s5: biased run speed — 50% at [0.5,1.2] for gradient, 50% at [1.2,2.0] stretch
-            # Model does 60% at 1.0 m/s but 0% at 2.0. More low-speed samples = more learning signal.
-            if rng.random() < 0.5:
-                vx = float(rng.uniform(0.5, 1.2))
+            # v31s6: model barely does 0.14 m/s run. Lower targets to build gait first.
+            # 60% achievable [0.3,0.8], 40% stretch [0.8,1.5]
+            if rng.random() < 0.6:
+                vx = float(rng.uniform(0.3, 0.8))
             else:
-                vx = float(rng.uniform(1.2, 2.0))
+                vx = float(rng.uniform(0.8, 1.5))
             vy = float(rng.uniform(-0.5, 0.5))
             wz = float(rng.uniform(-0.5, 0.5))
             # Run height is more restricted (can't run fully crouched)
