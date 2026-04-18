@@ -742,9 +742,10 @@ class MiniCheetahEnv(gym.Env):
             if self.forced_mode and self.forced_mode in SKILL_MODES:
                 self.command_mode = self.forced_mode
             else:
-                # v31s6b: Balanced curriculum — no aggressive phase shifts.
-                # Run-only experiment confirmed: run works but dies from pitch instability.
-                mode_weights = [0.10, 0.30, 0.30, 0.30]
+                # v31s6c: More walk to prevent yaw regression under balanced training.
+                # At 30/30 walk/run, yaw collapsed 95%→39% in 100K steps.
+                # Give walk 40% for more yaw/lateral training signal.
+                mode_weights = [0.10, 0.40, 0.20, 0.30]
                 self.command_mode = str(rng.choice(SKILL_MODES, p=mode_weights))
             self._randomize_command_for_mode(rng)
             self.target_height = self._effective_target_height
@@ -1700,8 +1701,8 @@ class MiniCheetahEnv(gym.Env):
                     + 3.0 * r_vx_lin         # monotonic forward gradient
                     + 3.0 * r_vy_track       # EMA-based lateral tracking
                     + 2.0 * r_vy_lin         # monotonic lateral gradient
-                    + 4.0 * r_wz_track       # v31s: boosted yaw tracking (was 2.0)
-                    + 2.0 * r_wz_lin         # v31s: monotonic yaw gradient (new)
+                    + 6.0 * r_wz_track       # v31s6c: boosted (4→6) — yaw collapsed under run training
+                    + 3.0 * r_wz_lin         # v31s6c: boosted (2→3) — sustain yaw gradient
                     + 2.0 * r_height_walk    # height tracking (crouch)
                     + 0.5 * r_gait           # gait quality
                     - 0.1 * r_orientation    # prevent flipping only
@@ -1718,8 +1719,8 @@ class MiniCheetahEnv(gym.Env):
                     "r_vx_lin": 3.0 * r_vx_lin,
                     "r_vy_track": 3.0 * r_vy_track,
                     "r_vy_lin": 2.0 * r_vy_lin,
-                    "r_wz_track": 4.0 * r_wz_track,
-                    "r_wz_lin": 2.0 * r_wz_lin,
+                    "r_wz_track": 6.0 * r_wz_track,
+                    "r_wz_lin": 3.0 * r_wz_lin,
                     "r_height_walk": 2.0 * r_height_walk,
                     "r_gait": 0.5 * r_gait,
                     "r_orientation": -0.1 * r_orientation,
