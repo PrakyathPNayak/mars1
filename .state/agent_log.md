@@ -221,3 +221,76 @@ If walk_fwd doesn't recover by 3M, may need to stop and analyze.
 
 **yaw_L NOT broken** — eval at 1.5 was too aggressive. Works well at 0.5-0.8 rad/s.
 Model is balanced and improving across all skills. Continue training.
+
+## v31s6g4 — 4M Eval ⭐⭐⭐ BEST YAW + JUMP
+| Scenario | 3M | 4M | Notes |
+|----------|-----|-----|-------|
+| walk_fwd | 90% | 89% | stable |
+| walk_back | 35% | 36% | stable |
+| lat_L | 94% | 84% | slight drop |
+| lat_R | 84% | 77% | slight drop |
+| yaw_L_0.5 | 80% | 93% ✅✅ | near perfect! |
+| yaw_R_0.5 | 99% | 103% ✅✅ | perfect! |
+| yaw_L_1.0 | 42% | 43% | symmetric with R |
+| yaw_R_1.0 | 48% | 45% | symmetric with L |
+| fwd_yaw_L | 79% | 52% 🔴 | oscillation |
+| fwd_yaw_R | 85% | 92% ✅ | excellent |
+| run_1.0 | 112% | 109% | solid |
+| jump | 0.754 | 0.762 ✅ | NEW ATB |
+| crouch | 0.083 | 0.080 ✅ | ground level |
+| crouch_walk | 0.098 | 0.093 | h good, vx=0.083 slow |
+
+Best checkpoint for: yaw symmetry, jump height, crouch depth.
+Saved as best_4M_yaw93_jump762.zip.
+
+## v31s10g7 — Asymmetric yaw_gain (0.90 pos, 0.60 neg) — YAW- SOLVED
+Commit 5844fc7. Started from s10g6/2M.
+
+### Results — YAW- OVERSHOOT FIXED
+| Test | s10g5/2M (old baseline) | s10g7/300K | s10g7/1M | s10g7/2M |
+|------|------------------------|-----------|---------|---------|
+| walk_fwd_0.5 | 84% | 96% | 98% | **94%** |
+| walk_fwd_1.0 | 84% | 91% | 94% | **90%** |
+| yaw+0.5 | 104% | 94% | 89% | **88%** |
+| yaw-0.5 | **173%** | 91% | 98% | **96%** |
+| fwd+yaw+ | vx=84%,wz=151% | vx=79%,wz=116% | vx=75%,wz=111% | vx=74%,wz=**108%** |
+| fwd+yaw- | N/A | N/A | N/A | vx=91%,wz=**100%** |
+| lat+0.3 | 67% | 68% | 64% | **71%** |
+| lat-0.3 | 98% | 93% | 94% | **96%** |
+| run_1.0 | 105% | 108% | 108% | **107%** |
+| run_1.5 | 117% | 114% | 104% | **103%** |
+| crouch | 0.264 | 0.260 | 0.258 | **0.258** |
+| jump | 0.586 | 0.607 | 0.620 | **0.622** |
+
+### Remaining Issues
+- yaw+ trending down (104→88%) — may need gain bump 0.90→0.95
+- lat+ weak at 71% (lat- is 96%) — asymmetry investigation needed
+- crouch stuck at 0.258 — user wants near ground level
+- Training continues to 5M, PID 4005902
+
+## v31s6g4 — 5M FINAL EVAL ⭐⭐⭐⭐
+| Scenario | 3M | 4M | 5M | Notes |
+|----------|-----|-----|-----|-------|
+| walk_fwd | 90% | 89% | 87% | stable |
+| walk_back | 35% | 36% | 24% | dropped |
+| lat_L | 94% | 84% | 67% | regressed |
+| lat_R | 84% | 77% | 80% | stable |
+| yaw_L_0.5 | 80% | 93% | 101% ✅✅ | PERFECT |
+| yaw_R_0.5 | 99% | 103% | 121% ✅ | overshooting |
+| yaw_L_1.0 | 42% | 43% | 31% | dropped |
+| yaw_R_1.0 | 48% | 45% | 42% | stable |
+| fwd_yaw_L | 79% | 52% | 94% ✅✅ | RECOVERED |
+| fwd_yaw_R | 85% | 92% | 110% ✅✅ | best ever |
+| run_1.0 | 112% | 109% | 109% | solid |
+| jump | 0.754 | 0.762 | 0.767 ✅ | ATB! |
+| crouch | 0.083 | 0.080 | 0.083 | ground level |
+| crouch_walk | 0.098 | 0.093 | 0.106 | vx=0.430! |
+
+v31s6g4 training COMPLETE. 5M steps total.
+**Best checkpoints:**
+- 3M: best balanced (walk_fwd=90%, lat_L=94%)
+- 4M: best yaw symmetry (L=93%, R=103%)
+- 5M: best fwd_yaw (L=94%, R=110%), best jump (0.767)
+
+**Remaining weaknesses:** lat_L regression, walk_back low, run_2.0 dead.
+**Next:** v31s6g5 — boost lateral sampling, extend run range, resume from 3M balanced.
