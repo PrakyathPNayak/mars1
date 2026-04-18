@@ -1020,15 +1020,7 @@ class MiniCheetahEnv(gym.Env):
         # v31s10g7: ASYMMETRIC yaw gain — negative yaw overshoots 170% at gain=0.90.
         # yaw+ converges to 91-104% at 0.90 (perfect). yaw- physics creates more torque.
         # Reduce negative gain: 0.90*(100/170)≈0.53, conservative=0.60
-        # v31s6g6: Reduce yaw_gain when forward is ALSO commanded.
-        # At gain=0.90, reference produces vx=0% + wz=105% (all energy to yaw).
-        # At gain=0.40, reference gives vx=26% + wz=66% — balanced starting point.
-        # Policy residual adds remaining forward + yaw. Pure yaw keeps high gain.
-        has_fwd_and_yaw = abs(vx_cmd) > 0.05 and abs(wz_cmd) > 0.1
-        if has_fwd_and_yaw:
-            yaw_gain = 0.40 if wz_cmd >= 0 else 0.50
-        else:
-            yaw_gain = 0.90 if wz_cmd >= 0 else 0.60
+        yaw_gain = 0.90 if wz_cmd >= 0 else 0.60
         yaw_diff = min(0.5, max(-0.5, wz_cmd * yaw_gain))
 
         # v31k: Constant forward command bias at gain=0.15.
@@ -1596,7 +1588,7 @@ class MiniCheetahEnv(gym.Env):
             #          Instantaneous (v31n) → model froze (gait-cycle spikes).
             #          Fast EMA: catches sustained sprints in 2-3 steps, ignores
             #          single-step gait oscillation. Best of both worlds.
-            _OVERSHOOT_DEADZONE = 1.20  # only penalize when >120% of commanded
+            _OVERSHOOT_DEADZONE = 1.10  # v31s10g12: tightened 1.20→1.10 (110% overshoot now penalized)
             vx_fast = self._vx_ema_fast
             vy_fast = self._vy_ema_fast
             if abs(vx_cmd) > 0.05:
@@ -1651,8 +1643,8 @@ class MiniCheetahEnv(gym.Env):
                     - 1.5 * r_vy_unwanted    # anti-lateral-drift
                     - 8.0 * r_wz_unwanted    # v31s6: boosted (2→8) — robot spinning in run mode
                     - 0.5 * r_heading_drift  # heading correction
-                    - 2.0 * r_vx_overshoot   # speed cap
-                    - 1.5 * r_vy_overshoot   # lateral overshoot
+                    - 4.0 * r_vx_overshoot   # v31s10g12: boosted 2→4, deadzone 1.10
+                    - 3.0 * r_vy_overshoot   # v31s10g12: boosted 1.5→3
                     - 5.0 * r_wz_overshoot   # v31s10g6: boosted from -2
                     - 2.0 * r_vx_var         # v31m: velocity smoothness
                     - 5.0 * r_stall          # v31s2: anti-stall penalty
@@ -1673,10 +1665,9 @@ class MiniCheetahEnv(gym.Env):
                     "r_vy_unwanted": -1.5 * r_vy_unwanted,
                     "r_wz_unwanted": -8.0 * r_wz_unwanted,
                     "r_heading_drift": -0.5 * r_heading_drift,
-                    "r_vx_overshoot": -2.0 * r_vx_overshoot,
-                    "r_vy_overshoot": -1.5 * r_vy_overshoot,
+                    "r_vx_overshoot": -4.0 * r_vx_overshoot,
+                    "r_vy_overshoot": -3.0 * r_vy_overshoot,
                     "r_wz_overshoot": -5.0 * r_wz_overshoot,
-                    "r_vx_var": -2.0 * r_vx_var,
                     "r_stall": -5.0 * r_stall,
                     "r_vx_ema": vx_ema,
                     "r_total": total,
@@ -1744,18 +1735,18 @@ class MiniCheetahEnv(gym.Env):
                 # Only penalize inaction when velocity is commanded (not crouch)
                 r_effort = math.exp(-action_norm_sq / 0.5) if cmd_mag > 0.05 else 0.0
                 total = (
-                    14.0 * r_vx_track_walk   # v31s6g6: boosted 8→14 — fwd_yaw fix (vx was 11 vs wz 27)
-                    + 4.0 * r_vx_lin         # v31s6g6: boosted 3→4
+                    8.0 * r_vx_track_walk    # dominant: Gaussian peak at target speed
+                    + 3.0 * r_vx_lin         # monotonic forward gradient
                     + 3.0 * r_vy_track       # EMA-based lateral tracking
                     + 2.0 * r_vy_lin         # monotonic lateral gradient
-                    + 12.0 * r_wz_track      # v31s6g: boosted (10→12) — yaw gradient
-                    + 8.0 * r_wz_lin         # v31s6g6: reduced 10→8 — fwd_yaw fix (now vx=18, wz=20)
+                    + 12.0 * r_wz_track      # v31s6g: boosted (10→12) — yaw 95%→66% gradient imbalance vs vx (11/step vs 5.5)
+                    + 10.0 * r_wz_lin         # v31s10g5: reduced 15→10 — overshoot fix (15 gave 173% yaw-)
                     + 2.0 * r_height_walk    # height tracking (crouch)
                     + 0.5 * r_gait           # gait quality
                     - 0.1 * r_orientation    # prevent flipping only
                     - 0.02 * r_smooth        # action smoothness
-                    - 2.0 * r_vx_overshoot   # prevent sprinting past target
-                    - 1.5 * r_vy_overshoot   # prevent lateral overshoot
+                    - 5.0 * r_vx_overshoot   # v31s10g12: boosted 2→5, deadzone 1.10
+                    - 3.0 * r_vy_overshoot   # v31s10g12: boosted 1.5→3
                     - 10.0 * r_wz_overshoot  # v31s10g6: boosted -6→-10, deadzone 1.15x
                     - 3.0 * r_vx_unwanted    # v31s3: boosted from 1.0 — pure lat/yaw had vx=+0.15 drift
                     - 1.5 * r_vy_unwanted    # v31s10g: moderate drift penalty (was 0.5)
@@ -1763,18 +1754,18 @@ class MiniCheetahEnv(gym.Env):
                     - 2.5 * r_effort         # penalize inaction (offsets reference free lunch)
                 )
                 scaled_components = {
-                    "r_vx_track": 14.0 * r_vx_track_walk,
-                    "r_vx_lin": 4.0 * r_vx_lin,
+                    "r_vx_track": 8.0 * r_vx_track_walk,
+                    "r_vx_lin": 3.0 * r_vx_lin,
                     "r_vy_track": 3.0 * r_vy_track,
                     "r_vy_lin": 2.0 * r_vy_lin,
                     "r_wz_track": 12.0 * r_wz_track,
-                    "r_wz_lin": 8.0 * r_wz_lin,
+                    "r_wz_lin": 10.0 * r_wz_lin,
                     "r_height_walk": 2.0 * r_height_walk,
                     "r_gait": 0.5 * r_gait,
                     "r_orientation": -0.1 * r_orientation,
                     "r_smooth": -0.02 * r_smooth,
-                    "r_vx_overshoot": -2.0 * r_vx_overshoot,
-                    "r_vy_overshoot": -1.5 * r_vy_overshoot,
+                    "r_vx_overshoot": -5.0 * r_vx_overshoot,
+                    "r_vy_overshoot": -3.0 * r_vy_overshoot,
                     "r_wz_overshoot": -10.0 * r_wz_overshoot,
                     "r_vx_unwanted": -3.0 * r_vx_unwanted,
                     "r_vy_unwanted": -1.5 * r_vy_unwanted,

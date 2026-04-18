@@ -407,3 +407,161 @@ Also committed: reward rebalance from v31s6g6 (vx=18, wz=20)
 Resumed from v31s6g6 1M checkpoint (yaw=95/102%, run_2.0=72%)
 PID: 515988, started 20:13
 
+
+## v31s6g7 — re-applied reward rebalance + restart (2025-04-18)
+
+### Problem discovered
+Parallel session (commit d814713, v31s10g11) SILENTLY REVERTED our reward fix from 5bde947:
+  - r_vx_track_walk: 14→8 (reverted)
+  - r_vx_lin: 4→3 (reverted)
+  - r_wz_lin: 8→10 (reverted)
+v31s6g6b trained 580K steps with WRONG weights (vx=11, wz=22 — 2.0x ratio).
+This explains why fwd_yaw was still -30% — the reward imbalance was NEVER actually fixed!
+
+### Fix (commit bf1b0a6)
+Re-applied: vx_track=14, vx_lin=4, wz_lin=8 (vx=18, wz=20, ratio 1.1x)
+Tests: 10/10 pass.
+
+### Reference trajectory analysis
+Also tested rear_scale fix (1.0 for non-forward), but it HURT yaw effectiveness:
+  yaw_L: 92% → 74% (20% drop). Not worth small forward-drift reduction.
+  Decision: keep rear_scale=1.3 for all walk. Policy handles drift via penalties.
+
+### Training started
+- PID: 272311
+- Resume from: v31s6g6 1M checkpoint (trained with CORRECT weights)
+- Has BOTH fixes: reward rebalance (vx=18, wz=20) + yaw_gain reduction for fwd+yaw
+- This is the FIRST training with BOTH fixes applied from start
+- Target: 5M steps
+- Will eval at 500K, 1M, 2M, 3M
+
+### Baseline (v31s6g6 1M — our starting point)
+| Metric | Value |
+|--------|-------|
+| walk_fwd | 56% |
+| yaw_L | 95% |
+| yaw_R | 102% |
+| fwd_yaw_L vx | -27% |
+| run_2.0 | 72% |
+| jump | 0.767m |
+| crouch | 0.087m |
+
+### Key question: will fwd_yaw recover with correct weights?
+Previously damaged by wz=27 (2.5x bias). Now training with vx=18 vs wz=20 (1.1x).
+Starting from checkpoint that never saw wz=27 weights (v31s6g6 1M was correctly trained).
+
+## s10g11 Evaluation — 2M steps (total ~4.4M from scratch)
+
+### Eval bug fix
+- Was using `raw.gait_mode = "walk"` — WRONG. Env uses `command_mode`, not `gait_mode`.
+- Setting `gait_mode` just creates unused Python attribute. Observation always saw "stand" mode.
+- Fix: use `raw.set_command(vx, vy, wz, mode, height)` which sets both `command` AND `command_mode`.
+
+### Results comparison
+| Test | s10g8/2.4M | s10g11/1.2M | s10g11/2M |
+|------|-----------|-------------|-----------|
+| walk_fwd_0.5 | 100% | 101% | 102% ✅ |
+| walk_fwd_1.0 | 96% | 100% | 109% ⚠️ overshoot |
+| yaw+0.5 | 88% | 89% | 89% stuck |
+| yaw-0.5 | 110% | 109% | 109% still overshoot |
+| lat+0.3 | 98% | 98% | 102% ✅ |
+| lat-0.3 | 96% | 97% | 94% ✅ |
+| run_0.5 | 113% | 117% | 116% ✅ |
+| run_0.8 | ~100% | 98% | 100% ✅ perfect |
+| run_1.0 | 108% | 124% | 123% ⚠️ overshoot |
+| run_1.2 | FALLS | 123% | 123% ✅✅ FIXED |
+| run_1.5 | 74% osc | FALLS | FALLS ❌ |
+| run_2.0 | 0% | FALLS | FALLS ❌ |
+| crouch | 0.099 | 0.081 | 0.082 ✅ |
+| jump | 0.647 | 0.649 | 0.391 ❌ REGRESSED |
+
+### Analysis
+- run_1.2 FIXED — was falling, now 123%. Speed cap working.
+- Jump REGRESSED 0.649→0.391 between 1.2M and 2M. Concerning.
+- run_1.0/1.2 overshoot ~123% — both hit speed_scale=0.20 cap, policy adds too much residual.
+- run_1.5/2.0 still fall — beyond action_scale capability with capped reference.
+- yaw+ stuck at 89% — no improvement from s10g8.
+
+### Next: wait for 3M, check if jump recovers or continues decline.
+
+### v31s6g7 eval @ 500K — FWD_YAW FIXED!
+
+| Scenario | g6b 500K (wrong) | g7 500K (correct) | Change |
+|----------|----------|----------|---------|
+| walk_fwd | 77% | 71% | -6% (will improve) |
+| walk_back | 67% | 69% | +2% |
+| lat_L | 140% | 171% | +31% (overshooting) |
+| lat_R | 120% | 117% | -3% |
+| yaw_L | 110% | 98% | -12% (symmetric!) |
+| yaw_R | 93% | 98% | +5% (symmetric!) |
+| fwd_yaw_L vx | -30% | **+80%** | **+110pp!!!** |
+| fwd_yaw_L wz | ? | 85% | NEW |
+| fwd_yaw_R vx | -25% | **+76%** | **+101pp!!!** |
+| fwd_yaw_R wz | ? | 106% | NEW |
+| run_1.0 | 97% | 95% | -2% |
+| run_2.0 | 74% | 74% | 0% |
+| jump | 0.609m | 0.768m | +0.159m |
+| crouch | 0.088m | 0.089m | +0.001m |
+
+KEY RESULT: fwd_yaw was -30% (backward) → +80% (forward). 
+The reward rebalancing (vx=18 vs wz=20, was 11 vs 22) is THE fix.
+Combined with yaw_gain reduction for fwd+yaw → policy can track both axes.
+
+Remaining issues:
+- lat_L overshooting 171% — may need vy_overshoot penalty increase
+- walk_fwd at 71% — expect improvement with more training
+- crouch 0.089m — close to 0.08 target, needs time
+
+### v31s6g7 eval @ 1M — fwd_yaw CONFIRMED FIXED
+
+| Scenario | g7 500K | g7 1M | Δ |
+|----------|---------|-------|---|
+| walk_fwd | 71% | 75% | +4% ↑ |
+| walk_back | 69% | 75% | +6% ↑ |
+| lat_L | 171% | 170% | -1% (still overshooting) |
+| lat_R | 117% | 113% | -4% ↓ |
+| yaw_L | 98% | 101% | +3% |
+| yaw_R | 98% | 92% | -6% |
+| fwd_yaw_L vx | 80% | 77% | -3% (stable) |
+| fwd_yaw_L wz | 85% | 99% | +14% ↑↑ |
+| fwd_yaw_R vx | 76% | 74% | -2% (stable) |
+| fwd_yaw_R wz | 106% | 93% | -13% (converging) |
+| run_1.0 | 95% | 96% | +1% |
+| run_2.0 | 74% | 75% | +1% |
+| jump | 0.768m | 0.764m | stable |
+| crouch | 0.089m | 0.088m | -0.001m |
+
+Analysis:
+- fwd_yaw is FIXED and STABLE. vx=77%/74%, wz=99%/93%.
+- walk improving (75%/75%). run stable (96%/75%).
+- lat_L still overshooting at 170%. Reward math says 100% is optimal.
+  Policy should converge — tracking penalty at 170% = 1.77/step.
+- yaw_R slightly low (92%). Minor L/R asymmetry.
+- Continuing training. Next eval at 2M.
+
+## s10g11 @ 3M — Jump recovered, overshoot growing, yaw+ declining
+
+| Test | s10g8 | 1.2M | 2M | 3M | Trend |
+|------|-------|------|----|----|-------|
+| walk_fwd_0.5 | 100% | 101% | 102% | 110% | ⚠️ overshoot rising |
+| walk_fwd_1.0 | 96% | 100% | 109% | 111% | ⚠️ |
+| yaw+0.5 | 88% | 89% | 89% | 83% | ❌ declining |
+| yaw-0.5 | 110% | 109% | 109% | 114% | ⚠️ overshoot |
+| lat+0.3 | 98% | 98% | 102% | 108% | ⚠️ |
+| lat-0.3 | 96% | 97% | 94% | 103% | ok |
+| run_0.8 | ~100% | 98% | 100% | 101% | ✅ |
+| run_1.0 | 108% | 124% | 123% | 123% | ⚠️ stable overshoot |
+| run_1.2 | FALLS | 123% | 123% | 120% | ✅ FIXED |
+| run_1.5 | 74% | FALLS | FALLS | FALLS | ❌ |
+| crouch | 0.099 | 0.081 | 0.082 | 0.082 | ✅ |
+| jump | 0.647 | 0.649 | 0.391 | 0.647 | ✅ recovered |
+
+### Analysis
+- Jump dip at 2M was transient. Back to 0.647. Good.
+- Systematic overshoot growing: vx, vy, wz all overshooting more with training.
+- Cause: r_vx_lin (monotonic gradient) + no vx overshoot penalty → policy learns to always go faster.
+- yaw+ declining: 89→83%. Training pulling policy toward locomotion, yaw+ signal too weak.
+- 1.2M checkpoint may be best all-around (less overshoot, yaw+ 89%).
+- Next iteration needs: vx/vy overshoot penalty (like r_wz_overshoot).
+
+### Letting training continue to 5M. Will pick best checkpoint after.
