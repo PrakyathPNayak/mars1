@@ -1736,7 +1736,7 @@ class MiniCheetahEnv(gym.Env):
                     "r_vx_overshoot": -2.0 * r_vx_overshoot,
                     "r_vy_overshoot": -1.5 * r_vy_overshoot,
                     "r_vx_unwanted": -3.0 * r_vx_unwanted,
-                    "r_vy_unwanted": -0.5 * r_vy_unwanted,
+                    "r_vy_unwanted": -1.5 * r_vy_unwanted,
                     "r_wz_unwanted": -12.0 * r_wz_unwanted,
                     "r_effort": -2.5 * r_effort,
                     "r_total": total,
