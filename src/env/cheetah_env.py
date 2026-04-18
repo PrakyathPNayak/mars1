@@ -793,7 +793,7 @@ class MiniCheetahEnv(gym.Env):
         if self.command_mode == "walk":
             action_scaled = action * 0.5  # v28: more authority for speed modulation (was 0.3)
         elif self.command_mode == "run":
-            action_scaled = action * 0.5  # v31s2: reduced from 0.8 — model was using authority to fight reference
+            action_scaled = action * 0.20  # v31s8: reduced from 0.5→0.20 — model fights reference at higher scale
         else:
             action_scaled = action * 0.5
 
@@ -1598,9 +1598,9 @@ class MiniCheetahEnv(gym.Env):
                     + 0.5 * r_vy_lin         # lateral gradient
                     + 1.0 * r_wz_track       # yaw tracking
                     + 0.5 * r_gait           # gait quality
-                    - 1.5 * r_orientation    # v31s7: boosted (0.3→1.5) — pitch collapse kills run
-                    - 0.5 * r_ang_vel_xy     # v31s7: boosted (0.05→0.5) — yaw spin prevention
-                    - 0.1 * r_lin_vel_z      # v31s7: boosted (0.05→0.1) — bounce control
+                    - 0.8 * r_orientation    # v31s8: moderate (was 1.5) — action scale fix handles root cause
+                    - 0.2 * r_ang_vel_xy     # v31s8: moderate (was 0.5) — action scale fix handles root cause
+                    - 0.05 * r_lin_vel_z     # v31s8: original value restored
                     - 0.01 * r_smooth        # action smoothness
                     - 2.0 * r_vx_unwanted    # anti-forward-bias
                     - 1.5 * r_vy_unwanted    # anti-lateral-drift
@@ -1618,9 +1618,9 @@ class MiniCheetahEnv(gym.Env):
                     "r_wz_track": 1.0 * r_wz_track,
                     "r_vx_lin": 3.0 * r_vx_lin,
                     "r_gait": 0.5 * r_gait,
-                    "r_orientation": -1.5 * r_orientation,
-                    "r_ang_vel_xy": -0.5 * r_ang_vel_xy,
-                    "r_lin_vel_z": -0.1 * r_lin_vel_z,
+                    "r_orientation": -0.8 * r_orientation,
+                    "r_ang_vel_xy": -0.2 * r_ang_vel_xy,
+                    "r_lin_vel_z": -0.05 * r_lin_vel_z,
                     "r_smooth": -0.01 * r_smooth,
                     "r_vx_unwanted": -2.0 * r_vx_unwanted,
                     "r_vy_unwanted": -1.5 * r_vy_unwanted,
