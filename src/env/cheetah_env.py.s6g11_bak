@@ -1650,18 +1650,12 @@ class MiniCheetahEnv(gym.Env):
             else:
                 r_vx_lin = 0.0
 
-            # v31s6g12: Tent-shaped lateral linear reward.
-            # Below cmd: linear up (gradient to increase). At cmd: peak 1.0.
-            # Above cmd: linear down (gradient to decrease). Zero at 2x cmd.
-            # OLD: flat 1.0 above cmd → no penalty for 133% overshoot.
-            # NEW: at 133%, tent=0.67 (was 1.0). Strong gradient toward 100%.
+            # v29: Lateral linear bonus (monotonic gradient for vy commands)
             vy_ema = self._vy_ema
             if vy_cmd > 0.05:
-                ratio = vy_ema / max(vy_cmd, 0.1)
-                r_vy_lin = max(0.0, min(ratio, 2.0 - ratio))
+                r_vy_lin = max(0.0, min(vy_ema, vy_cmd)) / max(vy_cmd, 0.1)
             elif vy_cmd < -0.05:
-                ratio = -vy_ema / max(-vy_cmd, 0.1)
-                r_vy_lin = max(0.0, min(ratio, 2.0 - ratio))
+                r_vy_lin = max(0.0, min(-vy_ema, -vy_cmd)) / max(-vy_cmd, 0.1)
             else:
                 r_vy_lin = 0.0
 

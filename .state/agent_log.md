@@ -1078,3 +1078,237 @@ Lower lr (3e-5) should make smoother updates without catastrophic interference.
 **Yaw oscillation continues: 0pp→16pp. vx/wz tradeoff visible.**
 **Best balanced: g10@3M (0pp yaw + 89% walk_fwd)**
 
+
+### g10 @ 4M eval
+| Scenario | g10@3.5M | g10@4M |
+|----------|----------|--------|
+| walk_fwd | 95% | 93% stable |
+| walk_back | 81% | 82% ↑ best |
+| lat_L | 137% | 127% ↑↑ best |
+| lat_R | 106% | 112% ↑ |
+| yaw_L | 95% | 100% |
+| yaw_R | 79% | 74% ↓↓ |
+| yaw_gap | 16pp | 26pp ↑↑ GROWING |
+| fwd_yaw_L | 87%/107% | 84%/108% |
+| fwd_yaw_R | 96%/79% | 92%/76% ↓ |
+| run_1.0 | 103% | 102% |
+| run_2.0 | 81% | 81% |
+| jump | 0.790 | 0.726 ↓↓ CRASHED |
+| crouch | 0.089 | 0.089 |
+
+**Post-3M degradation: yaw_R declining (86→79→74), jump crashed (0.726).**
+**walk_fwd stable (93%), lat_L improving (127%).**
+**g10@3M confirmed best balanced checkpoint.**
+
+
+### s6g11 @ 500K eval (use_terrain=False, from s6g10@3M)
+Changes: LATERAL_SIGMA 0.05→0.03, vy_overshoot dz 1.20→1.05, vy_overshoot wt -1.5→-5.0, abd_lat_amp symmetric 0.45, mirror 20→35%
+
+| Scenario | s6g10@3M | s6g11@500K | Δ |
+|----------|----------|------------|---|
+| walk_fwd | 100% | 103% | +3 |
+| walk_back | 78% | 73% | -5 |
+| lat+ | 148% | 136% | -12 ↓ IMPROVING |
+| lat- | 114% | 123% | +9 (symmetric gain) |
+| yaw+ | 92% | 99% | +7 |
+| yaw- | 91% | 85% | -6 |
+| yaw_gap | 1pp | 14pp | worse (early) |
+| fwd_yaw+ vx/wz | 82/92% | 90/107% | mixed |
+| fwd_yaw- vx/wz | 89/90% | 102/84% | mixed |
+| run_1.0 | 107% | 108% | same |
+| run_2.0 | 79% | 87% | +8 ↑ |
+| jump | 0.804 | 0.802 | same |
+| crouch | 0.088 | 0.087 | same |
+| crouch_walk | N/A | 125%/h=0.094 | NEW |
+
+**Overshoot penalty working: lat+ 148→136 in 500K steps.**
+**Yaw gap 14pp — mirror 35% needs more time (was 0pp at s6g10@3M).**
+**crouch_walk functional! Robot walks at 0.094m height.**
+
+Yaw gain sweep results (for future fix):
+  current (0.90/0.60): yaw+=123%, yaw-=51% → 72pp gap
+  balanced (0.65/0.85): yaw+=99%, yaw-=82% → 17pp gap ← BEST for s6g12
+
+### g10 @ 4.5M eval
+| Scenario | g10@4M | g10@4.5M |
+|----------|--------|----------|
+| walk_fwd | 93% | 88% |
+| walk_back | 82% | 85% ↑ best |
+| lat_L | 127% | 112% ↑↑ best |
+| lat_R | 112% | 119% (now R>L!) |
+| yaw_L | 100% | 93% |
+| yaw_R | 74% | 88% ↑↑ recovered |
+| yaw_gap | 26pp | 5pp ↑↑ |
+| fwd_yaw_L | 84%/108% | 80%/110% |
+| fwd_yaw_R | 92%/76% | 89%/78% |
+| run_1.0 | 102% | 100% |
+| run_2.0 | 81% | 79% |
+| jump | 0.726 | 0.784 ↑ recovered |
+| crouch | 0.089 | 0.090 |
+
+16→26→5. Mirror working.**
+**Lateral gap FLIPPED: was L=138/R=109, now L=112/R=119. Mirror equalizing.**
+**Both lat directions overshoot — vy overshoot penalty too weak (only -1.5).**
+
+
+### s6g11 @ 1M eval (use_terrain=False)
+| Scenario | 500K | 1M | Δ |
+|----------|------|-----|---|
+| walk_fwd | 103% | 99% | -4 ✓ |
+| walk_back | 73% | 78% | +5 ↑ |
+| lat+ | 136% | 141% | +5 BAD |
+| lat- | 123% | 115% | -8 ↓ good |
+| yaw+ | 99% | 114% | +15 overshoot |
+| yaw- | 85% | 69% | -16 COLLAPSE |
+| yaw_gap | 14pp | 45pp | EXPLODING |
+| fwd_yaw+ wz | 107% | 117% | +10 |
+| fwd_yaw- wz | 84% | 73% | -11 |
+| run_1.0 | 108% | 107% | same |
+| run_2.0 | 87% | 86% | same |
+| jump | 0.802 | 0.806 | same |
+| crouch | 0.087 | 0.088 | same |
+| crouch_walk | 125%/0.094 | 118%/0.093 | ↑ |
+
+**PROBLEMS:**
+1. lat+ overshoot 141% STILL CLIMBING despite penalty. r_vy_lin gives FULL credit (1.0) at any overshoot.
+   At 141%: net reward = 3.50/5.0 = 70% of optimal. Too generous.
+2. Yaw gap 45pp — yaw+ surged 114% (ref gives 123% for free), yaw- collapsed 69%.
+   Mirror 35% not enough to overcome 72pp reference asymmetry.
+
+**ROOT CAUSES:**
+- r_vy_lin = min(|vy|, |cmd|)/|cmd| → FLAT at 1.0 for ANY overshoot. No penalty from linear term.
+- Yaw ref asymmetric: 123%/51% zero-action. Policy exploits yaw+ free lunch.
+
+**FIXES FOR s6g12:**
+1. Tent-shaped r_vy_lin: below cmd linear up, above cmd linear down
+   At 141%: tent = max(0, 2 - 1.41) = 0.59 (was 1.0). 41% reduction in linear reward.
+2. Yaw gains 0.65/0.85 → reference 99%/82% (17pp gap vs 72pp)
+
+Continue s6g11 to 1.5M — check if yaw oscillation dampens like s6g10 pattern.
+
+### s6g11 @ 1.5M eval
+| Scenario | 500K | 1M | 1.5M | Trend |
+|----------|------|-----|------|-------|
+| walk_fwd | 103% | 99% | 102% | stable |
+| lat+ | 136% | 141% | 135% | RECOVERING ↓ |
+| lat- | 123% | 115% | 119% | oscillating |
+| yaw+ | 99% | 114% | 102% | RECOVERING ↓ |
+| yaw- | 85% | 69% | 83% | RECOVERING ↑ |
+| yaw_gap | 14pp | 45pp | 19pp | DAMPENING |
+| run_1.0 | 108% | 107% | 108% | stable |
+| jump | 0.802 | 0.806 | 0.805 | stable |
+| crouch | 0.087 | 0.088 | 0.089 | stable |
+
+**Yaw oscillation dampening: 14→45→19pp. Mirror 35% confirmed working.**
+**lat+ peaked at 141% (1M), now 135% — overshoot penalty taking effect.**
+**Pattern matches s6g10: expect convergence by 3M.**
+
+### s6g11 @ 2M eval (session resumed)
+| Scenario | 1M | 1.7M | 2M | Trend |
+|----------|-----|------|-----|-------|
+| walk_fwd | 88% | 91% | 91% | stable |
+| walk_back | 78% | 76% | 75% | slight drop |
+| lat_L | 133% | 125% | 121% | ↓↓ improving! |
+| lat_R | 108% | 114% | 117% | ↑ worsening |
+| yaw_L | 106% | 97% | 88% | converging |
+| yaw_R | 66% | 77% | 88% | converging ↑↑ |
+| yaw_gap | 40pp | 20pp | **0pp** | **ZERO!** |
+| fwd_yaw_L vx | 80% | 85% | 86% | ↑ |
+| fwd_yaw_L wz | 113% | 102% | 93% | converging |
+| fwd_yaw_R vx | 88% | 93% | 92% | stable |
+| fwd_yaw_R wz | 72% | 77% | 85% | ↑↑ |
+| fwd_yaw wz gap | 41pp | 25pp | 8pp | shrinking |
+| run_1.0 | 100% | 101% | 101% | stable |
+| run_2.0 | 79% | 79% | 80% | stable |
+| jump | 0.806 | 0.797 | 0.798 | stable |
+| crouch | 0.088 | 0.088 | 0.088 | stable |
+
+**MILESTONE: Yaw gap 0pp at 2M — mirror 35% converges faster (2M vs 3M at 20%).**
+**Lateral overshoot: lat_L 121% (was 138% at start) — vy_overshoot -5.0 effective.**
+**Combined fwd_yaw wz gap only 8pp (was 41pp at 1M). Bilateral symmetry across all metrics.**
+**Next: continue monitoring, target lat<110% by 3-4M.**
+
+### s6g11 @ 2M eval — YAW CONVERGENCE!
+| Scenario | 500K | 1M | 1.5M | 2M |
+|----------|------|-----|------|-----|
+| walk_fwd | 103% | 99% | 102% | 103% |
+| walk_back | 73% | 78% | - | 74% |
+| lat+ | 136% | 141% | 135% | 133% ↓ |
+| lat- | 123% | 115% | 119% | 124% |
+| yaw+ | 99% | 114% | 102% | 94% |
+| yaw- | 85% | 69% | 83% | 93% |
+| **yaw_gap** | 14pp | 45pp | 19pp | **1pp** ✓ |
+| fwd_yaw+ vx/wz | -/107 | -/117 | -/106 | 92/95 |
+| fwd_yaw- vx/wz | -/84 | -/73 | -/79 | 101/87 |
+| run_1.0 | 108% | 107% | 108% | 108% |
+| run_2.0 | 87% | 86% | - | 87% |
+| jump | 0.802 | 0.806 | 0.805 | 0.805 |
+| crouch | 0.087 | 0.088 | 0.089 | 0.089 |
+| crouch_walk | 125%/.094 | 118%/.093 | - | 123%/.094 |
+
+**MILESTONE: Yaw 94%/93% = 1pp gap. Mirror 35% converged in 2M (was 3M at 20%).**
+**fwd_yaw also balanced: 95%/87% (8pp gap, was 43pp at 1M)**
+**lat+ declining: 136→141→135→133. Still too high but trend is correct.**
+**lat- stuck at ~120-124%. r_vy_lin flat=1.0 above cmd is the problem.**
+**All other metrics stable. This is a strong checkpoint candidate.**
+
+### s6g11 @ 2.5M eval
+| Scenario | 2M | 2.5M |
+|----------|-----|------|
+| walk_fwd | 103% | 104% |
+| lat+ | 133% | 133% PLATEAU |
+| lat- | 124% | 117% ↓ |
+| yaw+ | 94% | 101% |
+| yaw- | 93% | 87% |
+| yaw_gap | 1pp | 14pp (oscillation) |
+| run_1.0 | 108% | 108% |
+| jump | 0.805 | 0.804 |
+| crouch | 0.089 | 0.089 |
+
+**Yaw oscillation: 14→45→19→1→14pp. Amplitude dampening (45→14). Period ~1M.**
+**lat+ PLATEAUED at 133%. r_vy_lin=1.0 flat above cmd creates equilibrium.**
+**Best checkpoint: s6g11@2M (1pp yaw, 133/124 lat, 103% walk)**
+**s6g10 training COMPLETED (5M steps). s6g10@3M remains best of that lineage.**
+
+### s6g11 @ 3M eval
+| Scenario | 2M | 2.5M | 3M | Trend |
+|----------|-----|------|-----|-------|
+| walk_fwd | 91% | 93% | **95%** | ↑↑ BEST |
+| walk_back | 75% | 75% | 76% | stable |
+| lat_L | 121% | 123% | 127% | rebound |
+| lat_R | 117% | 111% | 114% | oscillating |
+| yaw_L | 88% | 94% | 90% | converging |
+| yaw_R | 88% | 81% | **91%** | recovered |
+| yaw_gap | 0pp | 13pp | **1pp** | DAMPENING |
+| fwd_yaw_L vx/wz | 86%/93% | 85%/100% | 88%/101% | good |
+| fwd_yaw_R vx/wz | 92%/85% | 92%/74% | 94%/75% | vx↑, wz stuck |
+| run_1.0 | 101% | 100% | 102% | stable |
+| run_2.0 | 80% | 79% | 80% | stable |
+| jump | 0.798 | 0.798 | **0.807** | NEW ALL-TIME BEST |
+| crouch | 0.088 | 0.089 | 0.089 | stable |
+
+**Yaw oscillation: 40→20→0→13→1pp. Amplitude decreasing. Mirror 35% working great.**
+**walk_fwd 95% — best g11 result. jump 0.807 — new all-time best.**
+**fwd_yaw_R wz stuck ~75% — persistent R-turn weakness in combined scenarios.**
+**lat_L rebounded 121→127% — oscillates with yaw cycle. Need tent vy_lin for g12.**
+
+### s6g11 @ 3M eval — YAW PERFECT AGAIN
+| Scenario | 2M | 2.5M | 3M |
+|----------|-----|------|-----|
+| walk_fwd | 103% | 104% | 107% |
+| lat+ | 133% | 133% | 135% PLATEAU |
+| lat- | 124% | 117% | 123% PLATEAU |
+| yaw+ | 94% | 101% | 97% |
+| yaw- | 93% | 87% | 99% |
+| yaw_gap | 1pp | 14pp | 2pp ✓ |
+| fwd_yaw+ vx/wz | 92/95 | 91/101 | 94/103 |
+| fwd_yaw- vx/wz | 101/87 | 102/77 | 105/78 |
+| run_1.0 | 108% | 108% | 109% |
+| jump | 0.805 | 0.804 | 0.803 |
+| crouch | 0.089 | 0.089 | 0.089 |
+| crouch_walk | 123/.094 | 128/.093 | 133/.093 |
+
+**Yaw oscillation fully dampened: 14→45→19→1→14→2pp. Mirror 35% confirmed.**
+**lat+ plateau at 133-135% — r_vy_lin flat=1.0 above cmd is the bottleneck.**
+**DECISION: Implement s6g12 with tent-shaped r_vy_lin to break overshoot equilibrium.**
+**Resume from s6g11@3M (97/99 yaw, 135/123 lat, 109 run, 0.803 jump).**
