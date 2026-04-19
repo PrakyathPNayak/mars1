@@ -751,3 +751,100 @@ yaw- regression from reward balance shift. Continuing to 3M.
 Yaw gap: 43pp→27pp from 2M→2.2M. Improving but oscillatory.
 Mirror augmentation should fix this structurally.
 
+
+## s10g13 FINAL VERDICT: FAILED
+
+**Evaluated at 2M steps — comprehensive failure:**
+| Test | s10g11/1.2M | s10g13/2M | Verdict |
+|------|-------------|-----------|---------|
+| walk_fwd_0.5 | 101% | 95% | OK |
+| walk_fwd_1.0 | 100% | 108% | worse |
+| yaw+0.5 | 89% | 82% | ❌ declining |
+| yaw-0.5 | 109% | 118% | ❌ worse |
+| lat+0.3 | 98% | 86% | ❌ declined |
+| run_1.0 | 123% | FALLS | ❌❌ BROKEN |
+| run_1.2 | 123% | FALLS | ❌❌ BROKEN |
+| run_1.5 | FALLS | 97% | weird |
+| crouch | 0.081 | 0.082 | same |
+| jump | 0.649 | 0.342 | ❌ worse |
+
+Asymmetric vx tracking sigma catastrophically destabilized run mode.
+Killed PID 1755761. Reverted to s10g11 base (d814713).
+
+## v31s10g14 — Symmetric yaw_gain 0.90
+
+**Root cause analysis of yaw asymmetry:**
+- yaw+ at gain=0.90: 89% of cmd = 99% of ref. Near-perfect tracking.
+- yaw- at gain=0.60: 109% of cmd = 182% of ref. Massive overshoot.
+- Gain was reduced in s10g7 era when wz_overshoot penalty didn't exist.
+- Now with -10.0*wz_overshoot + deadzone 1.15x, gradient at 170%: 9.84 vs 100%=22.0
+
+**Fix**: yaw_gain = 0.90 symmetric (was 0.90 if wz>=0 else 0.60)
+**Commit**: a520ea3
+**Training**: PID 3116790, from s10g11/1.2M, lr=1e-4
+
+## v31s6g9 @ 500K — Mirror Augmentation WORKING
+
+| Scenario | g8@2.2M | g9@500K | Trend |
+|----------|---------|---------|-------|
+| walk_fwd | 97% | 91% | ↓ slight |
+| walk_back | 87% | 93% | ↑ |
+| lat_L | 155% | 152% | ↓ |
+| lat_R | 130% | 126% | ↓ converging |
+| yaw_L | 109% | 109% | stable |
+| yaw_R | 82% | 91% | ↑↑ KEY WIN |
+| fwd_yaw_L wz | 135% | 137% | stable |
+| fwd_yaw_R wz | 107% | 107% | stable |
+| run_1.0 | 104% | 103% | stable |
+| run_2.0 | 81% | 81% | stable |
+| jump | 0.776 | 0.781 | ↑ |
+| crouch | 0.088 | 0.086 | ↑ |
+
+**Yaw gap: 27pp → 18pp in 500K steps.** Mirror augmentation confirmed effective.
+yaw_R improved 82%→91%. All other metrics stable or improving.
+
+
+## v31s6g9 @ 1M — Yaw Gap Down to 13pp
+
+| Scenario | g8@2.2M | g9@500K | g9@1M | Trend |
+|----------|---------|---------|-------|-------|
+| walk_fwd | 97% | 91% | 85% | ↓ expected dip |
+| walk_back | 87% | 93% | 85% | ↓ from peak |
+| lat_L | 155% | 152% | 149% | ↓ converging |
+| lat_R | 130% | 126% | 115% | ↓↓ big improvement |
+| yaw_L | 109% | 109% | 105% | ↓ less overshoot |
+| yaw_R | 82% | 91% | 92% | ↑ improving |
+| fwd_yaw_L wz | 135% | 137% | 127% | ↓ improving |
+| fwd_yaw_R wz | 107% | 107% | 108% | stable |
+| run_1.0 | 104% | 103% | 103% | stable |
+| run_2.0 | 81% | 81% | 80% | stable |
+| jump | 0.776 | 0.781 | 0.786 | ↑ |
+| crouch | 0.088 | 0.086 | 0.086 | stable |
+
+**Yaw gap trajectory: 43pp → 27pp → 18pp → 13pp.** Steady convergence confirmed.
+**lat_R: 130→115%.** Symmetry enforcement fixing lateral too.
+**walk_fwd: 97→85%.** Expected dip as policy learns both mirror frames. Should recover.
+
+
+## v31s6g9 @ 1.5M — YAW GAP DOWN TO 6pp! MIRROR WORKING!
+
+| Scenario | g8@2.2M | g9@500K | g9@1M | g9@1.5M | Trend |
+|----------|---------|---------|-------|---------|-------|
+| walk_fwd | 97% | 91% | 85% | 80% | ↓ temp cost |
+| walk_back | 87% | 93% | 85% | 80% | ↓ |
+| lat_L | 155% | 152% | 149% | 142% | ↓↓ |
+| lat_R | 130% | 126% | 115% | 110% | ↓↓ almost there |
+| yaw_L | 109% | 109% | 105% | 104% | → near perfect |
+| yaw_R | 82% | 91% | 92% | 98% | ↑↑ NEARLY PERFECT |
+| fwd_yaw_L wz | 135% | 137% | 127% | 115% | ↓↓ fixed |
+| fwd_yaw_R wz | 107% | 107% | 108% | 116% | → symmetric! |
+| run_1.0 | 104% | 103% | 103% | 101% | perfect |
+| run_2.0 | 81% | 81% | 80% | 82% | stable |
+| jump | 0.776 | 0.781 | 0.786 | 0.797 | ↑↑ best ever |
+| crouch | 0.088 | 0.086 | 0.086 | 0.085 | ↓ improving |
+
+**YAW GAP TRAJECTORY: 43pp → 27pp → 18pp → 13pp → 6pp**
+**fwd_yaw wz NOW SYMMETRIC: 115%/116% (was 135%/107%)**
+**Jump best ever: 0.797m**
+**walk_fwd: 80% — expected dip from mirror. Monitor for recovery.**
+

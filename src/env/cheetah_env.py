@@ -1020,13 +1020,7 @@ class MiniCheetahEnv(gym.Env):
         # v31s10g7: ASYMMETRIC yaw gain — negative yaw overshoots 170% at gain=0.90.
         # yaw+ converges to 91-104% at 0.90 (perfect). yaw- physics creates more torque.
         # Reduce negative gain: 0.90*(100/170)≈0.53, conservative=0.60
-        # v31s10g14: symmetric yaw_gain=0.90 (was 0.90/0.60 asymmetric)
-        # yaw- overshot 170% at gain=0.90 in s10g7, but that was before
-        # wz_overshoot penalty (-10.0, deadzone 1.15x) was added.
-        # At 170%: wz_reward=9.84 vs 100%=22.0 — strong gradient now exists.
-        # yaw+ at 89% = 99% of 0.90 ref — near-perfect, needs same ref.
-        # yaw- at 109% = 182% of 0.60 ref — massive overshoot of weak ref.
-        yaw_gain = 0.90
+        yaw_gain = 0.90 if wz_cmd >= 0 else 0.60
         yaw_diff = min(0.5, max(-0.5, wz_cmd * yaw_gain))
 
         # v31k: Constant forward command bias at gain=0.15.
@@ -1525,7 +1519,11 @@ class MiniCheetahEnv(gym.Env):
             # Instantaneous vy/wz reward let policy oscillate for brief spikes.
             # EMA forces SUSTAINED motion to earn reward.
             sigma_vy_track = max(LATERAL_SIGMA, abs(vy_cmd) * 0.15)  # v31: tighter (was 0.3)
-            sigma_wz_track = max(HEADING_SIGMA, abs(wz_cmd) * 0.15)  # v31: tight sigma — wider causes free lunch from reference oscillation
+            # v31s10g15: tighter wz sigma floor 0.08→0.05 for walk mode
+            # At 0.08, yaw-=109% gets 97.5% reward — no gradient. At 0.05, gets 96.0%.
+            # yaw+=89% at 0.05: 94.1% reward — stronger gradient toward 100%.
+            _wz_sigma_floor = 0.05 if mode == "walk" else HEADING_SIGMA
+            sigma_wz_track = max(_wz_sigma_floor, abs(wz_cmd) * 0.15)
             r_vx_track = math.exp(-(vx - vx_cmd)**2 / TRACKING_SIGMA)
             r_vy_track = math.exp(-(vy_ema_val - vy_cmd)**2 / sigma_vy_track)  # v31: EMA
             r_wz_track = math.exp(-(wz_ema_val - wz_cmd)**2 / sigma_wz_track)  # v31: EMA
@@ -1607,7 +1605,8 @@ class MiniCheetahEnv(gym.Env):
                 r_vy_overshoot = 0.0
             # v31s10g6: yaw overshoot penalty — tighter deadzone (1.15x vs 1.2x for vx/vy)
             wz_fast = self._wz_ema
-            _WZ_OS_DEADZONE = 1.15  # tighter than vx/vy (1.20) but gentler than 1.10
+            # v31s10g15: tighter wz deadzone 1.15→1.05 — yaw- at 109% was BELOW 1.15 deadzone (zero penalty!)
+            _WZ_OS_DEADZONE = 1.05
             if abs(wz_cmd) > 0.1:
                 r_wz_overshoot = max(0.0, abs(wz_fast) - _WZ_OS_DEADZONE * abs(wz_cmd))
             else:
@@ -1754,7 +1753,7 @@ class MiniCheetahEnv(gym.Env):
                     - 0.02 * r_smooth        # action smoothness
                     - 2.0 * r_vx_overshoot   # prevent sprinting past target
                     - 1.5 * r_vy_overshoot   # prevent lateral overshoot
-                    - 10.0 * r_wz_overshoot  # v31s10g6: boosted -6→-10, deadzone 1.15x
+                    - 15.0 * r_wz_overshoot  # v31s10g15: boosted -10→-15, deadzone 1.05x
                     - 3.0 * r_vx_unwanted    # v31s3: boosted from 1.0 — pure lat/yaw had vx=+0.15 drift
                     - 1.5 * r_vy_unwanted    # v31s10g: moderate drift penalty (was 0.5)
                     - 12.0 * r_wz_unwanted   # v31s5: boosted (8→12) to fix wz=0.3 drift in fwd walk
@@ -1773,7 +1772,7 @@ class MiniCheetahEnv(gym.Env):
                     "r_smooth": -0.02 * r_smooth,
                     "r_vx_overshoot": -2.0 * r_vx_overshoot,
                     "r_vy_overshoot": -1.5 * r_vy_overshoot,
-                    "r_wz_overshoot": -10.0 * r_wz_overshoot,
+                    "r_wz_overshoot": -15.0 * r_wz_overshoot,
                     "r_vx_unwanted": -3.0 * r_vx_unwanted,
                     "r_vy_unwanted": -1.5 * r_vy_unwanted,
                     "r_wz_unwanted": -12.0 * r_wz_unwanted,
