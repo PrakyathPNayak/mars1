@@ -848,3 +848,30 @@ yaw_R improved 82%→91%. All other metrics stable or improving.
 **Jump best ever: 0.797m**
 **walk_fwd: 80% — expected dip from mirror. Monitor for recovery.**
 
+
+## s10g14 FINAL VERDICT: FAILED
+
+**yaw- DIVERGING: 155%→160% (1M→1.4M). Symmetric yaw_gain=0.90 causes runaway negative yaw.**
+Physics creates ~1.8x reference in negative yaw direction.
+Higher gain = more base motion = more total overshoot.
+The reference trajectory is the WRONG lever for yaw- control.
+
+Killed PID 3116790. Reverted to s10g11 base.
+
+## v31s10g15 — Tighten wz Tracking (Walk Only)
+
+**Root cause of yaw- at 109%:**
+- wz_overshoot deadzone=1.15: yaw- at 109% is BELOW deadzone (0.545 < 0.575). ZERO penalty.
+- wz_track sigma=0.08: at 109%, reward=97.5%. Almost no gradient.
+
+**Three surgical changes (walk only, run untouched):**
+1. wz sigma floor: 0.08→0.05 — 109% gets 96.0% reward (was 97.5%), 120% gets 82% (was 88%)
+2. wz overshoot deadzone: 1.15→1.05 — 109% NOW triggers penalty (0.545 > 0.525)
+3. walk wz_overshoot weight: -10→-15
+
+**Expected gradient at key points:**
+- 109% vs 100%: 0.78/step difference (was 0.30) — 2.6x stronger
+- 120% vs 100%: 3.29/step difference — 23% of total reward
+
+**Commit**: 8399f1c
+**Training**: PID 1805244, from s10g11/1.2M, lr=1e-4
