@@ -134,7 +134,7 @@ FEET_AIR_TIME_THRESHOLD = 0.15
 POSTURE_SIGMA = 0.5
 BODY_HEIGHT_SIGMA = 0.10
 TRACKING_SIGMA = 0.25
-LATERAL_SIGMA = 0.03  # v31s6g11: tighter (was 0.05). At cmd=0.3: 150%→47% reward (was 64%)
+LATERAL_SIGMA = 0.05
 HEADING_SIGMA = 0.08
 
 ROBOT_MASS = 12.74  # Go1 approximate total mass (kg)
@@ -787,12 +787,11 @@ class MiniCheetahEnv(gym.Env):
                     self._wz_ema = init_wz * 0.5  # v31: bootstrap wz EMA too
                     self._wz_ema_slow = init_wz * 0.3  # v31s4: bootstrap slow EMA
 
-        # v31s6g11: Mirror augmentation — 35% (was 20% in g10, 50% in g9).
-        # 20% insufficient: yaw gap re-diverged to 29pp at 3.3M.
-        # 50% too aggressive (walk_fwd 97→70%). 35% = compromise.
-        # Resuming from 3M checkpoint (already 20% mirror-adapted).
+        # v31s6g10: Mirror augmentation — 20% chance (reduced from 50% in g9).
+        # 50% was too aggressive, caused walk_fwd regression (97%→70%).
+        # 20% provides enough symmetry signal without overwhelming forward tracking.
         if self.randomize_commands:
-            self._mirror_lr = bool(rng.random() < 0.35)
+            self._mirror_lr = bool(rng.random() < 0.20)
         else:
             self._mirror_lr = False
 
@@ -1027,11 +1026,11 @@ class MiniCheetahEnv(gym.Env):
         fwd_sign = -1.0 if vx_cmd < -0.05 else 1.0
 
         # v31e: Boosted abduction gain slightly to compensate for reduced hip
-        # v31s6g11: SYMMETRIC lateral gain — mirror augmentation requires consistent
-        # reference for mirrored/original episodes. Old asymmetric (0.55/0.40) gave
-        # 98%/89% but 0.55 was AT stability boundary (falls with zero action!).
-        # 0.45 gives 91% both directions — safe base for policy to learn on top.
-        abd_lat_amp = -vy_cmd * 0.45
+        # v31s10g8: ASYMMETRIC lateral gain — lat+ (leftward) gets 68% vs lat- 97%.
+        # Zero-action symmetric (82% vs 84%), so policy has learned rightward bias.
+        # Boost lat+ reference by ~37% to counteract policy's rightward residual actions.
+        # 0.40 * (97/68) ≈ 0.57, conservative = 0.55
+        abd_lat_amp = -vy_cmd * (0.55 if vy_cmd > 0 else 0.40)
 
         # v31b: Yaw via differential stride
         # Right-bigger creates positive wz (empirically verified)
@@ -1677,18 +1676,15 @@ class MiniCheetahEnv(gym.Env):
             #          Instantaneous (v31n) → model froze (gait-cycle spikes).
             #          Fast EMA: catches sustained sprints in 2-3 steps, ignores
             #          single-step gait oscillation. Best of both worlds.
-            _VX_OVERSHOOT_DZ = 1.20  # vx: only penalize when >120%
-            # v31s6g11: vy overshoot deadzone 1.20→1.05 (match wz).
-            # At 150% lat overshoot: old penalty=0, new=max(0, 0.45-0.315)=0.135
-            _VY_OVERSHOOT_DZ = 1.05
+            _OVERSHOOT_DEADZONE = 1.20  # only penalize when >120% of commanded
             vx_fast = self._vx_ema_fast
             vy_fast = self._vy_ema_fast
             if abs(vx_cmd) > 0.05:
-                r_vx_overshoot = max(0.0, abs(vx_fast) - _VX_OVERSHOOT_DZ * abs(vx_cmd))
+                r_vx_overshoot = max(0.0, abs(vx_fast) - _OVERSHOOT_DEADZONE * abs(vx_cmd))
             else:
                 r_vx_overshoot = 0.0
             if abs(vy_cmd) > 0.05:
-                r_vy_overshoot = max(0.0, abs(vy_fast) - _VY_OVERSHOOT_DZ * abs(vy_cmd))
+                r_vy_overshoot = max(0.0, abs(vy_fast) - _OVERSHOOT_DEADZONE * abs(vy_cmd))
             else:
                 r_vy_overshoot = 0.0
             # v31s10g6: yaw overshoot penalty — tighter deadzone (1.15x vs 1.2x for vx/vy)
@@ -1737,7 +1733,7 @@ class MiniCheetahEnv(gym.Env):
                     - 8.0 * r_wz_unwanted    # v31s6: boosted (2→8) — robot spinning in run mode
                     - 0.5 * r_heading_drift  # heading correction
                     - 2.0 * r_vx_overshoot   # speed cap
-                    - 5.0 * r_vy_overshoot   # v31s6g11: boosted -1.5→-5.0 (match wz). lat+ stuck at 152%
+                    - 1.5 * r_vy_overshoot   # lateral overshoot
                     - 5.0 * r_wz_overshoot   # v31s10g6: boosted from -2
                     - 2.0 * r_vx_var         # v31m: velocity smoothness
                     - 5.0 * r_stall          # v31s2: anti-stall penalty
@@ -1759,7 +1755,7 @@ class MiniCheetahEnv(gym.Env):
                     "r_wz_unwanted": -8.0 * r_wz_unwanted,
                     "r_heading_drift": -0.5 * r_heading_drift,
                     "r_vx_overshoot": -2.0 * r_vx_overshoot,
-                    "r_vy_overshoot": -5.0 * r_vy_overshoot,
+                    "r_vy_overshoot": -1.5 * r_vy_overshoot,
                     "r_wz_overshoot": -5.0 * r_wz_overshoot,
                     "r_vx_var": -2.0 * r_vx_var,
                     "r_stall": -5.0 * r_stall,
@@ -1840,7 +1836,7 @@ class MiniCheetahEnv(gym.Env):
                     - 0.1 * r_orientation    # prevent flipping only
                     - 0.02 * r_smooth        # action smoothness
                     - 2.0 * r_vx_overshoot   # prevent sprinting past target
-                    - 5.0 * r_vy_overshoot   # v31s6g11: boosted -1.5→-5.0 (match wz). lat+ stuck at 152%
+                    - 1.5 * r_vy_overshoot   # prevent lateral overshoot
                     - 15.0 * r_wz_overshoot  # v31s10g15: boosted -10→-15, deadzone 1.05x
                     - 3.0 * r_vx_unwanted    # v31s3: boosted from 1.0 — pure lat/yaw had vx=+0.15 drift
                     - 1.5 * r_vy_unwanted    # v31s10g: moderate drift penalty (was 0.5)
@@ -1859,7 +1855,7 @@ class MiniCheetahEnv(gym.Env):
                     "r_orientation": -0.1 * r_orientation,
                     "r_smooth": -0.02 * r_smooth,
                     "r_vx_overshoot": -2.0 * r_vx_overshoot,
-                    "r_vy_overshoot": -5.0 * r_vy_overshoot,
+                    "r_vy_overshoot": -1.5 * r_vy_overshoot,
                     "r_wz_overshoot": -15.0 * r_wz_overshoot,
                     "r_vx_unwanted": -3.0 * r_vx_unwanted,
                     "r_vy_unwanted": -1.5 * r_vy_unwanted,

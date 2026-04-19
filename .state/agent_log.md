@@ -875,3 +875,206 @@ Killed PID 3116790. Reverted to s10g11 base.
 
 **Commit**: 8399f1c
 **Training**: PID 1805244, from s10g11/1.2M, lr=1e-4
+
+## v31s6g10 — Mirror 20% + Walk VX Boost
+
+**Analysis of g9 regression:**
+- walk_fwd: 97% → 80% → 70% (mirror at 50% too aggressive)
+- yaw gap: oscillated 6pp→32pp→17pp (not stably converging)
+- wz weights (22) double vx weights (11) — forward tracking starved
+
+**Changes from g9:**
+1. Mirror rate: 50% → 20% (less disruption, still symmetry signal)
+2. r_vx_track_walk: 8.0 → 10.0
+3. r_vx_lin: 3.0 → 4.0
+4. Total vx weight: 11 → 14 (+27%)
+5. LR: 1e-4 → 8e-5 (smoother fine-tuning)
+6. Keep g15's wz tightening (sigma 0.05, deadzone 1.05)
+
+**Base checkpoint:** g9@1.5M (best yaw gap 6pp)
+**Commit:** bd5dd78
+**Training PID:** 440983, 5M total steps
+
+
+### g10 @ 500K eval
+| Scenario | g9@2M | g10@500K |
+|----------|-------|----------|
+| walk_fwd | 70% | 84% ↑↑ |
+| walk_back | 81% | 66% ↓ |
+| lat_L | 154% | 131% ↑ |
+| lat_R | 108% | 108% |
+| yaw_L | 101% | 94% |
+| yaw_R | 84% | 89% ↑ |
+| yaw_gap | 17pp | 5pp ↑↑ |
+| fwd_yaw_L | 66%/107% | 74%/97% ↑ |
+| fwd_yaw_R | 66%/100% | 80%/98% ↑ |
+| run_1.0 | 98% | 103% |
+| run_2.0 | 80% | 82% |
+| jump | 0.779 | 0.802 NEW BEST |
+| crouch | 0.085 | 0.085 |
+
+**Mirror 20% + vx boost confirmed working. Best yaw symmetry + walk recovery.**
+**walk_back regressed — monitor for recovery.**
+
+
+### g10 @ 1M eval
+| Scenario | g10@500K | g10@1M |
+|----------|----------|--------|
+| walk_fwd | 84% | 91% ↑↑ |
+| walk_back | 66% | 70% ↑ |
+| lat_L | 131% | 144% ↑ (overshoot) |
+| lat_R | 108% | 109% |
+| yaw_L | 94% | 86% (flipped!) |
+| yaw_R | 89% | 101% | 
+| yaw_gap | 5pp L>R | 15pp R>L |
+| fwd_yaw_L | 74%/97% | 79%/103% |
+| fwd_yaw_R | 80%/98% | 88%/90% |
+| run_1.0 | 103% | 103% |
+| run_2.0 | 82% | 82% |
+| jump | 0.802 | 0.775 |
+| crouch | 0.085 | 0.086 |
+
+**walk_fwd recovery confirmed: 70→84→91. VX boost working.**
+**Yaw bias FLIPPED — mirror preventing permanent bias, oscillating around center.**
+
+
+## s10g15 FINAL VERDICT: FAILED (yaw diverging)
+
+| Test | s10g11/1.2M | g15/1.2M | g15/2M | Trend |
+|------|-------------|----------|--------|-------|
+| walk_fwd_0.5 | 101% | 106% | 104% | slight overshoot |
+| yaw+0.5 | 89% | 79% | 77% | ❌ declining |
+| yaw-0.5 | 109% | 118% | 128% | ❌❌ diverging |
+| lat+0.3 | 98% | 90% | 86% | ❌ declining |
+| run_1.0 | 123% | FALLS | FALLS | broken |
+| jump | 0.649 | 0.391 | 0.208 | ❌❌ crashing |
+
+Killed PID 1805246.
+
+## CRITICAL FINDING: Fine-tuning instability at lr=1e-4
+
+ALL 3 experiments (s10g13, s10g14, s10g15) from s10g11/1.2M at lr=1e-4 show:
+1. yaw+ declines
+2. yaw- overshoots more
+3. run_1.0/1.2 breaks
+4. jump crashes then sometimes recovers
+
+The s10g11/1.2M checkpoint is a FRAGILE LOCAL OPTIMUM.
+Fine-tuning at lr=1e-4 is too aggressive — pushes policy out of stability basin.
+
+## v31s10g16 — Same as s10g15 but lr=3e-5
+
+Hypothesis: Reward changes are correct but lr=1e-4 too aggressive.
+Lower lr (3e-5) should make smoother updates without catastrophic interference.
+**Commit**: 8399f1c (same env as s10g15)
+**Training**: PID 1906029, from s10g11/1.2M, lr=3e-5
+
+### g10 @ 1.5M eval
+| Scenario | g10@1M | g10@1.5M |
+|----------|--------|----------|
+| walk_fwd | 91% | 86% ↓ oscillating |
+| walk_back | 70% | 66% ↓ |
+| lat_L | 144% | 147% ↑ overshoot |
+| lat_R | 109% | 103% ↑ |
+| yaw_L | 86% | 87% |
+| yaw_R | 101% | 99% |
+| yaw_gap | 15pp R>L | 12pp R>L ↑ |
+| fwd_yaw_L | 79%/103% | 75%/99% |
+| fwd_yaw_R | 88%/90% | 83%/87% |
+| run_1.0 | 103% | 101% |
+| run_2.0 | 82% | 81% |
+| jump | 0.775 | 0.803 NEW BEST ↑ |
+| crouch | 0.086 | 0.085 |
+
+**walk_fwd oscillating (91→86). yaw_gap converging (15→12). jump best ever 0.803.**
+**lat_L overshoot 147% persistent. Mirror 20% may be too slow for lateral.**
+
+
+### g10 @ 2M eval
+| Scenario | g10@1.5M | g10@2M |
+|----------|----------|--------|
+| walk_fwd | 86% | 85% stable |
+| walk_back | 66% | 75% ↑ |
+| lat_L | 147% | 140% ↓ (finally) |
+| lat_R | 103% | 100% PERFECT |
+| yaw_L | 87% | 102% flipped |
+| yaw_R | 99% | 86% flipped |
+| yaw_gap | 12pp R>L | 16pp L>R |
+| fwd_yaw_L | 75%/99% | 73%/105% |
+| fwd_yaw_R | 83%/87% | 80%/80% ↓ |
+| run_1.0 | 101% | 100% |
+| run_2.0 | 81% | 80% |
+| jump | 0.803 | 0.784 |
+| crouch | 0.085 | 0.085 |
+
+**Yaw oscillation ~500K period, ~15pp amplitude, not dampening.**
+**Avg yaw improving: (94+89)/2=91.5 → (102+86)/2=94.0**
+**fwd_yaw_R wz DECLINING: 98→90→87→80 (6pp/500K)**
+**lat_L: 147→140, finally improving. lat_R: 100% PERFECT.**
+
+
+### g10 @ 2.5M eval — YAW CONVERGENCE!
+| Scenario | g10@2M | g10@2.5M |
+|----------|--------|----------|
+| walk_fwd | 85% | 79% | 
+| walk_back | 75% | 77% ↑ |
+| lat_L | 140% | 139% |
+| lat_R | 100% | 98% perfect |
+| yaw_L | 102% | 89% |
+| yaw_R | 86% | 90% |
+| **yaw_gap** | 16pp | **1pp** BEST EVER |
+| fwd_yaw_L | 73%/105% | 71%/95% |
+| fwd_yaw_R | 80%/80% | 79%/92% ↑ |
+| run_1.0 | 100% | 99% |
+| run_2.0 | 80% | 79% |
+| jump | 0.784 | 0.787 |
+| crouch | 0.085 | 0.087 |
+
+**YAW OSCILLATION DAMPENING: 5pp→15pp→12pp→16pp→1pp. Zero-crossing!**
+**Mirror augmentation at 20% = confirmed bilateral symmetry fix.**
+**walk_fwd declining: needs vx boost in next gen if < 75%.**
+
+
+### g10 @ 3M eval — PERFECT BILATERAL SYMMETRY
+| Scenario | g10@2.5M | g10@3M |
+|----------|----------|--------|
+| walk_fwd | 79% | 89% ↑↑ |
+| walk_back | 77% | 78% |
+| lat_L | 139% | 138% |
+| lat_R | 98% | 109% ↑ |
+| yaw_L | 89% | 86% |
+| yaw_R | 90% | 86% |
+| **yaw_gap** | 1pp | **0pp** PERFECT |
+| fwd_yaw_L | 71%/95% | 82%/92% ↑↑ |
+| fwd_yaw_R | 79%/92% | 89%/90% ↑↑ |
+| run_1.0 | 99% | 100% |
+| run_2.0 | 79% | 79% |
+| jump | 0.787 | 0.793 |
+| crouch | 0.087 | 0.088 |
+
+**MILESTONE: First checkpoint with 0pp yaw gap. Mirror augmentation @ 20% WORKS.**
+**fwd_yaw also perfectly symmetric: L=82%/92%, R=89%/90%**
+**walk_fwd recovered to 89%. All modes functional.**
+
+
+### g10 @ 3.5M eval
+| Scenario | g10@3M | g10@3.5M |
+|----------|--------|----------|
+| walk_fwd | 89% | 95% ↑↑ BEST |
+| walk_back | 78% | 81% ↑ |
+| lat_L | 138% | 137% |
+| lat_R | 109% | 106% |
+| yaw_L | 86% | 95% |
+| yaw_R | 86% | 79% |
+| yaw_gap | 0pp | 16pp L>R (oscillation) |
+| fwd_yaw_L | 82%/92% | 87%/107% |
+| fwd_yaw_R | 89%/90% | 96%/79% |
+| run_1.0 | 100% | 103% ↑ |
+| run_2.0 | 79% | 81% |
+| jump | 0.793 | 0.790 |
+| crouch | 0.088 | 0.089 |
+
+**walk_fwd=95%, fwd_yaw_R_vx=96% — forward tracking now dominant.**
+**Yaw oscillation continues: 0pp→16pp. vx/wz tradeoff visible.**
+**Best balanced: g10@3M (0pp yaw + 89% walk_fwd)**
+
