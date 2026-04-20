@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mujoco model="env_slide">
+  <compiler angle="radian" meshdir="go1" autolimits="true"/>
+  <option timestep="0.002" gravity="0 0 -9.81" iterations="50" solver="Newton" cone="elliptic"/>
+  <visual><headlight ambient="0.5 0.5 0.5" diffuse="0.9 0.9 0.9"/>
+    <map zfar="200"/><quality shadowsize="2048"/></visual>
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.1 0.3 0.7" rgb2="0.01 0.01 0.1" width="200" height="200"/>
+    <texture name="slide_tex" type="2d" builtin="flat" rgb1="0.10 0.40 0.90" width="64" height="64"/>
+    <material name="slide_mat" texture="slide_tex" specular="0.95" shininess="0.95" reflectance="0.4"/>
+    <texture name="plat_tex" type="2d" builtin="flat" rgb1="0.30 0.30 0.35" width="64" height="64"/>
+    <material name="plat_mat" texture="plat_tex" specular="0.4" shininess="0.3"/>
+    <texture name="land_tex" type="2d" builtin="flat" rgb1="0.20 0.70 0.25" width="64" height="64"/>
+    <material name="land_mat" texture="land_tex" specular="0.2" shininess="0.1"/>
+    <texture name="wall_tex" type="2d" builtin="flat" rgb1="0.80 0.20 0.10" width="64" height="64"/>
+    <material name="wall_mat" texture="wall_tex" specular="0.4" shininess="0.3"/>
+    <mesh file="trunk.stl"/><mesh file="hip.stl"/>
+    <mesh file="thigh_mirror.stl"/><mesh file="calf.stl"/><mesh file="thigh.stl"/>
+  </asset>
+  <default>
+    <default class="go1">
+      <geom friction="1.0 0.01 0.005" margin="0.001" condim="3"/>
+      <joint axis="0 1 0" damping="2" armature="0.01" frictionloss="0.2"/>
+      <default class="abduction"><joint axis="1 0 0" damping="1" range="-0.863 0.863"/></default>
+      <default class="hip"><joint range="-0.686 4.501"/></default>
+      <default class="knee"><joint range="-2.818 -0.888"/></default>
+      <default class="visual"><geom type="mesh" contype="0" conaffinity="0" group="2"/></default>
+      <default class="foot"><geom type="sphere" size="0.023" pos="0 0 -0.213" priority="1"
+        solimp="0.015 1 0.023" condim="6" friction="1.0 0.02 0.01"/></default>
+    </default>
+    <motor ctrllimited="true" ctrlrange="-33.5 33.5"/>
+  </default>
+  <worldbody>
+    <light name="sun" pos="3 0 8" dir="0 0 -1" directional="true" diffuse="0.9 0.9 0.9" castshadow="true"/>
+    <light name="glow" pos="3 0 3" diffuse="0.3 0.5 1.0" attenuation="0 0 0.2"/>
+    <light name="spot" mode="targetbodycom" target="trunk" pos="0 -2 3" diffuse="0.7 0.7 0.7"/>
+
+    <!-- Entry platform: top at z=1.80, x: -1.60 to 0.00 -->
+    <geom name="top_platform" type="box" size="0.80 2.00 0.90"
+          pos="-0.80 0 0.90" material="plat_mat"
+          condim="3" friction="0.9 0.01 0.005"/>
+
+    <!-- SLIDE RAMP: entry top-edge at z=1.80 (matches platform), exit at z≈0
+         euler "0 +0.2915 0" → descends in +X direction -->
+    <geom name="slide_ramp" type="box" size="3.1321 2.00 0.08"
+          pos="3.0000 0 0.8234" euler="0 0.2915 0"
+          material="slide_mat" condim="3" friction="0.04 0.001 0.001"/>
+
+    <!-- Solid side walls on slide -->
+    <geom name="wall_l" type="box" size="3.1321 0.10 0.30"
+          pos="3.0000  2.10 0.9234" euler="0 0.2915 0"
+          material="wall_mat" condim="3" friction="0.5 0.01 0.005"/>
+    <geom name="wall_r" type="box" size="3.1321 0.10 0.30"
+          pos="3.0000 -2.10 0.9234" euler="0 0.2915 0"
+          material="wall_mat" condim="3" friction="0.5 0.01 0.005"/>
+
+    <!-- Back safety wall -->
+    <geom name="back_wall" type="box" size="0.10 2.10 0.95"
+          pos="-1.65 0 0.95" material="wall_mat"
+          condim="3" friction="0.5 0.01 0.005"/>
+
+    <!-- Support legs near ramp entry -->
+    <geom name="leg_l" type="cylinder" size="0.07 0.88" pos="0.10  1.8 0.88" material="plat_mat" condim="3"/>
+    <geom name="leg_r" type="cylinder" size="0.07 0.88" pos="0.10 -1.8 0.88" material="plat_mat" condim="3"/>
+
+    <!-- Green landing pad at bottom -->
+    <geom name="landing" type="box" size="2.50 2.00 0.03"
+          pos="8.5 0 0.03" material="land_mat"
+          condim="3" friction="1.2 0.01 0.005"/>
+    <!-- Ground plane -->
+    <geom name="ground" type="plane" size="20 5 0.1" pos="5 0 -0.01"
+          rgba="0.40 0.40 0.40 1" condim="3" friction="1.0 0.01 0.005"/>
+
+    <body name="trunk" pos="-0.50 0 2.28" childclass="go1">
+      <camera name="tracking" mode="trackcom" pos="0 -6 3" xyaxes="1 0 0 0 0.4 1"/>
+      <camera name="side"     mode="trackcom" pos="-5 -6 3" xyaxes="0.8 0.6 0 -0.2 0.2 1"/>
+      <site name="imu_site" pos="0 0 0" size="0.01"/>
+      <inertial pos="0.0223 0.002 -0.0005" quat="-0.00342088 0.705204 0.000106698 0.708996" mass="5.204" diaginertia="0.0716565 0.0630105 0.0168101"/>
+      <freejoint name="root"/>
+      <geom class="visual" mesh="trunk"/>
+      <geom size="0.125 0.04 0.057" type="box" group="3" contype="1" conaffinity="1" rgba="0.2 0.2 0.2 0"/>
+      <body name="FR_hip" pos="0.1881 -0.04675 0">
+        <inertial pos="-0.0049166 0.00762615 -8.865e-05" quat="0.507341 0.514169 0.495027 0.482891" mass="0.68" diaginertia="0.000734064 0.000468438 0.000398719"/>
+        <joint class="abduction" name="FR_hip_joint"/>
+        <geom class="visual" mesh="hip" quat="1 0 0 0"/>
+        <body name="FR_thigh" pos="0 -0.08 0">
+          <inertial pos="-0.00304722 0.019315 -0.0305004" quat="0.65243 -0.0272313 0.0775126 0.753383" mass="1.009" diaginertia="0.00478717 0.00460903 0.000709268"/>
+          <joint class="hip" name="FR_thigh_joint"/>
+          <geom class="visual" mesh="thigh_mirror"/>
+          <body name="FR_calf" pos="0 0 -0.213">
+            <inertial pos="0.00429862 0.000976676 -0.146197" quat="0.691246 0.00357467 0.00511118 0.722592" mass="0.195862" diaginertia="0.00149767 0.00148468 3.58427e-05"/>
+            <joint class="knee" name="FR_calf_joint"/>
+            <geom class="visual" mesh="calf"/>
+            <geom name="FR" class="foot"/>
+          </body>
+        </body>
+      </body>
+      <body name="FL_hip" pos="0.1881 0.04675 0">
+        <inertial pos="-0.0049166 -0.00762615 -8.865e-05" quat="0.482891 0.495027 0.514169 0.507341" mass="0.68" diaginertia="0.000734064 0.000468438 0.000398719"/>
+        <joint class="abduction" name="FL_hip_joint"/>
+        <geom class="visual" mesh="hip"/>
+        <body name="FL_thigh" pos="0 0.08 0">
+          <inertial pos="-0.00304722 -0.019315 -0.0305004" quat="0.753383 0.0775126 -0.0272313 0.65243" mass="1.009" diaginertia="0.00478717 0.00460903 0.000709268"/>
+          <joint class="hip" name="FL_thigh_joint"/>
+          <geom class="visual" mesh="thigh"/>
+          <body name="FL_calf" pos="0 0 -0.213">
+            <inertial pos="0.00429862 0.000976676 -0.146197" quat="0.691246 0.00357467 0.00511118 0.722592" mass="0.195862" diaginertia="0.00149767 0.00148468 3.58427e-05"/>
+            <joint class="knee" name="FL_calf_joint"/>
+            <geom class="visual" mesh="calf"/>
+            <geom name="FL" class="foot"/>
+          </body>
+        </body>
+      </body>
+      <body name="RR_hip" pos="-0.1881 -0.04675 0">
+        <inertial pos="0.0049166 0.00762615 -8.865e-05" quat="0.495027 0.482891 0.507341 0.514169" mass="0.68" diaginertia="0.000734064 0.000468438 0.000398719"/>
+        <joint class="abduction" name="RR_hip_joint"/>
+        <geom class="visual" quat="0 0 0 -1" mesh="hip"/>
+        <body name="RR_thigh" pos="0 -0.08 0">
+          <inertial pos="-0.00304722 0.019315 -0.0305004" quat="0.65243 -0.0272313 0.0775126 0.753383" mass="1.009" diaginertia="0.00478717 0.00460903 0.000709268"/>
+          <joint class="hip" name="RR_thigh_joint"/>
+          <geom class="visual" mesh="thigh_mirror"/>
+          <body name="RR_calf" pos="0 0 -0.213">
+            <inertial pos="0.00429862 0.000976676 -0.146197" quat="0.691246 0.00357467 0.00511118 0.722592" mass="0.195862" diaginertia="0.00149767 0.00148468 3.58427e-05"/>
+            <joint class="knee" name="RR_calf_joint"/>
+            <geom class="visual" mesh="calf"/>
+            <geom name="RR" class="foot"/>
+          </body>
+        </body>
+      </body>
+      <body name="RL_hip" pos="-0.1881 0.04675 0">
+        <inertial pos="0.0049166 -0.00762615 -8.865e-05" quat="0.514169 0.507341 0.482891 0.495027" mass="0.68" diaginertia="0.000734064 0.000468438 0.000398719"/>
+        <joint class="abduction" name="RL_hip_joint"/>
+        <geom class="visual" quat="0 0 1 0" mesh="hip"/>
+        <body name="RL_thigh" pos="0 0.08 0">
+          <inertial pos="-0.00304722 -0.019315 -0.0305004" quat="0.753383 0.0775126 -0.0272313 0.65243" mass="1.009" diaginertia="0.00478717 0.00460903 0.000709268"/>
+          <joint class="hip" name="RL_thigh_joint"/>
+          <geom class="visual" mesh="thigh"/>
+          <body name="RL_calf" pos="0 0 -0.213">
+            <inertial pos="0.00429862 0.000976676 -0.146197" quat="0.691246 0.00357467 0.00511118 0.722592" mass="0.195862" diaginertia="0.00149767 0.00148468 3.58427e-05"/>
+            <joint class="knee" name="RL_calf_joint"/>
+            <geom class="visual" mesh="calf"/>
+            <geom name="RL" class="foot"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <motor name="FR_hip_motor"   joint="FR_hip_joint"   gear="1"/>
+    <motor name="FR_thigh_motor" joint="FR_thigh_joint" gear="1"/>
+    <motor name="FR_calf_motor"  joint="FR_calf_joint"  gear="1"/>
+    <motor name="FL_hip_motor"   joint="FL_hip_joint"   gear="1"/>
+    <motor name="FL_thigh_motor" joint="FL_thigh_joint" gear="1"/>
+    <motor name="FL_calf_motor"  joint="FL_calf_joint"  gear="1"/>
+    <motor name="RR_hip_motor"   joint="RR_hip_joint"   gear="1"/>
+    <motor name="RR_thigh_motor" joint="RR_thigh_joint" gear="1"/>
+    <motor name="RR_calf_motor"  joint="RR_calf_joint"  gear="1"/>
+    <motor name="RL_hip_motor"   joint="RL_hip_joint"   gear="1"/>
+    <motor name="RL_thigh_motor" joint="RL_thigh_joint" gear="1"/>
+    <motor name="RL_calf_motor"  joint="RL_calf_joint"  gear="1"/>
+  </actuator>
+</mujoco>
