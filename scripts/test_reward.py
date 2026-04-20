@@ -5,11 +5,10 @@ sys.path = [p for p in sys.path if '/opt/ros' not in p]
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.getcwd())
 
-from src.env.cheetah_env import MiniCheetahEnv, REWARD_SCALES, ONLY_POSITIVE_REWARDS
+from src.env.cheetah_env import MiniCheetahEnv, REWARD_SCALES
 import numpy as np
 
 print("REWARD_SCALES:", REWARD_SCALES)
-print("ONLY_POSITIVE_REWARDS:", ONLY_POSITIVE_REWARDS)
 print("r_alive in scales:", "r_alive" in REWARD_SCALES)
 print()
 

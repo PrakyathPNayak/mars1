@@ -375,19 +375,19 @@ def train(args):
         "total_steps": args.total_steps,
         "n_envs": args.n_envs,
         "algorithm": "PPO",
-        "net_arch": "pi=[2048,1024,512], vf=[2048,1024,512]",
+        "net_arch": "pi=[512,256,128], vf=[512,256,128]",
         "activation_fn": "ELU",
         "lr": "3e-4 linear decay (min 1e-5)",
         "clip": 0.2,
-        "batch_size": 4096,
+        "batch_size": 512,
         "n_steps": 4096,
         "n_epochs": getattr(args, "n_epochs", 10),
-        "ent_coef": 0.01,
+        "ent_coef": 0.0,
         "log_std_init": -1.0,
         "ortho_init": True,
         "device": device,
         "robot": "Unitree Go1 (mujoco_menagerie)",
-        "vec_normalize": "norm_obs=True, norm_reward=False, clip_obs=100",
+        "vec_normalize": "norm_obs=False, norm_reward=False",
     }
     with open(ckpt_dir / "training_config.json", "w") as f:
         json.dump(config, f, indent=2)

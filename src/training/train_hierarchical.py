@@ -39,6 +39,9 @@ from torch.utils.data import TensorDataset, DataLoader
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
+# Import OBS_DIM from the environment so obs_dim is always in sync.
+from src.env.cheetah_env import OBS_DIM as ENV_OBS_DIM
+
 
 def make_env(rank=0, history_len=16, **kwargs):
     """Environment factory with history wrapper for vectorized training."""
@@ -324,6 +327,7 @@ def train_ppo_hierarchical(args, bc_extractor_state: dict):
         TransformerActorCriticPolicy,
         WorldModelCallback,
         CurriculumCallback,
+        PhaseOscillatorResetCallback,
     )
     from src.training.advanced_policy import AdaptiveCurriculum
     from src.training.reward_logger import RewardComponentCallback
@@ -368,7 +372,7 @@ def train_ppo_hierarchical(args, bc_extractor_state: dict):
         n_layers=args.n_layers,
         n_experts=args.n_experts,
         history_len=args.history_len,
-        obs_dim=54,
+        obs_dim=ENV_OBS_DIM,  # BUG-2 fix: was hardcoded 54, must match env (196)
     )
 
     def _hier_lr(progress_remaining: float) -> float:
@@ -514,6 +518,7 @@ def train_ppo_hierarchical(args, bc_extractor_state: dict):
             verbose=1 if args.verbose else 0,
         ),
         CurriculumCallback(curriculum, verbose=1 if args.verbose else 0),
+        PhaseOscillatorResetCallback(),
         ProgressLogger(
             total_steps=args.total_steps,
             rollout_size=rollout_size,
@@ -600,7 +605,7 @@ def train(args):
         n_heads=4,
         n_layers=args.n_layers,
         history_len=args.history_len,
-        obs_dim=54,
+        obs_dim=ENV_OBS_DIM,  # BUG-2 fix: was hardcoded 54, must match env (196)
         act_dim=12,
         bc_epochs=args.bc_epochs,
         bc_lr=args.bc_lr,

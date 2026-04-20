@@ -534,6 +534,7 @@ class MiniCheetahEnv(gym.Env):
         curriculum: Optional[TerrainCurriculum] = None,
         env_id: int = 0,
         forced_mode: Optional[str] = None,
+        randomize_domain: bool = True,
     ):
         super().__init__()
         self.render_mode = render_mode
@@ -546,6 +547,15 @@ class MiniCheetahEnv(gym.Env):
         self.n_substeps = int(dt / physics_dt)
         self.curriculum = curriculum
         self.env_id = env_id
+        self.randomize_domain = randomize_domain
+
+        # Cache base model values for domain randomization resets
+        self._base_masses = None
+        self._base_damping = None
+        self._base_armature = None
+        self._base_kp = 60.0
+        self._base_kd = 0.5
+        self._base_max_torque = 33.5
 
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(OBS_DIM,), dtype=np.float32
@@ -674,14 +684,57 @@ class MiniCheetahEnv(gym.Env):
         )
         self._has_hfield = self._hfield_id >= 0
 
-        # Cache floor geom
         self._floor_geom_id = mujoco.mj_name2id(
             self.model, mujoco.mjtObj.mjOBJ_GEOM, "floor"
         )
 
-    # ══════════════════════════════════════════════════════════════
-    #  Gymnasium API
-    # ══════════════════════════════════════════════════════════════
+        # Cache base model values for domain randomization (DR) reset.
+        # Must be captured here (once) so that every reset() can restore them
+        # before re-randomizing — preventing drift across episodes.
+        self._base_masses = self.model.body_mass.copy()
+        self._base_damping = self.model.dof_damping.copy()
+        self._base_armature = self.model.dof_armature.copy()
+
+    def _apply_domain_randomization(self):
+        """Randomize physical parameters for sim-to-real robustness.
+
+        Ranges are consistent with CHRL survey, RMA, DreamWaQ literature:
+          - Body masses:     ±15%  (RMA, DreamWaQ convention)
+          - Floor friction:  ×0.8–2.0  (CHRL consensus)
+          - Joint damping:   ±20%  (Dc-Gait, CHRL)
+          - Joint armature:  ±20%
+          - PD gains kp/kd: ±15%  (DAEC, CHRL)
+          - Max torque:      ±10%  (RMA)
+
+        Observation noise (2% Gaussian) is applied in _get_obs() when
+        self.randomize_domain is True.
+        """
+        rng = self.np_random if hasattr(self, 'np_random') and self.np_random is not None else np.random
+
+        # Mass randomization ±15%
+        mass_scale = 1.0 + rng.uniform(-0.15, 0.15, size=self._base_masses.shape)
+        self.model.body_mass[:] = self._base_masses * mass_scale
+
+        # Floor friction ×0.8–2.0
+        # Geom 0 is typically the floor in Go1 models; randomize all static geoms
+        friction_scale = rng.uniform(0.8, 2.0)
+        self.model.geom_friction[:, 0] *= friction_scale
+
+        # Joint damping ±20%
+        damp_scale = 1.0 + rng.uniform(-0.20, 0.20, size=self._base_damping.shape)
+        self.model.dof_damping[:] = self._base_damping * damp_scale
+
+        # Joint armature ±20%
+        arm_scale = 1.0 + rng.uniform(-0.20, 0.20, size=self._base_armature.shape)
+        self.model.dof_armature[:] = np.maximum(self._base_armature * arm_scale, 0.0)
+
+        # PD gain randomization ±15%
+        self.kp = self._base_kp * rng.uniform(0.85, 1.15)
+        self.kd = self._base_kd * rng.uniform(0.85, 1.15)
+
+        # Motor strength ±10%
+        self.max_torque = self._base_max_torque * rng.uniform(0.90, 1.10)
+
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -732,12 +785,20 @@ class MiniCheetahEnv(gym.Env):
         self.data.qpos[7:7 + NUM_JOINTS] = DEFAULT_STANCE
         mujoco.mj_forward(self.model, self.data)
 
-        # v23i9f: Bootstrap locomotion with initial forward velocity.
-        # Without CPG, policy has zero gradient from standing→walking.
-        # Give robot forward momentum so it must learn to step to stay upright.
-        if self.randomize_commands:
-            # Will be set after mode selection below, but set a default
-            pass
+        # Apply domain randomization (mass, friction, damping, PD gains)
+        if self.randomize_domain:
+            self._apply_domain_randomization()
+        else:
+            # Restore base values when DR is off (e.g. eval/debug)
+            if self._base_masses is not None:
+                self.model.body_mass[:] = self._base_masses
+            if self._base_damping is not None:
+                self.model.dof_damping[:] = self._base_damping
+            if self._base_armature is not None:
+                self.model.dof_armature[:] = self._base_armature
+            self.kp = self._base_kp
+            self.kd = self._base_kd
+            self.max_torque = self._base_max_torque
 
         self._initial_base_pos = self.data.qpos[:3].copy()
         # v31f: Track initial heading for drift termination
@@ -1099,34 +1160,7 @@ class MiniCheetahEnv(gym.Env):
 
         return corr
 
-    # Dead code below from old CPG (kept for reference)
-    def _old_cpg_code(self):
-        pass
-        cpg = np.zeros(12)  # placeholder
 
-        # Scale sagittal CPG based on command activity
-        fwd_activity = abs(float(self.command[0])) + abs(float(self.command[2])) * 0.15
-        fwd_scale_raw = min(fwd_activity / 0.3, 1.0)
-        any_cmd = abs(float(self.command[0])) + abs(float(self.command[1])) + abs(float(self.command[2])) * 0.3
-        lat_cmd = abs(float(self.command[1]))
-        base_floor = 0.3 if any_cmd > 0.05 else 0.0
-        if lat_cmd > 0.1:
-            base_floor = max(base_floor, min(lat_cmd / 0.3, 1.0) * 0.6)
-        fwd_scale = max(base_floor, fwd_scale_raw)
-
-        for i in [1, 2, 4, 5, 7, 8, 10, 11]:
-            cpg[i] *= fwd_scale
-
-        # Yaw: differential abductor lean
-        wz_abd = 0.06 * min(abs(float(self.command[2])) / 0.5, 1.0)
-        if abs(float(self.command[2])) > 0.05:
-            yaw_sign = 1.0 if float(self.command[2]) > 0 else -1.0
-            cpg[0]  += wz_abd * yaw_sign
-            cpg[3]  -= wz_abd * yaw_sign
-            cpg[6]  += wz_abd * yaw_sign
-            cpg[9]  -= wz_abd * yaw_sign
-
-        return cpg
 
     # ══════════════════════════════════════════════════════════════
     #  Observations
@@ -1241,11 +1275,14 @@ class MiniCheetahEnv(gym.Env):
         # Manual normalization (fixed scales, no running stats)
         obs = obs / OBS_SCALES
 
-        # v31s6g9: Mirror augmentation — transform obs to mirrored frame
-        if self._mirror_lr:
-            obs = self._mirror_obs(obs)
+        # Proprioceptive sensor noise when domain randomization is active.
+        # Applied only to joints + velocities + IMU range (first 75 dims).
+        # Commands, skill one-hot, and heightmap are not noised.
+        # σ=0.02 is standard (CHRL, RMA, DreamWaQ conventions).
+        if self.randomize_domain:
+            noise = self.np_random.normal(0.0, 0.02, size=75).astype(np.float32)
+            obs[:75] += noise
 
-        # NO sensor noise — perfect sensors for advanced training
         return obs
 
     def _mirror_obs(self, obs: np.ndarray) -> np.ndarray:

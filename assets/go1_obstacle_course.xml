@@ -1,0 +1,472 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Go1 Obstacle Course — Testing Environment
+  Terrain layout (X-axis forward):
+    -1 – 2m  : flat ground   (spawn + walk warm-up)
+     2 –  4m  : staircase     (6 steps × 8 cm rise)
+     4 –  6m  : raised ring platform (top at z=0.48)
+     6 –  7m  : jump-through ring hoop (freestanding, z-center=1.1m)
+     7 –  9m  : landing pad (after jump)
+    10 – 13m  : inclined slide ramp (35°, icy friction)
+    13 – 15m  : flat run-out zone
+-->
+<mujoco model="go1_obstacle_course">
+  <compiler angle="radian" meshdir="go1" autolimits="true"/>
+  <option timestep="0.002" gravity="0 0 -9.81" iterations="50" solver="Newton"
+          cone="elliptic" impratio="10"/>
+
+  <visual>
+    <headlight ambient="0.5 0.5 0.5" diffuse="0.8 0.8 0.8" specular="0.1 0.1 0.1"/>
+    <map force="0.1" zfar="200"/>
+    <quality shadowsize="4096"/>
+    <global offwidth="1280" offheight="720"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.8" rgb2="0.02 0.02 0.15"
+             width="200" height="200"/>
+
+    <!-- Floor checker -->
+    <texture name="floor_tex" type="2d" builtin="checker"
+             rgb1="0.55 0.55 0.55" rgb2="0.35 0.35 0.35" width="512" height="512"/>
+    <material name="floor_mat" texture="floor_tex" texrepeat="6 6"
+              specular="0.4" shininess="0.3" reflectance="0.05"/>
+
+    <!-- Stair / concrete material -->
+    <texture name="stair_tex" type="2d" builtin="flat"
+             rgb1="0.72 0.68 0.60" width="64" height="64"/>
+    <material name="stair_mat" texture="stair_tex" specular="0.3" shininess="0.2"/>
+
+    <!-- Ring platform material (orange) -->
+    <texture name="ring_tex" type="2d" builtin="flat"
+             rgb1="0.95 0.45 0.05" width="64" height="64"/>
+    <material name="ring_mat" texture="ring_tex" specular="0.6" shininess="0.5"/>
+
+    <!-- Jump-through hoop material (vivid red) -->
+    <texture name="hoop_tex" type="2d" builtin="flat"
+             rgb1="0.90 0.10 0.10" width="64" height="64"/>
+    <material name="hoop_mat" texture="hoop_tex" specular="0.8" shininess="0.7"/>
+
+    <!-- Landing pad (green) -->
+    <texture name="land_tex" type="2d" builtin="flat"
+             rgb1="0.20 0.70 0.25" width="64" height="64"/>
+    <material name="land_mat" texture="land_tex" specular="0.2" shininess="0.1"/>
+
+    <!-- Slide surface — vivid blue, very slippery -->
+    <texture name="slide_tex" type="2d" builtin="flat"
+             rgb1="0.10 0.40 0.90" width="64" height="64"/>
+    <material name="slide_mat" texture="slide_tex" specular="0.9" shininess="0.9"
+              reflectance="0.3"/>
+
+    <!-- Slide support / side-rail material (dark grey) -->
+    <texture name="support_tex" type="2d" builtin="flat"
+             rgb1="0.25 0.25 0.28" width="64" height="64"/>
+    <material name="support_mat" texture="support_tex" specular="0.4" shininess="0.3"/>
+
+    <!-- Run-out pad (yellow) -->
+    <texture name="runout_tex" type="2d" builtin="flat"
+             rgb1="0.92 0.80 0.10" width="64" height="64"/>
+    <material name="runout_mat" texture="runout_tex" specular="0.2" shininess="0.1"/>
+
+    <!-- Robot meshes -->
+    <mesh file="trunk.stl"/>
+    <mesh file="hip.stl"/>
+    <mesh file="thigh_mirror.stl"/>
+    <mesh file="calf.stl"/>
+    <mesh file="thigh.stl"/>
+  </asset>
+
+  <default>
+    <default class="go1">
+      <geom friction="1.0 0.01 0.005" margin="0.001" condim="3"/>
+      <joint axis="0 1 0" damping="2" armature="0.01" frictionloss="0.2"/>
+      <default class="abduction">
+        <joint axis="1 0 0" damping="1" range="-0.863 0.863"/>
+      </default>
+      <default class="hip">
+        <joint range="-0.686 4.501"/>
+      </default>
+      <default class="knee">
+        <joint range="-2.818 -0.888"/>
+      </default>
+      <default class="visual">
+        <geom type="mesh" contype="0" conaffinity="0" group="2"/>
+      </default>
+      <default class="collision">
+        <geom group="3" type="capsule"/>
+        <default class="hip_left1">
+          <geom size="0.046 0.02" pos="0 0.045 0" quat="1 1 0 0" type="cylinder"/>
+        </default>
+        <default class="hip_left2">
+          <geom size="0.031 0.02" pos="0 0.065 0" quat="1 1 0 0" type="cylinder"/>
+        </default>
+        <default class="hip_left3">
+          <geom size="0.046 0.02" quat="1 1 0 0" type="cylinder"/>
+        </default>
+        <default class="hip_right1">
+          <geom size="0.046 0.02" pos="0 -0.045 0" quat="1 1 0 0" type="cylinder"/>
+        </default>
+        <default class="hip_right2">
+          <geom size="0.031 0.02" pos="0 -0.065 0" quat="1 1 0 0" type="cylinder"/>
+        </default>
+        <default class="hip_right3">
+          <geom size="0.046 0.02" quat="1 1 0 0" type="cylinder"/>
+        </default>
+        <default class="thigh1">
+          <geom size="0.015" fromto="-0.02 0 0 -0.02 0 -0.16"/>
+        </default>
+        <default class="thigh2">
+          <geom size="0.015" fromto="0 0 0 -0.02 0 -0.1"/>
+        </default>
+        <default class="thigh3">
+          <geom size="0.015" fromto="-0.02 0 -0.16 0 0 -0.2"/>
+        </default>
+        <default class="calf1">
+          <geom size="0.01" fromto="0 0 0 0.02 0 -0.13"/>
+        </default>
+        <default class="calf2">
+          <geom size="0.01" fromto="0.02 0 -0.13 0 0 -0.2"/>
+        </default>
+        <default class="foot">
+          <geom type="sphere" size="0.023" pos="0 0 -0.213" priority="1"
+                solimp="0.015 1 0.023" condim="6" friction="1.0 0.02 0.01"/>
+        </default>
+      </default>
+    </default>
+    <motor ctrllimited="true" ctrlrange="-33.5 33.5"/>
+  </default>
+
+  <worldbody>
+    <!-- ── Lighting ── -->
+    <light name="sun"    pos="5 0 10" dir="0 0 -1" directional="true"
+           diffuse="0.9 0.9 0.9" specular="0.3 0.3 0.3" castshadow="true"/>
+    <light name="fill1"  pos="5 -4 5"  dir="-0.5 0.5 -1" diffuse="0.3 0.3 0.4"/>
+    <light name="fill2"  pos="5  4 5"  dir="-0.5 -0.5 -1" diffuse="0.25 0.25 0.35"/>
+    <!-- Hoop accent light -->
+    <light name="hoop_l" pos="6.5 0 3" dir="0 0 -1" diffuse="0.8 0.2 0.2"
+           attenuation="0 0 0.5"/>
+    <!-- Slide accent light -->
+    <light name="slide_l" pos="11.5 0 5" dir="0 0 -1" diffuse="0.2 0.4 0.9"
+           attenuation="0 0 0.3"/>
+    <light name="spot"  mode="targetbodycom" target="trunk" pos="0 -2 3"
+           diffuse="0.6 0.6 0.6" specular="0.2 0.2 0.2"/>
+
+    <!-- ══ ZONE 1: Flat ground (x: -2 → 2) ══ -->
+    <geom name="ground" type="plane" size="2 1 0.1" pos="0 0 0"
+          material="floor_mat" condim="3" friction="1.0 0.01 0.005"/>
+
+    <!-- ══ ZONE 2: Staircase (x: 2 → 4, 6 steps, 8cm rise, 33cm run) ══ -->
+    <!-- Step 1: z=0.08 -->
+    <geom name="step1" type="box" size="0.165 0.6 0.04"  pos="2.165 0 0.04"
+          material="stair_mat" condim="3" friction="1.0 0.01 0.005"/>
+    <!-- Step 2: z=0.16 -->
+    <geom name="step2" type="box" size="0.165 0.6 0.08"  pos="2.495 0 0.08"
+          material="stair_mat" condim="3" friction="1.0 0.01 0.005"/>
+    <!-- Step 3: z=0.24 -->
+    <geom name="step3" type="box" size="0.165 0.6 0.12"  pos="2.825 0 0.12"
+          material="stair_mat" condim="3" friction="1.0 0.01 0.005"/>
+    <!-- Step 4: z=0.32 -->
+    <geom name="step4" type="box" size="0.165 0.6 0.16"  pos="3.155 0 0.16"
+          material="stair_mat" condim="3" friction="1.0 0.01 0.005"/>
+    <!-- Step 5: z=0.40 -->
+    <geom name="step5" type="box" size="0.165 0.6 0.20"  pos="3.485 0 0.20"
+          material="stair_mat" condim="3" friction="1.0 0.01 0.005"/>
+    <!-- Step 6 / top platform connecting to ring (z=0.48) -->
+    <geom name="step6" type="box" size="0.165 0.6 0.24"  pos="3.815 0 0.24"
+          material="stair_mat" condim="3" friction="1.0 0.01 0.005"/>
+
+    <!-- ══ ZONE 3: Raised Platform (x: 4 → 6, top at z=0.48) ══ -->
+    <geom name="ring_platform" type="box" size="1.0 0.7 0.24" pos="5.0 0 0.24"
+          material="ring_mat" condim="3" friction="0.9 0.01 0.005"/>
+    <!-- Low guard walls (visual only) -->
+    <geom name="plat_rail_l" type="box" size="1.0 0.03 0.06" pos="5.0  0.73 0.54"
+          material="support_mat" contype="0" conaffinity="0"/>
+    <geom name="plat_rail_r" type="box" size="1.0 0.03 0.06" pos="5.0 -0.73 0.54"
+          material="support_mat" contype="0" conaffinity="0"/>
+
+    <!-- ══ ZONE 4: Jump-Through Ring Hoop (x=6.5, freestanding) ══
+         A circular hoop built from 8 capsule segments (radius 0.65m, tube r=0.055m)
+         Centre of hoop: (6.5, 0, 1.10)  —  robot crouches to ~0.30m, clears easily.
+         Post supports hold it up from the ground.
+    -->
+    <!-- Left post -->
+    <geom name="hoop_post_l" type="cylinder" size="0.045 0.55"
+          pos="6.5  0.65 0.55" material="hoop_mat"
+          condim="3" friction="0.8 0.01 0.005"/>
+    <!-- Right post -->
+    <geom name="hoop_post_r" type="cylinder" size="0.045 0.55"
+          pos="6.5 -0.65 0.55" material="hoop_mat"
+          condim="3" friction="0.8 0.01 0.005"/>
+    <!-- 8 arc-segments (capsules) forming the circle.
+         Circle: centre (6.5, 0, 1.10), radius R=0.65
+         Segment i spans angle a_i → a_i+45°.
+         Each capsule fromto = R*(cos a_i, sin a_i, 0) → R*(cos a_{i+1}, sin a_{i+1}, 0)
+         All z-coords offset by 1.10 (hoop centre height). -->
+    <!-- Seg 0: 0°→45° -->
+    <geom name="hoop_s0" type="capsule" size="0.055"
+          fromto="7.15  0.00 1.10   6.96  0.46 1.10"
+          material="hoop_mat" contype="0" conaffinity="0"/>
+    <!-- Seg 1: 45°→90° -->
+    <geom name="hoop_s1" type="capsule" size="0.055"
+          fromto="6.96  0.46 1.10   6.50  0.65 1.10"
+          material="hoop_mat" contype="0" conaffinity="0"/>
+    <!-- Seg 2: 90°→135° -->
+    <geom name="hoop_s2" type="capsule" size="0.055"
+          fromto="6.50  0.65 1.10   6.04  0.46 1.10"
+          material="hoop_mat" contype="0" conaffinity="0"/>
+    <!-- Seg 3: 135°→180° -->
+    <geom name="hoop_s3" type="capsule" size="0.055"
+          fromto="6.04  0.46 1.10   5.85  0.00 1.10"
+          material="hoop_mat" contype="0" conaffinity="0"/>
+    <!-- Seg 4: 180°→225° -->
+    <geom name="hoop_s4" type="capsule" size="0.055"
+          fromto="5.85  0.00 1.10   6.04 -0.46 1.10"
+          material="hoop_mat" contype="0" conaffinity="0"/>
+    <!-- Seg 5: 225°→270° -->
+    <geom name="hoop_s5" type="capsule" size="0.055"
+          fromto="6.04 -0.46 1.10   6.50 -0.65 1.10"
+          material="hoop_mat" contype="0" conaffinity="0"/>
+    <!-- Seg 6: 270°→315° -->
+    <geom name="hoop_s6" type="capsule" size="0.055"
+          fromto="6.50 -0.65 1.10   6.96 -0.46 1.10"
+          material="hoop_mat" contype="0" conaffinity="0"/>
+    <!-- Seg 7: 315°→360° -->
+    <geom name="hoop_s7" type="capsule" size="0.055"
+          fromto="6.96 -0.46 1.10   7.15  0.00 1.10"
+          material="hoop_mat" contype="0" conaffinity="0"/>
+
+    <!-- ══ ZONE 5: Landing Pad (x: 7.5 → 9.5, z=0) ══ -->
+    <geom name="landing_pad" type="box" size="1.0 0.9 0.025" pos="8.5 0 0.025"
+          material="land_mat" condim="3" friction="1.2 0.01 0.005"/>
+    <!-- Connecting flat ground between hoop and slide -->
+    <geom name="mid_ground" type="box" size="0.5 1.0 0.01" pos="9.5 0 0.01"
+          material="floor_mat" condim="3" friction="1.0 0.01 0.005"/>
+
+    <!-- ══ ZONE 6: Slide Ramp (x: 10 → 13, 35° incline, slippery) ══
+         Ramp top at (10, 0, 1.72) → bottom at (13, 0, 0).
+         Box half-sizes: length_along_slope/2=1.73, width=0.7, thickness=0.05
+         Tilt: euler around Y axis = -35° = -0.6109 rad (nose-down forward)
+         Centre of box along slope mid-point.
+    -->
+    <!-- Ramp surface -->
+    <geom name="slide_ramp" type="box" size="1.80 0.70 0.06"
+          pos="11.50 0 0.86"
+          euler="0 -0.6109 0"
+          material="slide_mat"
+          condim="3" friction="0.05 0.002 0.001"/>
+    <!-- Left guard rail on slide -->
+    <geom name="slide_rail_l" type="box" size="1.80 0.04 0.10"
+          pos="11.50  0.74 0.92"
+          euler="0 -0.6109 0"
+          material="support_mat" contype="0" conaffinity="0"/>
+    <!-- Right guard rail on slide -->
+    <geom name="slide_rail_r" type="box" size="1.80 0.04 0.10"
+          pos="11.50 -0.74 0.92"
+          euler="0 -0.6109 0"
+          material="support_mat" contype="0" conaffinity="0"/>
+    <!-- Support leg left (front) -->
+    <geom name="slide_leg_lf" type="cylinder" size="0.06 0.86"
+          pos="10.10  0.55 0.86" material="support_mat"
+          condim="3" friction="0.8 0.01 0.005"/>
+    <!-- Support leg right (front) -->
+    <geom name="slide_leg_rf" type="cylinder" size="0.06 0.86"
+          pos="10.10 -0.55 0.86" material="support_mat"
+          condim="3" friction="0.8 0.01 0.005"/>
+    <!-- Support leg left (back) -->
+    <geom name="slide_leg_lb" type="cylinder" size="0.06 0.10"
+          pos="12.90  0.55 0.10" material="support_mat"
+          condim="3" friction="0.8 0.01 0.005"/>
+    <!-- Support leg right (back) -->
+    <geom name="slide_leg_rb" type="cylinder" size="0.06 0.10"
+          pos="12.90 -0.55 0.10" material="support_mat"
+          condim="3" friction="0.8 0.01 0.005"/>
+    <!-- Slide entry platform at the top -->
+    <geom name="slide_top_plat" type="box" size="0.35 0.70 0.06"
+          pos="10.05 0 1.68" material="support_mat"
+          condim="3" friction="0.9 0.01 0.005"/>
+
+    <!-- ══ ZONE 7: Run-out zone after slide (x: 13 → 15.5) ══ -->
+    <geom name="runout_pad" type="box" size="1.25 0.90 0.02" pos="14.25 0 0.02"
+          material="runout_mat" condim="3" friction="1.0 0.01 0.005"/>
+
+    <!-- ══ ROBOT ══ -->
+    <body name="trunk" pos="0 0 0.35" childclass="go1">
+      <!-- Cameras -->
+      <camera name="tracking"  mode="trackcom"  pos="0 -2.0 1.2" xyaxes="1 0 0 0 0.5 1"/>
+      <camera name="side_view" mode="trackcom"  pos="-3 -3 2"    xyaxes="0.7 0.7 0 -0.3 0.3 1"/>
+      <camera name="top_view"  mode="trackcom"  pos="0 0 5"      xyaxes="1 0 0 0 1 0"/>
+      <camera name="front_cam" mode="trackcom"  pos="0 -1.5 0.6" xyaxes="1 0 0 0 0.2 1"/>
+
+      <site name="imu_site" pos="0 0 0" size="0.01"/>
+      <site name="head"     pos="0.3 0 0" rgba="1 0 0 1" size="0.02" group="5"/>
+
+      <inertial pos="0.0223 0.002 -0.0005"
+                quat="-0.00342088 0.705204 0.000106698 0.708996"
+                mass="5.204" diaginertia="0.0716565 0.0630105 0.0168101"/>
+      <freejoint name="root"/>
+      <geom class="visual" mesh="trunk"/>
+      <geom class="collision" size="0.125 0.04 0.057" type="box"/>
+      <geom class="collision" quat="1 0 1 0" pos="0 -0.04 0" size="0.058 0.125" type="cylinder"/>
+      <geom class="collision" quat="1 0 1 0" pos="0  0.04 0" size="0.058 0.125" type="cylinder"/>
+
+      <!-- FR leg -->
+      <body name="FR_hip" pos="0.1881 -0.04675 0">
+        <inertial pos="-0.0049166 0.00762615 -8.865e-05"
+                  quat="0.507341 0.514169 0.495027 0.482891" mass="0.68"
+                  diaginertia="0.000734064 0.000468438 0.000398719"/>
+        <joint class="abduction" name="FR_hip_joint"/>
+        <geom class="visual" mesh="hip" quat="1 0 0 0"/>
+        <geom class="hip_right1"/>
+        <geom class="hip_right2"/>
+        <body name="FR_thigh" pos="0 -0.08 0">
+          <inertial pos="-0.00304722 0.019315 -0.0305004"
+                    quat="0.65243 -0.0272313 0.0775126 0.753383" mass="1.009"
+                    diaginertia="0.00478717 0.00460903 0.000709268"/>
+          <joint class="hip" name="FR_thigh_joint"/>
+          <geom class="visual" mesh="thigh_mirror"/>
+          <geom class="thigh1"/>
+          <geom class="thigh2"/>
+          <geom class="thigh3"/>
+          <body name="FR_calf" pos="0 0 -0.213">
+            <inertial pos="0.00429862 0.000976676 -0.146197"
+                      quat="0.691246 0.00357467 0.00511118 0.722592"
+                      mass="0.195862" diaginertia="0.00149767 0.00148468 3.58427e-05"/>
+            <joint class="knee" name="FR_calf_joint"/>
+            <geom class="visual" mesh="calf"/>
+            <geom class="calf1"/>
+            <geom class="calf2"/>
+            <geom name="FR" class="foot"/>
+            <site name="FR_foot_site" pos="0 0 -0.213" type="sphere" size="0.023" group="5"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- FL leg -->
+      <body name="FL_hip" pos="0.1881 0.04675 0">
+        <inertial pos="-0.0049166 -0.00762615 -8.865e-05"
+                  quat="0.482891 0.495027 0.514169 0.507341" mass="0.68"
+                  diaginertia="0.000734064 0.000468438 0.000398719"/>
+        <joint class="abduction" name="FL_hip_joint"/>
+        <geom class="visual" mesh="hip"/>
+        <geom class="hip_left1"/>
+        <geom class="hip_left2"/>
+        <body name="FL_thigh" pos="0 0.08 0">
+          <inertial pos="-0.00304722 -0.019315 -0.0305004"
+                    quat="0.753383 0.0775126 -0.0272313 0.65243" mass="1.009"
+                    diaginertia="0.00478717 0.00460903 0.000709268"/>
+          <joint class="hip" name="FL_thigh_joint"/>
+          <geom class="visual" mesh="thigh"/>
+          <geom class="thigh1"/>
+          <geom class="thigh2"/>
+          <geom class="thigh3"/>
+          <body name="FL_calf" pos="0 0 -0.213">
+            <inertial pos="0.00429862 0.000976676 -0.146197"
+                      quat="0.691246 0.00357467 0.00511118 0.722592"
+                      mass="0.195862" diaginertia="0.00149767 0.00148468 3.58427e-05"/>
+            <joint class="knee" name="FL_calf_joint"/>
+            <geom class="visual" mesh="calf"/>
+            <geom class="calf1"/>
+            <geom class="calf2"/>
+            <geom name="FL" class="foot"/>
+            <site name="FL_foot_site" pos="0 0 -0.213" type="sphere" size="0.023" group="5"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- RR leg -->
+      <body name="RR_hip" pos="-0.1881 -0.04675 0">
+        <inertial pos="0.0049166 0.00762615 -8.865e-05"
+                  quat="0.495027 0.482891 0.507341 0.514169" mass="0.68"
+                  diaginertia="0.000734064 0.000468438 0.000398719"/>
+        <joint class="abduction" name="RR_hip_joint"/>
+        <geom class="visual" quat="0 0 0 -1" mesh="hip"/>
+        <geom class="hip_right1"/>
+        <geom class="hip_right2"/>
+        <geom class="hip_right3"/>
+        <body name="RR_thigh" pos="0 -0.08 0">
+          <inertial pos="-0.00304722 0.019315 -0.0305004"
+                    quat="0.65243 -0.0272313 0.0775126 0.753383" mass="1.009"
+                    diaginertia="0.00478717 0.00460903 0.000709268"/>
+          <joint class="hip" name="RR_thigh_joint"/>
+          <geom class="visual" mesh="thigh_mirror"/>
+          <geom class="thigh1"/>
+          <geom class="thigh2"/>
+          <geom class="thigh3"/>
+          <body name="RR_calf" pos="0 0 -0.213">
+            <inertial pos="0.00429862 0.000976676 -0.146197"
+                      quat="0.691246 0.00357467 0.00511118 0.722592"
+                      mass="0.195862" diaginertia="0.00149767 0.00148468 3.58427e-05"/>
+            <joint class="knee" name="RR_calf_joint"/>
+            <geom class="visual" mesh="calf"/>
+            <geom class="calf1"/>
+            <geom class="calf2"/>
+            <geom name="RR" class="foot"/>
+            <site name="RR_foot_site" pos="0 0 -0.213" type="sphere" size="0.023" group="5"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- RL leg -->
+      <body name="RL_hip" pos="-0.1881 0.04675 0">
+        <inertial pos="0.0049166 -0.00762615 -8.865e-05"
+                  quat="0.514169 0.507341 0.482891 0.495027" mass="0.68"
+                  diaginertia="0.000734064 0.000468438 0.000398719"/>
+        <joint class="abduction" name="RL_hip_joint"/>
+        <geom class="visual" quat="0 0 1 0" mesh="hip"/>
+        <geom class="hip_left1"/>
+        <geom class="hip_left2"/>
+        <geom class="hip_left3"/>
+        <body name="RL_thigh" pos="0 0.08 0">
+          <inertial pos="-0.00304722 -0.019315 -0.0305004"
+                    quat="0.753383 0.0775126 -0.0272313 0.65243" mass="1.009"
+                    diaginertia="0.00478717 0.00460903 0.000709268"/>
+          <joint class="hip" name="RL_thigh_joint"/>
+          <geom class="visual" mesh="thigh"/>
+          <geom class="thigh1"/>
+          <geom class="thigh2"/>
+          <geom class="thigh3"/>
+          <body name="RL_calf" pos="0 0 -0.213">
+            <inertial pos="0.00429862 0.000976676 -0.146197"
+                      quat="0.691246 0.00357467 0.00511118 0.722592"
+                      mass="0.195862" diaginertia="0.00149767 0.00148468 3.58427e-05"/>
+            <joint class="knee" name="RL_calf_joint"/>
+            <geom class="visual" mesh="calf"/>
+            <geom class="calf1"/>
+            <geom class="calf2"/>
+            <geom name="RL" class="foot"/>
+            <site name="RL_foot_site" pos="0 0 -0.213" type="sphere" size="0.023" group="5"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <motor name="FR_hip_motor"   joint="FR_hip_joint"   gear="1"/>
+    <motor name="FR_thigh_motor" joint="FR_thigh_joint" gear="1"/>
+    <motor name="FR_calf_motor"  joint="FR_calf_joint"  gear="1"/>
+    <motor name="FL_hip_motor"   joint="FL_hip_joint"   gear="1"/>
+    <motor name="FL_thigh_motor" joint="FL_thigh_joint" gear="1"/>
+    <motor name="FL_calf_motor"  joint="FL_calf_joint"  gear="1"/>
+    <motor name="RR_hip_motor"   joint="RR_hip_joint"   gear="1"/>
+    <motor name="RR_thigh_motor" joint="RR_thigh_joint" gear="1"/>
+    <motor name="RR_calf_motor"  joint="RR_calf_joint"  gear="1"/>
+    <motor name="RL_hip_motor"   joint="RL_hip_joint"   gear="1"/>
+    <motor name="RL_thigh_motor" joint="RL_thigh_joint" gear="1"/>
+    <motor name="RL_calf_motor"  joint="RL_calf_joint"  gear="1"/>
+  </actuator>
+
+  <sensor>
+    <framelinvel name="base_linvel" objtype="site" objname="imu_site"/>
+    <frameangvel name="base_angvel" objtype="site" objname="imu_site"/>
+    <framequat    name="base_quat"  objtype="site" objname="imu_site"/>
+    <accelerometer name="base_accel" site="imu_site"/>
+    <gyro          name="base_gyro"  site="imu_site"/>
+  </sensor>
+
+  <keyframe>
+    <key name="home"
+         qpos="0 0 0.35 1 0 0 0  0 0.9 -1.8  0 0.9 -1.8  0 0.9 -1.8  0 0.9 -1.8"
+         ctrl="0 0 0 0 0 0 0 0 0 0 0 0"/>
+  </keyframe>
+</mujoco>

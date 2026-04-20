@@ -1,0 +1,37 @@
+# Default environment configuration for terrain_testing suite.
+# These values are used by benchmark_all.py and run_single_terrain.py
+# unless overridden by CLI flags.
+
+environment:
+  episode_length: 2000          # max steps per episode
+  dt: 0.02                      # control timestep (50 Hz)
+  physics_dt: 0.002             # physics timestep (500 Hz, 10 substeps)
+  push_interval: 200            # apply external push every N steps
+  push_magnitude: 50.0          # push force in Newtons (horizontal only)
+
+domain_randomization:
+  enabled: true
+  mass_range: [0.85, 1.15]      # ±15% per body
+  floor_friction: [0.3, 1.5]
+  foot_friction: [0.8, 2.0]
+  joint_damping: [0.8, 1.2]     # ±20%
+  joint_armature: [0.8, 1.2]    # ±20%
+  kp_scale: [0.85, 1.15]        # ±15%
+  kd_scale: [0.85, 1.15]
+  max_torque_scale: [0.90, 1.10] # ±10%
+  obs_noise_std: 0.02
+
+benchmark:
+  default_episodes: 5
+  default_steps: 2000
+  default_difficulty: 0.5
+  seed: 42
+
+pd_controller:
+  kp: 80.0
+  kd: 2.0
+  max_torque: 17.0              # Nm (Kim et al. 2019 Mini Cheetah spec)
+
+terrain_generator:
+  resolution: 200               # heightfield grid resolution
+  size: 10.0                    # world size (metres, half-extent each side)

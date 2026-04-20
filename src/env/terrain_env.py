@@ -109,8 +109,17 @@ class TerrainGenerator:
         elif terrain_type == "rough":
             scale = 0.02 + 0.08 * difficulty
             heights = self.rng.uniform(-scale, scale, (n, n)).astype(np.float32)
-            from scipy.ndimage import gaussian_filter
-            heights = gaussian_filter(heights, sigma=1.5).astype(np.float32)
+            try:
+                from scipy.ndimage import gaussian_filter
+                heights = gaussian_filter(heights, sigma=1.5).astype(np.float32)
+            except ImportError:
+                # Manual box filter fallback
+                kernel = 3
+                pad = kernel // 2
+                padded = np.pad(heights, pad, mode='edge')
+                for i in range(n):
+                    for j in range(n):
+                        heights[i, j] = padded[i:i+kernel, j:j+kernel].mean()
 
         elif terrain_type == "slope_up":
             angle = 5 + 20 * difficulty  # degrees
