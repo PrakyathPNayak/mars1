@@ -15,12 +15,20 @@ def run_interactive_demo(
     use_trained: bool = True,
     render_mode: str = "human",
     use_terminal_input: bool = False,
+    terrain_type: str = "mixed",
+    terrain_difficulty: float = 0.6,
 ):
     """Launch the interactive keyboard-controlled demo.
 
     Args:
         use_terminal_input: If True, use terminal-based input (no need to
             click the MuJoCo viewer window). Default False uses pynput.
+        terrain_type: Terrain for the demo. Default "mixed" includes slopes,
+            stairs, rough patches, and gaps for a challenging experience.
+            Options: flat, rough, slope_up, slope_down, stairs_up,
+            stairs_down, gaps, stepping_stones, random_blocks, mixed.
+        terrain_difficulty: Difficulty level 0.0 (easy) to 1.0 (hard).
+            Default 0.6 provides moderate challenge with visible obstacles.
     """
     from src.env.cheetah_env import MiniCheetahEnv
     from src.control.exploration_policy import ExplorationPolicy
@@ -36,10 +44,15 @@ def run_interactive_demo(
     if use_trained:
         policy, normalize_fn = load_policy_for_inference(model_path)
 
+    # v24: Interactive demo now uses challenging terrain by default (mixed, difficulty=0.6)
+    # instead of flat ground, so the user experiences slopes, stairs, and rough patches.
     env = MiniCheetahEnv(
         render_mode=render_mode,
         randomize_domain=False,
         episode_length=100000,
+        terrain_type=terrain_type,
+        terrain_difficulty=terrain_difficulty,
+        use_terrain=True,
     )
 
     if use_terminal_input:

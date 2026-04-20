@@ -20,7 +20,7 @@ import select
 from typing import Tuple
 
 # Speed presets (matched to training range: walk 0.3-0.8, run 1.0-2.0 m/s)
-SPEEDS = {"walk": 0.5, "run_med": 1.2, "run_fast": 2.0}
+SPEEDS = {"walk": 0.38, "run_med": 1.2, "run_fast": 2.0}  # v31s3: walk 0.5→0.38 per user (20-30% slower)
 STRAFE_SPEED = 0.4   # v21: was 0.8, exceeded training range (max vy=0.5)
 TURN_SPEED = 1.0
 

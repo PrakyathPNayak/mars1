@@ -134,7 +134,7 @@ FEET_AIR_TIME_THRESHOLD = 0.15
 POSTURE_SIGMA = 0.5
 BODY_HEIGHT_SIGMA = 0.10
 TRACKING_SIGMA = 0.25
-LATERAL_SIGMA = 0.03  # v31s6g11: tighter (was 0.05). At cmd=0.3: 150%→47% reward (was 64%)
+LATERAL_SIGMA = 0.05
 HEADING_SIGMA = 0.08
 
 ROBOT_MASS = 12.74  # Go1 approximate total mass (kg)
@@ -143,14 +143,6 @@ ABD_JOINT_INDICES  = np.array([0, 3, 6, 9],  dtype=np.int32)
 HIP_JOINT_INDICES  = np.array([1, 4, 7, 10], dtype=np.int32)
 KNEE_JOINT_INDICES = np.array([2, 5, 8, 11], dtype=np.int32)
 
-# ── Mirror augmentation (bilateral symmetry enforcement) ─────────
-# Swap FR(0-2)↔FL(3-5), RR(6-8)↔RL(9-11) for joints/actions
-_JOINT_MIRROR_IDX = np.array([3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8])
-# Negate abduction: same axis [1,0,0] but swapped range for L vs R legs
-_JOINT_MIRROR_SIGN = np.array([-1, 1, 1, -1, 1, 1, -1, 1, 1, -1, 1, 1], dtype=np.float32)
-# Swap foot order: FR(0)↔FL(1), RR(2)↔RL(3)
-_FOOT_MIRROR_IDX = np.array([1, 0, 3, 2])
-
 # ── Posture targets ───────────────────────────────────────────────
 POSTURE_TARGETS = {
     "stand":   {"hip": 0.9,  "knee": -1.8},
@@ -158,12 +150,6 @@ POSTURE_TARGETS = {
     "run":     {"hip": 0.8,  "knee": -1.6},
     "jump":    {"hip": 0.9,  "knee": -1.8},
 }
-
-# v31p: Mode-level reward normalization.
-# Stand=7.4 vs walk_fwd=2.0 → 3.7x gap → value function abandons walk.
-# Normalize so all modes produce similar reward magnitudes (~3 r/step at optimal).
-# Stand (easy, 7.4) × 0.40 = 3.0. Jump (9.8) × 0.35 = 3.4. Walk/run stay at 1.0.
-MODE_REWARD_SCALE = {"stand": 0.40, "walk": 1.0, "run": 1.0, "jump": 0.35}
 
 # ── Reward scales (legged_gym / RMA aligned) ─────────────────────
 REWARD_SCALES = {
@@ -534,7 +520,6 @@ class MiniCheetahEnv(gym.Env):
         curriculum: Optional[TerrainCurriculum] = None,
         env_id: int = 0,
         forced_mode: Optional[str] = None,
-        randomize_domain: bool = True,
     ):
         super().__init__()
         self.render_mode = render_mode
@@ -547,15 +532,6 @@ class MiniCheetahEnv(gym.Env):
         self.n_substeps = int(dt / physics_dt)
         self.curriculum = curriculum
         self.env_id = env_id
-        self.randomize_domain = randomize_domain
-
-        # Cache base model values for domain randomization resets
-        self._base_masses = None
-        self._base_damping = None
-        self._base_armature = None
-        self._base_kp = 60.0
-        self._base_kd = 0.5
-        self._base_max_torque = 33.5
 
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(OBS_DIM,), dtype=np.float32
@@ -582,17 +558,6 @@ class MiniCheetahEnv(gym.Env):
         self._vx_ema = 0.0  # v23i5: smoothed forward velocity for reward
         self._vy_ema = 0.0
         self._wz_ema = 0.0  # v31: smoothed yaw rate for anti-oscillation tracking
-        self._wz_ema_slow = 0.0  # v31s4: slow yaw EMA for drift detection (α=0.02)
-        # v31o: Fast EMA (α=0.3) for overshoot detection only.
-        # Slow EMA (α=0.1) lags ~20 steps → sprint exploit.
-        # Instantaneous (v31n) catches every gait-cycle spike → model freezes.
-        # Fast EMA: catches sustained sprints in 2-3 steps, ignores single-step noise.
-        self._vx_ema_fast = 0.0
-        self._vy_ema_fast = 0.0
-
-        # v31m3: Persistent training step counter (survives resets) for curriculum
-        if not hasattr(self, '_training_steps'):
-            self._training_steps = 0
 
         # CPG phase
         self._cpg_phase = 0.0
@@ -627,9 +592,6 @@ class MiniCheetahEnv(gym.Env):
         # Episode tracking
         self._ep_reward_sum = 0.0
         self._initial_base_pos = np.zeros(3)
-
-        # Mirror augmentation: disabled by default, enabled during training
-        self._mirror_lr = False
 
         self._init_simulator()
 
@@ -684,57 +646,14 @@ class MiniCheetahEnv(gym.Env):
         )
         self._has_hfield = self._hfield_id >= 0
 
+        # Cache floor geom
         self._floor_geom_id = mujoco.mj_name2id(
             self.model, mujoco.mjtObj.mjOBJ_GEOM, "floor"
         )
 
-        # Cache base model values for domain randomization (DR) reset.
-        # Must be captured here (once) so that every reset() can restore them
-        # before re-randomizing — preventing drift across episodes.
-        self._base_masses = self.model.body_mass.copy()
-        self._base_damping = self.model.dof_damping.copy()
-        self._base_armature = self.model.dof_armature.copy()
-
-    def _apply_domain_randomization(self):
-        """Randomize physical parameters for sim-to-real robustness.
-
-        Ranges are consistent with CHRL survey, RMA, DreamWaQ literature:
-          - Body masses:     ±15%  (RMA, DreamWaQ convention)
-          - Floor friction:  ×0.8–2.0  (CHRL consensus)
-          - Joint damping:   ±20%  (Dc-Gait, CHRL)
-          - Joint armature:  ±20%
-          - PD gains kp/kd: ±15%  (DAEC, CHRL)
-          - Max torque:      ±10%  (RMA)
-
-        Observation noise (2% Gaussian) is applied in _get_obs() when
-        self.randomize_domain is True.
-        """
-        rng = self.np_random if hasattr(self, 'np_random') and self.np_random is not None else np.random
-
-        # Mass randomization ±15%
-        mass_scale = 1.0 + rng.uniform(-0.15, 0.15, size=self._base_masses.shape)
-        self.model.body_mass[:] = self._base_masses * mass_scale
-
-        # Floor friction ×0.8–2.0
-        # Geom 0 is typically the floor in Go1 models; randomize all static geoms
-        friction_scale = rng.uniform(0.8, 2.0)
-        self.model.geom_friction[:, 0] *= friction_scale
-
-        # Joint damping ±20%
-        damp_scale = 1.0 + rng.uniform(-0.20, 0.20, size=self._base_damping.shape)
-        self.model.dof_damping[:] = self._base_damping * damp_scale
-
-        # Joint armature ±20%
-        arm_scale = 1.0 + rng.uniform(-0.20, 0.20, size=self._base_armature.shape)
-        self.model.dof_armature[:] = np.maximum(self._base_armature * arm_scale, 0.0)
-
-        # PD gain randomization ±15%
-        self.kp = self._base_kp * rng.uniform(0.85, 1.15)
-        self.kd = self._base_kd * rng.uniform(0.85, 1.15)
-
-        # Motor strength ±10%
-        self.max_torque = self._base_max_torque * rng.uniform(0.90, 1.10)
-
+    # ══════════════════════════════════════════════════════════════
+    #  Gymnasium API
+    # ══════════════════════════════════════════════════════════════
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -748,9 +667,6 @@ class MiniCheetahEnv(gym.Env):
         self._vx_ema = 0.0
         self._vy_ema = 0.0
         self._wz_ema = 0.0  # v31
-        self._wz_ema_slow = 0.0  # v31s4
-        self._vx_ema_fast = 0.0  # v31o
-        self._vy_ema_fast = 0.0  # v31o
         self._cpg_phase = 0.0
         self._last_mode_change_step = 0
         self._ep_reward_sum = 0.0
@@ -785,20 +701,12 @@ class MiniCheetahEnv(gym.Env):
         self.data.qpos[7:7 + NUM_JOINTS] = DEFAULT_STANCE
         mujoco.mj_forward(self.model, self.data)
 
-        # Apply domain randomization (mass, friction, damping, PD gains)
-        if self.randomize_domain:
-            self._apply_domain_randomization()
-        else:
-            # Restore base values when DR is off (e.g. eval/debug)
-            if self._base_masses is not None:
-                self.model.body_mass[:] = self._base_masses
-            if self._base_damping is not None:
-                self.model.dof_damping[:] = self._base_damping
-            if self._base_armature is not None:
-                self.model.dof_armature[:] = self._base_armature
-            self.kp = self._base_kp
-            self.kd = self._base_kd
-            self.max_torque = self._base_max_torque
+        # v23i9f: Bootstrap locomotion with initial forward velocity.
+        # Without CPG, policy has zero gradient from standing→walking.
+        # Give robot forward momentum so it must learn to step to stay upright.
+        if self.randomize_commands:
+            # Will be set after mode selection below, but set a default
+            pass
 
         self._initial_base_pos = self.data.qpos[:3].copy()
         # v31f: Track initial heading for drift termination
@@ -814,10 +722,7 @@ class MiniCheetahEnv(gym.Env):
             if self.forced_mode and self.forced_mode in SKILL_MODES:
                 self.command_mode = self.forced_mode
             else:
-                # v31s6c: More walk to prevent yaw regression under balanced training.
-                # At 30/30 walk/run, yaw collapsed 95%→39% in 100K steps.
-                # Give walk 40% for more yaw/lateral training signal.
-                mode_weights = [0.10, 0.40, 0.20, 0.30]
+                mode_weights = [0.15, 0.35, 0.25, 0.25]  # stand, walk, run, jump (v24: balanced, walk-heavy)
                 self.command_mode = str(rng.choice(SKILL_MODES, p=mode_weights))
             self._randomize_command_for_mode(rng)
             self.target_height = self._effective_target_height
@@ -833,38 +738,22 @@ class MiniCheetahEnv(gym.Env):
                     init_vx = float(rng.uniform(0.3, max(0.35, min(vx_cmd_abs, 1.0))))
                     self.data.qvel[0] = init_vx
                     self._vx_ema = init_vx * 0.5
-                    self._vx_ema_fast = init_vx * 0.5  # v31o
                 if vy_cmd_abs > 0.15:
                     # v30c: Bootstrap lateral velocity so policy experiences lateral motion
                     init_vy = float(rng.uniform(0.1, max(0.15, min(vy_cmd_abs, 0.5)))) * np.sign(self.command[1])
                     self.data.qvel[1] = init_vy
                     self._vy_ema = init_vy * 0.5
-                    self._vy_ema_fast = init_vy * 0.5  # v31o
                 wz_cmd_abs = abs(float(self.command[2]))
                 if wz_cmd_abs > 0.15:
                     # v30d: Bootstrap yaw angular velocity
                     init_wz = float(rng.uniform(0.1, max(0.15, min(wz_cmd_abs, 0.5)))) * np.sign(self.command[2])
                     self.data.qvel[5] = init_wz  # qvel[3:6] = angular velocity
                     self._wz_ema = init_wz * 0.5  # v31: bootstrap wz EMA too
-                    self._wz_ema_slow = init_wz * 0.3  # v31s4: bootstrap slow EMA
-
-        # v31s6g11: Mirror augmentation — 35% (was 20% in g10, 50% in g9).
-        # 20% insufficient: yaw gap re-diverged to 29pp at 3.3M.
-        # 50% too aggressive (walk_fwd 97→70%). 35% = compromise.
-        # Resuming from 3M checkpoint (already 20% mirror-adapted).
-        if self.randomize_commands:
-            self._mirror_lr = bool(rng.random() < 0.35)
-        else:
-            self._mirror_lr = False
 
         return self._get_obs(), {}
 
     def step(self, action: np.ndarray):
         action = np.clip(action, -1.0, 1.0).astype(np.float32)
-
-        # v31s6g9: Mirror augmentation — unmirror policy action to physical frame.
-        if self._mirror_lr:
-            action = action[_JOINT_MIRROR_IDX] * _JOINT_MIRROR_SIGN
 
         # Advance height control
         self._update_height_ramp()
@@ -877,9 +766,9 @@ class MiniCheetahEnv(gym.Env):
         # Action magnitude penalty (r_action_mag) keeps corrections small
         # unless they clearly improve tracking/stability. Residual RL approach.
         if self.command_mode == "walk":
-            action_scaled = action * 0.30  # v31s10g: overshoot fix (0.5→0.30)
+            action_scaled = action * 0.5  # v28: more authority for speed modulation (was 0.3)
         elif self.command_mode == "run":
-            action_scaled = action * 0.15  # v31s10g: overshoot fix (0.20→0.15)
+            action_scaled = action * 0.8  # v25: run needs more authority (ref=0.7 m/s, cmd up to 4.0)
         else:
             action_scaled = action * 0.5
 
@@ -917,7 +806,6 @@ class MiniCheetahEnv(gym.Env):
         self.prev_prev_action = self.prev_action.copy()
         self.prev_action = action.copy()
         self.step_count += 1
-        self._training_steps += 1  # v31m3: persistent counter for curriculum
 
         # Mid-episode command re-randomization (velocity/height only, keep mode)
         # v25: random duration [50, 1000] steps instead of fixed 200
@@ -1025,62 +913,37 @@ class MiniCheetahEnv(gym.Env):
         wz_cmd = float(self.command[2])
 
         # Any motion command needs a gait pattern for stepping
-        # v31s6g: Remove wz_cmd from gait activation — pure yaw gave +0.127 free wz
-        # from trot dynamics. Model must learn to step for yaw via residual actions.
-        cmd_mag = abs(vx_cmd) + abs(vy_cmd)
-        # v31s6g2: Provide minimal gait for pure yaw so model can discover stepping.
-        # Without this, pure yaw has zero reference and model stuck at 0%.
-        # 0.15 gives small steps (~30% of normal walk) — enough to learn from.
-        if cmd_mag < 0.05 and abs(wz_cmd) > 0.1:
-            cmd_mag = 0.15
-        elif cmd_mag < 0.05:
+        cmd_mag = abs(vx_cmd) + abs(vy_cmd) + abs(wz_cmd)
+        if cmd_mag < 0.05:
             return ref  # truly standing still
 
-        # v31q: Walk reference — moderate bootstrapping + action effort penalty.
-        # base_amp=0.32 → vx=0.55 (97% free lunch), 0.0 → policy can't discover gait.
-        # base_amp=0.10 + effort penalty: reference provides stepping motion,
-        # penalty makes zero-action unprofitable. Policy must ACTIVELY walk.
+        # v31d: Mode-dependent gait amplitude
+        # Walk base=0.32 (normalized at 0.5 m/s), Run base=0.45 (normalized at 2.0 m/s)
+        # BUG FIX: v31b/c had extra 0.30 multiplier → amp_hip=0.096 for walk_fwd
+        # This made forward reference WEAKER than lateral lat_boost=0.15!
         is_run = self.command_mode == "run"
         vx_norm = 2.0 if is_run else 0.5
-        base_amp = 0.40 if is_run else 0.10  # v31s10g: reduced run base_amp
+        base_amp = 0.45 if is_run else 0.32
         vx_scale = min(1.0, abs(vx_cmd) / vx_norm)
-        has_lat = abs(vy_cmd) > 0.05  # v31s6g: remove wz_cmd — yaw via residual actions only
+        has_lat_yaw = abs(vy_cmd) > 0.05 or abs(wz_cmd) > 0.05
         speed_scale = base_amp * vx_scale
-        # v31r: Minimum gait amplitude floor for forward/backward walking.
-        # Below speed_scale≈0.08, MuJoCo trot bifurcates to zero velocity.
-        # cmd=0.3 gets speed_scale=0.06 (dead). Floor=0.10 gives vx=0.150 (50% baseline).
-        # Policy learns remaining 50%. Backward also benefits (vx=-0.220→-0.345).
-        if abs(vx_cmd) > 0.05 and not is_run:
-            speed_scale = max(speed_scale, 0.10)
-        # v31s10g11: Run speed_scale floor 0.15 (proven) + cap 0.20 (stability).
-        # Data: speed_scale>0.22 destabilizes, 0.20 is the sweet spot (run_1.0=108%).
-        # Cap prevents instability at run_1.2+ while policy uses residuals for speed.
-        if abs(vx_cmd) > 0.05 and is_run:
-            speed_scale = max(speed_scale, 0.15)
-            speed_scale = min(speed_scale, 0.20)
-        # v31s10g: yaw needs stepping to produce differential torque.
-        # Without this floor, pure yaw gets amp_hip=0 → zero yaw reference.
-        if abs(wz_cmd) > 0.1:
-            speed_scale = max(speed_scale, 0.12)
 
         t = self.step_count * self.dt
-        # v31s6: Run uses higher gait frequency for stability at speed.
-        # Real quadrupeds increase stride frequency when running.
-        freq = 4.5 if is_run else 3.0
+        freq = 3.0   # Hz
         phase = 2.0 * math.pi * freq * t
         knee_lead = math.pi / 3.0
-        # v31r: rear_scale=1.0 for pure yaw to eliminate positive yaw bias.
-        # Walk forward keeps 1.3 (natural gait). Pure yaw/lateral/run: symmetric.
-        has_fwd = abs(vx_cmd) > 0.05
-        rear_scale = 1.0 if is_run else 1.3  # v31s6g: remove wz_cmd leak
+        # v31g: Symmetric for run (rear_scale=1.3 created 0.76 rad/s yaw drift).
+        # Walk keeps asymmetry — policy learns to compensate at walk amplitudes.
+        rear_scale = 1.0 if is_run else 1.3
 
-        # v31r: hip=0.03 for pure lateral AND pure yaw.
-        # Old: yaw used hip=0.10 → created vx=0.314 forward bias at zero-action.
-        # Fix: hip=0.03 eliminates 82% of forward bias (vx=0.056), yaw preserved (96%).
-        # Forward walking (vx_cmd>0) keeps hip=0.10 for stride authority.
-        needs_fwd_hip = has_fwd
-        lat_boost_hip = 0.10 if (has_lat and needs_fwd_hip) else (0.03 if has_lat else 0.0)
-        lat_boost_knee = 0.20 if has_lat else 0.0
+        # v31f: Minimal hip for pure lateral to eliminate forward bias while keeping stability.
+        # v31e lat_boost_hip=0.10 created vx=+0.307 forward bias for lat_R.
+        # Zero hip fixed lat_R but destabilized lat_L (early termination).
+        # Compromise: tiny hip=0.03 for stepping stability, no significant forward thrust.
+        # Yaw keeps 0.10 hip (differential stride needs hip swing).
+        needs_hip_stride = abs(vx_cmd) > 0.05 or abs(wz_cmd) > 0.1
+        lat_boost_hip = 0.10 if (has_lat_yaw and needs_hip_stride) else (0.03 if has_lat_yaw else 0.0)
+        lat_boost_knee = 0.20 if has_lat_yaw else 0.0
         amp_hip = max(lat_boost_hip, speed_scale)
         amp_knee = max(lat_boost_knee, speed_scale * 1.33)
 
@@ -1088,31 +951,19 @@ class MiniCheetahEnv(gym.Env):
         fwd_sign = -1.0 if vx_cmd < -0.05 else 1.0
 
         # v31e: Boosted abduction gain slightly to compensate for reduced hip
-        # v31s6g11: SYMMETRIC lateral gain — mirror augmentation requires consistent
-        # reference for mirrored/original episodes. Old asymmetric (0.55/0.40) gave
-        # 98%/89% but 0.55 was AT stability boundary (falls with zero action!).
-        # 0.45 gives 91% both directions — safe base for policy to learn on top.
-        abd_lat_amp = -vy_cmd * 0.45
+        abd_lat_amp = -vy_cmd * 0.40
 
         # v31b: Yaw via differential stride
         # Right-bigger creates positive wz (empirically verified)
         # v31e: Asymmetric gain — negative wz needs more diff to overcome rear_scale bias
-        # v31r: yaw_gain boosted 0.50→0.90 to compensate for reduced hip amplitude.
-        # v31s6d: Set to 0 — gait oscillation std=0.69 gave 50%+ free yaw reward.
-        # At gain=0.90, zero-action wz_mean=0.36 → r_wz_track=57%. Total free lunch 50%+.
-        # At gain=0, zero-action wz_mean=0.06 → free lunch <10%. Model must learn yaw
-        # through residual actions. Only affects walk episodes with wz_cmd≠0.
-        # v31s10g7: ASYMMETRIC yaw gain — negative yaw overshoots 170% at gain=0.90.
-        # yaw+ converges to 91-104% at 0.90 (perfect). yaw- physics creates more torque.
-        # Reduce negative gain: 0.90*(100/170)≈0.53, conservative=0.60
-        yaw_gain = 0.90 if wz_cmd >= 0 else 0.60
+        yaw_gain = 0.50  # v31j: symmetric (was 0.40/0.55 — left turns weaker than right)
         yaw_diff = min(0.5, max(-0.5, wz_cmd * yaw_gain))
 
         # v31k: Constant forward command bias at gain=0.15.
         # v31j showed gain=0.15 + overshoot penalty → walk_fwd=0.474 (95%) at 600K.
         # gain=0.10 too weak (walk_fwd died). Feedback bias created stable equilibrium at 0.
         # Solution: keep strong constant bias + overshoot penalty + more forward sampling (35%).
-        hip_fwd_bias = vx_cmd * 0.10  # v31s6g: reduced walk speed ~25% per user request
+        hip_fwd_bias = vx_cmd * 0.15
 
         for hip_i, knee_i, abd_i, is_diag1, is_rear, is_left in [
             (1, 2, 0, True, False, False),    # FR (right)
@@ -1160,7 +1011,34 @@ class MiniCheetahEnv(gym.Env):
 
         return corr
 
+    # Dead code below from old CPG (kept for reference)
+    def _old_cpg_code(self):
+        pass
+        cpg = np.zeros(12)  # placeholder
 
+        # Scale sagittal CPG based on command activity
+        fwd_activity = abs(float(self.command[0])) + abs(float(self.command[2])) * 0.15
+        fwd_scale_raw = min(fwd_activity / 0.3, 1.0)
+        any_cmd = abs(float(self.command[0])) + abs(float(self.command[1])) + abs(float(self.command[2])) * 0.3
+        lat_cmd = abs(float(self.command[1]))
+        base_floor = 0.3 if any_cmd > 0.05 else 0.0
+        if lat_cmd > 0.1:
+            base_floor = max(base_floor, min(lat_cmd / 0.3, 1.0) * 0.6)
+        fwd_scale = max(base_floor, fwd_scale_raw)
+
+        for i in [1, 2, 4, 5, 7, 8, 10, 11]:
+            cpg[i] *= fwd_scale
+
+        # Yaw: differential abductor lean
+        wz_abd = 0.06 * min(abs(float(self.command[2])) / 0.5, 1.0)
+        if abs(float(self.command[2])) > 0.05:
+            yaw_sign = 1.0 if float(self.command[2]) > 0 else -1.0
+            cpg[0]  += wz_abd * yaw_sign
+            cpg[3]  -= wz_abd * yaw_sign
+            cpg[6]  += wz_abd * yaw_sign
+            cpg[9]  -= wz_abd * yaw_sign
+
+        return cpg
 
     # ══════════════════════════════════════════════════════════════
     #  Observations
@@ -1275,72 +1153,8 @@ class MiniCheetahEnv(gym.Env):
         # Manual normalization (fixed scales, no running stats)
         obs = obs / OBS_SCALES
 
-        # Proprioceptive sensor noise when domain randomization is active.
-        # Applied only to joints + velocities + IMU range (first 75 dims).
-        # Commands, skill one-hot, and heightmap are not noised.
-        # σ=0.02 is standard (CHRL, RMA, DreamWaQ conventions).
-        if self.randomize_domain:
-            noise = self.np_random.normal(0.0, 0.02, size=75).astype(np.float32)
-            obs[:75] += noise
-
+        # NO sensor noise — perfect sensors for advanced training
         return obs
-
-    def _mirror_obs(self, obs: np.ndarray) -> np.ndarray:
-        """Left-right mirror observation for bilateral symmetry enforcement.
-
-        Swaps FR↔FL and RR↔RL joints, negates lateral/yaw quantities,
-        flips heightmap columns. Applied after OBS_SCALES normalization
-        (all mirrored groups have uniform scales, so order is safe).
-        """
-        m = obs.copy()
-
-        # qpos [0:12]: swap FR↔FL, RR↔RL, negate abd
-        m[0:12] = obs[_JOINT_MIRROR_IDX] * _JOINT_MIRROR_SIGN
-
-        # qvel [12:24]: same permutation and sign
-        m[12:24] = obs[12 + _JOINT_MIRROR_IDX] * _JOINT_MIRROR_SIGN
-
-        # base_linvel [24:27]: negate vy (lateral)
-        m[25] = -obs[25]
-
-        # base_angvel [27:30]: negate wx (roll) and wz (yaw)
-        m[27] = -obs[27]
-        m[29] = -obs[29]
-
-        # gravity_body [30:33]: negate gy (lateral component)
-        m[31] = -obs[31]
-
-        # prev_action [33:45]: joint mirror
-        m[33:45] = obs[33 + _JOINT_MIRROR_IDX] * _JOINT_MIRROR_SIGN
-
-        # command [45:49]: negate vy_cmd (46), negate wz_cmd (47)
-        m[46] = -obs[46]
-        m[47] = -obs[47]
-
-        # skill_onehot [49:53]: unchanged
-
-        # cmd_decomp [53:59]: negate sin(heading)(54), negate lat_sign(58)
-        m[54] = -obs[54]
-        m[58] = -obs[58]
-
-        # base_height [59:60]: unchanged
-
-        # foot_contacts [60:64]: swap FR↔FL, RR↔RL
-        m[60:64] = obs[60 + _FOOT_MIRROR_IDX]
-
-        # cpg_phase [64:66]: negate both (shift by π for trot diagonal swap)
-        m[64:66] = -obs[64:66]
-
-        # height_control [66:71]: unchanged
-
-        # foot_heights [71:75]: swap FR↔FL, RR↔RL
-        m[71:75] = obs[71 + _FOOT_MIRROR_IDX]
-
-        # heightmap [75:196]: flip columns (lateral flip on 11×11 grid)
-        hm = obs[75:196].reshape(HEIGHTMAP_ROWS, HEIGHTMAP_COLS)
-        m[75:196] = hm[:, ::-1].flatten()
-
-        return m
 
     # ══════════════════════════════════════════════════════════════
     #  Reward
@@ -1472,12 +1286,6 @@ class MiniCheetahEnv(gym.Env):
         self._vx_ema = (1 - _EMA_ALPHA) * self._vx_ema + _EMA_ALPHA * float(base_linvel[0])
         self._vy_ema = (1 - _EMA_ALPHA) * self._vy_ema + _EMA_ALPHA * float(base_linvel[1])
         self._wz_ema = (1 - _EMA_ALPHA) * self._wz_ema + _EMA_ALPHA * float(base_angvel[2])  # v31
-        _EMA_ALPHA_SLOW = 0.02  # v31s4: ~50-step window for drift detection
-        self._wz_ema_slow = (1 - _EMA_ALPHA_SLOW) * self._wz_ema_slow + _EMA_ALPHA_SLOW * float(base_angvel[2])
-        # v31o: Fast EMA for overshoot detection (α=0.3, ~3-step window)
-        _EMA_ALPHA_FAST = 0.3
-        self._vx_ema_fast = (1 - _EMA_ALPHA_FAST) * self._vx_ema_fast + _EMA_ALPHA_FAST * float(base_linvel[0])
-        self._vy_ema_fast = (1 - _EMA_ALPHA_FAST) * self._vy_ema_fast + _EMA_ALPHA_FAST * float(base_linvel[1])
         r_fwd_vel = 0.0
         if mode in ("walk", "run"):
             if abs(vx_cmd) > 0.05:
@@ -1641,11 +1449,7 @@ class MiniCheetahEnv(gym.Env):
             # Instantaneous vy/wz reward let policy oscillate for brief spikes.
             # EMA forces SUSTAINED motion to earn reward.
             sigma_vy_track = max(LATERAL_SIGMA, abs(vy_cmd) * 0.15)  # v31: tighter (was 0.3)
-            # v31s10g15: tighter wz sigma floor 0.08→0.05 for walk mode
-            # At 0.08, yaw-=109% gets 97.5% reward — no gradient. At 0.05, gets 96.0%.
-            # yaw+=89% at 0.05: 94.1% reward — stronger gradient toward 100%.
-            _wz_sigma_floor = 0.05 if mode == "walk" else HEADING_SIGMA
-            sigma_wz_track = max(_wz_sigma_floor, abs(wz_cmd) * 0.15)
+            sigma_wz_track = max(HEADING_SIGMA, abs(wz_cmd) * 0.15)  # v31: tighter (was 0.3)
             r_vx_track = math.exp(-(vx - vx_cmd)**2 / TRACKING_SIGMA)
             r_vy_track = math.exp(-(vy_ema_val - vy_cmd)**2 / sigma_vy_track)  # v31: EMA
             r_wz_track = math.exp(-(wz_ema_val - wz_cmd)**2 / sigma_wz_track)  # v31: EMA
@@ -1666,17 +1470,14 @@ class MiniCheetahEnv(gym.Env):
             # small wz/vy oscillation (~0.1) that must NOT be penalized.
             # Without dead zone: policy learns standing still is safer than walking.
             if mode in ("walk", "run"):
-                wz_deadzone = 0.05  # v31s5: tightened (0.10→0.05) — wz=0.3 drift in fwd walk
-                vy_deadzone = 0.04  # v31s4: tightened from 0.06
+                wz_deadzone = 0.12  # natural gait yaw oscillation
+                vy_deadzone = 0.06  # natural gait lateral oscillation
             else:
                 wz_deadzone = 0.0
                 vy_deadzone = 0.0
             r_vx_unwanted = abs(vx_ema) if abs(vx_cmd) < 0.05 else 0.0
             r_vy_unwanted = max(0.0, abs(vy_ema_val) - vy_deadzone) if abs(vy_cmd) < 0.05 else 0.0
-            # v31s4b: Use SLOW wz EMA (α=0.02) for unwanted detection
-            # Fast EMA (α=0.1) oscillates with natural gait → penalizes walking
-            # Slow EMA converges to mean yaw → catches sustained turning only
-            r_wz_unwanted = max(0.0, abs(self._wz_ema_slow) - wz_deadzone) if abs(wz_cmd) < 0.05 else 0.0
+            r_wz_unwanted = max(0.0, abs(wz_ema_val) - wz_deadzone) if abs(wz_cmd) < 0.05 else 0.0
 
             # Linear velocity bonus (provides monotonic gradient from standing)
             # Capped at command speed — no reward for overshooting
@@ -1687,125 +1488,72 @@ class MiniCheetahEnv(gym.Env):
             else:
                 r_vx_lin = 0.0
 
-            # v31s6g12: Tent-shaped lateral linear reward.
-            # Below cmd: linear up (gradient to increase). At cmd: peak 1.0.
-            # Above cmd: linear down (gradient to decrease). Zero at 2x cmd.
-            # OLD: flat 1.0 above cmd → no penalty for 133% overshoot.
-            # NEW: at 133%, tent=0.67 (was 1.0). Strong gradient toward 100%.
+            # v29: Lateral linear bonus (monotonic gradient for vy commands)
             vy_ema = self._vy_ema
             if vy_cmd > 0.05:
-                ratio = vy_ema / max(vy_cmd, 0.1)
-                r_vy_lin = max(0.0, min(ratio, 2.0 - ratio))
+                r_vy_lin = max(0.0, min(vy_ema, vy_cmd)) / max(vy_cmd, 0.1)
             elif vy_cmd < -0.05:
-                ratio = -vy_ema / max(-vy_cmd, 0.1)
-                r_vy_lin = max(0.0, min(ratio, 2.0 - ratio))
+                r_vy_lin = max(0.0, min(-vy_ema, -vy_cmd)) / max(-vy_cmd, 0.1)
             else:
                 r_vy_lin = 0.0
 
-            # v31s6e: SIGNED yaw linear reward — provides gradient for WRONG direction.
-            # Old code used max(0,...) which clipped negative → zero gradient when
-            # turning wrong way. Model collapsed to right-turn bias (yaw_L=-39%).
-            # Signed version: negative reward for wrong direction, positive for correct.
-            # Clamped to [-1, 1] to prevent excessive penalties from large wz_ema.
-            wz_ema_for_lin = self._wz_ema
-            if wz_cmd > 0.05:
-                r_wz_lin = max(-1.0, min(wz_ema_for_lin, wz_cmd)) / max(wz_cmd, 0.1)
-            elif wz_cmd < -0.05:
-                r_wz_lin = max(-1.0, min(-wz_ema_for_lin, -wz_cmd)) / max(-wz_cmd, 0.1)
-            else:
-                r_wz_lin = 0.0
-
-            # v31o: Overshoot penalties — use FAST EMA (α=0.3, ~3-step window).
-            # History: slow EMA (α=0.1, v31m) → sprint exploit (20-step lag).
-            #          Instantaneous (v31n) → model froze (gait-cycle spikes).
-            #          Fast EMA: catches sustained sprints in 2-3 steps, ignores
-            #          single-step gait oscillation. Best of both worlds.
-            _VX_OVERSHOOT_DZ = 1.20  # vx: only penalize when >120%
-            # v31s6g11: vy overshoot deadzone 1.20→1.05 (match wz).
-            # At 150% lat overshoot: old penalty=0, new=max(0, 0.45-0.315)=0.135
-            _VY_OVERSHOOT_DZ = 1.05
-            vx_fast = self._vx_ema_fast
-            vy_fast = self._vy_ema_fast
+            # v31j: Overshoot penalties — penalize going faster than commanded.
+            # v31k: Added 20% dead zone. Without it, EMA noise at correct speed
+            # triggered penalties, teaching model "safer to not move at all."
+            # walk_fwd went from vx=1.35 (v31i) to vx=0.08 (v31j 1200K) — DEAD.
+            _OVERSHOOT_DEADZONE = 1.20  # only penalize when >120% of commanded
             if abs(vx_cmd) > 0.05:
-                r_vx_overshoot = max(0.0, abs(vx_fast) - _VX_OVERSHOOT_DZ * abs(vx_cmd))
+                r_vx_overshoot = max(0.0, abs(vx_ema) - _OVERSHOOT_DEADZONE * abs(vx_cmd))
             else:
                 r_vx_overshoot = 0.0
             if abs(vy_cmd) > 0.05:
-                r_vy_overshoot = max(0.0, abs(vy_fast) - _VY_OVERSHOOT_DZ * abs(vy_cmd))
+                r_vy_overshoot = max(0.0, abs(vy_ema) - _OVERSHOOT_DEADZONE * abs(vy_cmd))
             else:
                 r_vy_overshoot = 0.0
-            # v31s10g6: yaw overshoot penalty — tighter deadzone (1.15x vs 1.2x for vx/vy)
-            wz_fast = self._wz_ema
-            # v31s10g15: tighter wz deadzone 1.15→1.05 — yaw- at 109% was BELOW 1.15 deadzone (zero penalty!)
-            _WZ_OS_DEADZONE = 1.05
-            if abs(wz_cmd) > 0.1:
-                r_wz_overshoot = max(0.0, abs(wz_fast) - _WZ_OS_DEADZONE * abs(wz_cmd))
-            else:
-                r_wz_overshoot = 0.0
 
             if mode == "run":
                 # v31m: Use EMA for vx tracking (consistent with walk mode fix)
-                # v31s6: wider sigma (0.50→0.80) — model barely runs (vx=0.14).
-                # At σ=0.50, exp(-(0-0.8)²/0.5)=0.28. At σ=0.80, exp(-(0-0.8)²/0.8)=0.45.
-                # More reward for partial achievement → faster learning.
-                _RUN_SIGMA = 0.80
-                r_vx_track_run = math.exp(-(vx_ema - vx_cmd)**2 / _RUN_SIGMA)
+                r_vx_track_run = math.exp(-(vx_ema - vx_cmd)**2 / TRACKING_SIGMA)
                 r_vx_track_run *= vx_cmd_scale
                 r_vx_var = (vx - vx_ema)**2 if abs(vx_cmd) > 0.05 else 0.0
 
-                # v31s2: Stall penalty — model learned to fight reference and stand still.
-                # Zero-action run gives vx=1.54 but falls at step 188. Model prefers to
-                # stand (vx=0, survives 500). This penalty makes stalling actively costly.
-                # Activates when moving < 30% of commanded speed. Scales with deficit.
-                if abs(vx_cmd) > 0.3:
-                    _vx_deficit = max(0.0, 0.3 * abs(vx_cmd) - abs(vx_ema))
-                    r_stall = _vx_deficit / abs(vx_cmd)  # 0..0.3, peaks when stationary
-                else:
-                    r_stall = 0.0
-
                 total = (
-                    4.0 * r_vx_track_run     # v31s2: boosted tracking (was 3.0)
-                    + 3.0 * r_vx_lin         # v31s2: boosted gradient (was 1.5)
+                    3.0 * r_vx_track_run     # v31m: EMA-based tracking
+                    + 1.5 * r_vx_lin         # monotonic speed bonus
                     + 1.0 * r_vy_track       # lateral tracking
                     + 0.5 * r_vy_lin         # lateral gradient
-                    + 3.0 * r_wz_track       # v31s6g: boosted yaw (1→3)
-                    + 2.0 * r_wz_lin         # v31s6g: signed directional gradient
+                    + 1.0 * r_wz_track       # yaw tracking
                     + 0.5 * r_gait           # gait quality
-                    - 0.8 * r_orientation    # v31s8: moderate (was 1.5) — action scale fix handles root cause
-                    - 0.2 * r_ang_vel_xy     # v31s8: moderate (was 0.5) — action scale fix handles root cause
-                    - 0.05 * r_lin_vel_z     # v31s8: original value restored
+                    - 0.3 * r_orientation    # stay upright
+                    - 0.05 * r_ang_vel_xy    # minimal wobble penalty
+                    - 0.05 * r_lin_vel_z     # minimal bounce penalty
                     - 0.01 * r_smooth        # action smoothness
                     - 2.0 * r_vx_unwanted    # anti-forward-bias
                     - 1.5 * r_vy_unwanted    # anti-lateral-drift
-                    - 8.0 * r_wz_unwanted    # v31s6: boosted (2→8) — robot spinning in run mode
+                    - 2.0 * r_wz_unwanted    # anti-spin
                     - 0.5 * r_heading_drift  # heading correction
                     - 2.0 * r_vx_overshoot   # speed cap
-                    - 5.0 * r_vy_overshoot   # v31s6g11: boosted -1.5→-5.0 (match wz). lat+ stuck at 152%
-                    - 5.0 * r_wz_overshoot   # v31s10g6: boosted from -2
+                    - 1.5 * r_vy_overshoot   # lateral overshoot
                     - 2.0 * r_vx_var         # v31m: velocity smoothness
-                    - 5.0 * r_stall          # v31s2: anti-stall penalty
                 )
                 scaled_components = {
-                    "r_vx_track": 4.0 * r_vx_track_run,
+                    "r_vx_track": 3.0 * r_vx_track_run,
                     "r_vy_track": 1.0 * r_vy_track,
                     "r_vy_lin": 0.5 * r_vy_lin,
-                    "r_wz_track": 3.0 * r_wz_track,
-                    "r_wz_lin": 2.0 * r_wz_lin,
-                    "r_vx_lin": 3.0 * r_vx_lin,
+                    "r_wz_track": 1.0 * r_wz_track,
+                    "r_vx_lin": 1.5 * r_vx_lin,
                     "r_gait": 0.5 * r_gait,
-                    "r_orientation": -0.8 * r_orientation,
-                    "r_ang_vel_xy": -0.2 * r_ang_vel_xy,
+                    "r_orientation": -0.3 * r_orientation,
+                    "r_ang_vel_xy": -0.05 * r_ang_vel_xy,
                     "r_lin_vel_z": -0.05 * r_lin_vel_z,
                     "r_smooth": -0.01 * r_smooth,
                     "r_vx_unwanted": -2.0 * r_vx_unwanted,
                     "r_vy_unwanted": -1.5 * r_vy_unwanted,
-                    "r_wz_unwanted": -8.0 * r_wz_unwanted,
+                    "r_wz_unwanted": -2.0 * r_wz_unwanted,
                     "r_heading_drift": -0.5 * r_heading_drift,
                     "r_vx_overshoot": -2.0 * r_vx_overshoot,
-                    "r_vy_overshoot": -5.0 * r_vy_overshoot,
-                    "r_wz_overshoot": -5.0 * r_wz_overshoot,
+                    "r_vy_overshoot": -1.5 * r_vy_overshoot,
                     "r_vx_var": -2.0 * r_vx_var,
-                    "r_stall": -5.0 * r_stall,
                     "r_vx_ema": vx_ema,
                     "r_total": total,
                 }
@@ -1816,11 +1564,7 @@ class MiniCheetahEnv(gym.Env):
                 # Instantaneous tracking penalizes this → r_vx_track=1.73/5.0 (35% efficient).
                 # EMA smooths oscillation → r_vx_track≈4.71/5.0 (94% efficient).
                 # Consistent with vy/wz tracking which already use EMA (lines 1454-1455).
-                # v31m3: Adaptive sigma — tighter for smaller commands.
-                # At sigma=0.10, walk_back (vx_cmd=-0.3) gets 40.7% free tracking
-                # standing still. Adaptive: sigma = max(0.02, 0.40*vx_cmd²).
-                # vx_cmd=0.5: sigma=0.10 (unchanged). vx_cmd=0.3: sigma=0.036 (8.2% free).
-                walk_sigma = max(0.02, 0.40 * vx_cmd * vx_cmd)
+                walk_sigma = 0.10
                 r_vx_track_walk = math.exp(-(vx_ema - vx_cmd)**2 / walk_sigma)
                 r_vx_track_walk *= vx_cmd_scale  # gate for commanded DOF
 
@@ -1860,54 +1604,46 @@ class MiniCheetahEnv(gym.Env):
                 r_vx_var = (vx - vx_ema)**2 if abs(vx_cmd) > 0.05 else 0.0
                 r_vy_var = (vy - vy_ema_val)**2 if abs(vy_cmd) > 0.05 else 0.0
 
-                # v31q: Simplified walk reward — fixes "penalty trap" from v31p.
-                # Previous: 15 terms, heavy penalties → sprint then freeze.
-                # Now: tracking dominant + moderate overshoot + effort penalty.
-                # Reference base_amp=0.10 for exploration bootstrapping.
-                # Effort penalty offsets free lunch from reference at zero action.
-                # At zero action: effort_penalty ≈ -4.0, tracking ≈ +3.5 → net ≈ -0.5
-                # At active walk: effort_penalty ≈ 0.0, tracking ≈ 8.0 → net ≈ 13.0
-                action_norm_sq = float(np.sum(action**2))
-                cmd_mag = abs(vx_cmd) + abs(vy_cmd) + abs(wz_cmd)  # KEEP wz for effort penalty
-                # Only penalize inaction when velocity is commanded (not crouch)
-                r_effort = math.exp(-action_norm_sq / 0.5) if cmd_mag > 0.05 else 0.0
+                # v31l: Restored r_vx_lin (removing it made walk_fwd learn nothing — r/step=-4.61).
+                # Sprint exploit fixed by strong overshoot penalty -5.0 instead.
                 total = (
-                    10.0 * r_vx_track_walk    # v31s6g10: boosted 8→10 — walk_fwd dropped 97%→70% with mirror
-                    + 4.0 * r_vx_lin         # v31s6g10: boosted 3→4 — stronger forward gradient
-                    + 3.0 * r_vy_track       # EMA-based lateral tracking
+                    8.0 * r_vx_track_walk    # v31m2: boosted 5→8 (walk_fwd r/step=0.89 vs stand=7.31)
+                    + 2.0 * r_vx_lin         # monotonic forward gradient
+                    + 3.0 * r_vy_track       # EMA-based (anti-oscillation)
                     + 2.0 * r_vy_lin         # monotonic lateral gradient
-                    + 12.0 * r_wz_track      # v31s6g: boosted (10→12) — yaw 95%→66% gradient imbalance vs vx (11/step vs 5.5)
-                    + 10.0 * r_wz_lin         # v31s10g5: reduced 15→10 — overshoot fix (15 gave 173% yaw-)
+                    + 2.0 * r_wz_track       # EMA-based (anti-oscillation)
                     + 2.0 * r_height_walk    # height tracking (crouch)
                     + 0.5 * r_gait           # gait quality
                     - 0.1 * r_orientation    # prevent flipping only
                     - 0.02 * r_smooth        # action smoothness
-                    - 2.0 * r_vx_overshoot   # prevent sprinting past target
-                    - 5.0 * r_vy_overshoot   # v31s6g11: boosted -1.5→-5.0 (match wz). lat+ stuck at 152%
-                    - 15.0 * r_wz_overshoot  # v31s10g15: boosted -10→-15, deadzone 1.05x
-                    - 3.0 * r_vx_unwanted    # v31s3: boosted from 1.0 — pure lat/yaw had vx=+0.15 drift
-                    - 1.5 * r_vy_unwanted    # v31s10g: moderate drift penalty (was 0.5)
-                    - 12.0 * r_wz_unwanted   # v31s5: boosted (8→12) to fix wz=0.3 drift in fwd walk
-                    - 2.5 * r_effort         # penalize inaction (offsets reference free lunch)
+                    - 3.0 * r_vx_unwanted    # anti-forward-bias
+                    - 2.5 * r_vy_unwanted    # anti-lateral-drift
+                    - 4.0 * r_wz_unwanted    # anti-spin (dead zone softens)
+                    - 1.0 * r_heading_drift  # heading correction
+                    - 8.0 * r_vx_overshoot   # v31m2: scaled proportional to tracking (5→8)
+                    - 1.5 * r_vy_overshoot   # lateral overshoot
+                    - 3.0 * r_vx_var         # v31m: velocity smoothness (anti-lurch)
+                    - 2.0 * r_vy_var         # v31m: lateral smoothness
                 )
                 scaled_components = {
-                    "r_vx_track": 10.0 * r_vx_track_walk,
-                    "r_vx_lin": 4.0 * r_vx_lin,
+                    "r_vx_track": 8.0 * r_vx_track_walk,
+                    "r_vx_lin": 2.0 * r_vx_lin,
                     "r_vy_track": 3.0 * r_vy_track,
                     "r_vy_lin": 2.0 * r_vy_lin,
-                    "r_wz_track": 12.0 * r_wz_track,
-                    "r_wz_lin": 10.0 * r_wz_lin,
+                    "r_wz_track": 2.0 * r_wz_track,
                     "r_height_walk": 2.0 * r_height_walk,
                     "r_gait": 0.5 * r_gait,
                     "r_orientation": -0.1 * r_orientation,
                     "r_smooth": -0.02 * r_smooth,
-                    "r_vx_overshoot": -2.0 * r_vx_overshoot,
-                    "r_vy_overshoot": -5.0 * r_vy_overshoot,
-                    "r_wz_overshoot": -15.0 * r_wz_overshoot,
                     "r_vx_unwanted": -3.0 * r_vx_unwanted,
-                    "r_vy_unwanted": -1.5 * r_vy_unwanted,
-                    "r_wz_unwanted": -12.0 * r_wz_unwanted,
-                    "r_effort": -2.5 * r_effort,
+                    "r_vy_unwanted": -2.5 * r_vy_unwanted,
+                    "r_wz_unwanted": -4.0 * r_wz_unwanted,
+                    "r_heading_drift": -1.0 * r_heading_drift,
+                    "r_vx_overshoot": -8.0 * r_vx_overshoot,
+                    "r_vy_overshoot": -1.5 * r_vy_overshoot,
+                    "r_vx_var": -3.0 * r_vx_var,
+                    "r_vy_var": -2.0 * r_vy_var,
+                    "r_vx_ema": vx_ema,
                     "r_total": total,
                 }
         elif mode == "jump":
@@ -1949,9 +1685,6 @@ class MiniCheetahEnv(gym.Env):
                 scaled_components[k] = scaled
                 total += scaled
 
-        # v31p: Mode-level normalization — equalize reward magnitude across modes
-        _mode_scale = MODE_REWARD_SCALE.get(mode, 1.0)
-        total *= _mode_scale
         scaled_components["r_total"] = total
         self._last_reward_components = scaled_components
         return float(total)
@@ -1972,12 +1705,7 @@ class MiniCheetahEnv(gym.Env):
         height_above_terrain = base_z - terrain_h
 
         # Terminate if too low (fallen)
-        # v31s6: Run mode uses tighter threshold (0.12 vs 0.05).
-        # Robot survives at h=0.177 in "half-fallen" state getting huge negative
-        # rewards → model learns to avoid running. Terminate earlier = shorter
-        # bad episodes = faster learning of stable gaits.
-        _min_h = 0.12 if self.command_mode == "run" else 0.05
-        if height_above_terrain < _min_h:
+        if height_above_terrain < 0.05:
             return True
 
         # Terminate if too tilted (>60° from vertical)
@@ -2156,63 +1884,44 @@ class MiniCheetahEnv(gym.Env):
         mode = self.command_mode
         if mode == "stand":
             vx, vy, wz = 0.0, 0.0, 0.0
-            # v31s3: Biased height sampling — 40% deep crouch, 60% normal range.
-            # Old uniform: only ~10% samples below 0.15 → policy barely learned crouch.
-            # Deep crouch needs more exposure to learn extreme postures.
-            if float(rng.uniform(0, 1)) < 0.40:
-                height = float(rng.uniform(HEIGHT_MIN, 0.15))  # deep crouch
-            else:
-                height = float(rng.uniform(0.15, HEIGHT_MAX))  # normal range
+            # Random height for stand (tests crouching in place)
+            height = float(rng.uniform(HEIGHT_MIN, HEIGHT_MAX))
             self._start_height_ramp(height)
         elif mode == "walk":
             # v31g: Dedicated sampling categories to prevent mode interference.
             # v31k: 35% pure forward (was 20% — walk_fwd regresses past 600K with 20%).
             roll = float(rng.uniform(0, 1))
-            if roll < 0.30:
-                # v31k: Pure forward/backward
+            if roll < 0.35:
+                # v31k: Pure forward/backward — increased from 20% to 35%
+                # At 20%, walk_fwd learned by 600K then died by 900K (mode interference).
+                # v31k: Extended backward range from -0.3 to -0.5 (was dead at cmd=-0.5)
                 vx = float(rng.uniform(-0.5, 1.0))
                 vy = float(rng.uniform(-0.05, 0.05))
                 wz = float(rng.uniform(-0.05, 0.05))
-            elif roll < 0.45:
+            elif roll < 0.55:
                 # Lateral-dominant: small forward + large lateral/yaw
                 vx = float(rng.uniform(0.1, 0.3))
                 vy = float(rng.uniform(-0.4, 0.4))
-                wz = float(rng.uniform(-0.8, 0.8))
+                wz = float(rng.uniform(-0.6, 0.6))
                 if abs(vy) < 0.15 and abs(wz) < 0.15:
                     vy = float(rng.choice([-0.3, 0.3]))
-            elif roll < 0.60:
+            elif roll < 0.70:
                 # Pure lateral (harder): vx≈0 but vy/wz large
                 vx = float(rng.uniform(-0.05, 0.1))
                 vy = float(rng.uniform(-0.4, 0.4))
-                wz = float(rng.uniform(-0.8, 0.8))
+                wz = float(rng.uniform(-0.6, 0.6))
                 if abs(vy) < 0.15 and abs(wz) < 0.15:
                     vy = float(rng.choice([-0.3, 0.3]))
-            elif roll < 0.72:
-                # v31s: Pure yaw — vx≈0, vy≈0, wz large
-                # Without this, yaw never gets isolated training signal.
-                vx = float(rng.uniform(-0.05, 0.05))
-                vy = float(rng.uniform(-0.05, 0.05))
-                wz = float(rng.uniform(-1.0, 1.0))
-                if abs(wz) < 0.2:
-                    wz = float(rng.choice([-0.8, 0.8]))
             else:
                 # General mixed commands
                 vx = float(rng.uniform(0.0, 1.20))
                 vy = float(rng.uniform(-0.4, 0.4))
-                wz = float(rng.uniform(-0.8, 0.8))
-            # v31s3: Biased height — 30% deep crouch for walk+crouch training
-            if float(rng.uniform(0, 1)) < 0.30:
-                height = float(rng.uniform(HEIGHT_MIN, 0.15))  # crouched walking
-            else:
-                height = float(rng.uniform(0.15, HEIGHT_MAX))  # normal walking
+                wz = float(rng.uniform(-0.6, 0.6))
+            # v31: full height range for crouched walking training
+            height = float(rng.uniform(HEIGHT_MIN, HEIGHT_MAX))
             self._start_height_ramp(height)
         elif mode == "run":
-            # v31s6: model barely does 0.14 m/s run. Lower targets to build gait first.
-            # 60% achievable [0.3,0.8], 40% stretch [0.8,1.5]
-            if rng.random() < 0.6:
-                vx = float(rng.uniform(0.3, 0.8))
-            else:
-                vx = float(rng.uniform(0.8, 1.5))
+            vx = float(rng.uniform(0.5, 4.0))  # v28: full speed range (real Go1 ≈ 3.7 m/s)
             vy = float(rng.uniform(-0.5, 0.5))
             wz = float(rng.uniform(-0.5, 0.5))
             # Run height is more restricted (can't run fully crouched)

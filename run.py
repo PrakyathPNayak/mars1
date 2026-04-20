@@ -27,6 +27,13 @@ def main():
     demo_p.add_argument("--record", action="store_true")
     demo_p.add_argument("--terminal-input", action="store_true",
                         help="Read keyboard from terminal instead of pynput")
+    # v24: Terrain options for interactive demo (default: challenging mixed terrain)
+    demo_p.add_argument("--terrain", type=str, default="mixed",
+                        help="Terrain type: flat, rough, slope_up, slope_down, "
+                             "stairs_up, stairs_down, gaps, stepping_stones, "
+                             "random_blocks, mixed (default: mixed)")
+    demo_p.add_argument("--terrain-difficulty", type=float, default=0.6,
+                        help="Terrain difficulty 0.0–1.0 (default: 0.6)")
 
     train_p = sub.add_parser("train", help="Train PPO policy")
     train_p.add_argument("--steps", type=int, default=5_000_000)
@@ -56,6 +63,8 @@ def main():
             run_interactive_demo(
                 use_trained=not args.no_policy,
                 use_terminal_input=args.terminal_input,
+                terrain_type=args.terrain,
+                terrain_difficulty=args.terrain_difficulty,
             )
 
     elif args.command == "train":

@@ -83,7 +83,7 @@ def run(checkpoint_path=None, use_policy=True):
             vx, vy, wz, mode = ctrl.get_command()
             # Handle crouch: set low height, map to stand/walk
             if mode == "crouch":
-                crouch_height = 0.15
+                crouch_height = 0.08  # v31s3: match HEIGHT_MIN for deep crouch
                 actual_mode = "walk" if (vx != 0 or vy != 0 or wz != 0) else "stand"
                 env.set_command(vx, vy, wz, actual_mode, height=crouch_height)
             else:

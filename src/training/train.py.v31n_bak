@@ -121,14 +121,10 @@ def train(args):
 
         def _on_step(self) -> bool:
             if self.num_timesteps % (self._save_freq * self.training_env.num_envs) < self.training_env.num_envs:
-                # Save latest (overwritten each checkpoint)
                 norm_path = os.path.join(self._save_path, "vec_normalize.pkl")
                 self.training_env.save(norm_path)
-                # v31s10d: Also save per-checkpoint pkl so old checkpoints remain evaluable
-                ts_path = os.path.join(self._save_path, f"vec_normalize_{self.num_timesteps}.pkl")
-                self.training_env.save(ts_path)
                 if self.verbose:
-                    print(f"  Saved VecNormalize stats: {norm_path} + {ts_path}")
+                    print(f"  Saved VecNormalize stats: {norm_path}")
             return True
 
     class ProgressLogger(BaseCallback):
@@ -183,10 +179,12 @@ def train(args):
 
     # ── Build vectorized environments ────────────────────────────────
     print(f"Creating {args.n_envs} parallel environments...")
-    # v31p: DummyVecEnv — SubprocVecEnv crashes at ~300K steps (IPC failure).
-    # DummyVecEnv is ~40% slower but 100% reliable.
-    base_env = DummyVecEnv([make_env(i) for i in range(args.n_envs)])
-    print("  Using DummyVecEnv (stable)")
+    try:
+        base_env = SubprocVecEnv([make_env(i) for i in range(args.n_envs)])
+        print("  Using SubprocVecEnv (parallel)")
+    except Exception as e:
+        print(f"  SubprocVecEnv failed ({e}), falling back to DummyVecEnv")
+        base_env = DummyVecEnv([make_env(i) for i in range(args.n_envs)])
     vec_env = VecMonitor(base_env, str(log_dir))
 
     # VecNormalize: v11 — obs normalization moved INTO the env (fixed scales,
@@ -280,15 +278,6 @@ def train(args):
             if args.finetune_lr is not None:
                 model.learning_rate = args.finetune_lr
                 print(f"  Fine-tune LR: {args.finetune_lr}")
-            # v31s5: Sync curriculum step counter so it doesn't reset on resume.
-            # Without this, curriculum restarts at walk-heavy phase → run/jump forget.
-            resumed_steps = model.num_timesteps
-            per_env_steps = resumed_steps // args.n_envs
-            base_env = vec_env.venv if hasattr(vec_env, 'venv') else vec_env
-            for i in range(args.n_envs):
-                env_i = base_env.envs[i]
-                env_i._training_steps = per_env_steps
-            print(f"  Curriculum synced: {resumed_steps:,} total → {per_env_steps:,} per-env steps")
     else:
         n_epochs = getattr(args, "n_epochs", 5)
         # n_steps=4096: long rollouts improve GAE advantage estimates for locomotion.
@@ -375,19 +364,19 @@ def train(args):
         "total_steps": args.total_steps,
         "n_envs": args.n_envs,
         "algorithm": "PPO",
-        "net_arch": "pi=[512,256,128], vf=[512,256,128]",
+        "net_arch": "pi=[2048,1024,512], vf=[2048,1024,512]",
         "activation_fn": "ELU",
         "lr": "3e-4 linear decay (min 1e-5)",
         "clip": 0.2,
-        "batch_size": 512,
+        "batch_size": 4096,
         "n_steps": 4096,
         "n_epochs": getattr(args, "n_epochs", 10),
-        "ent_coef": 0.0,
+        "ent_coef": 0.01,
         "log_std_init": -1.0,
         "ortho_init": True,
         "device": device,
         "robot": "Unitree Go1 (mujoco_menagerie)",
-        "vec_normalize": "norm_obs=False, norm_reward=False",
+        "vec_normalize": "norm_obs=True, norm_reward=False, clip_obs=100",
     }
     with open(ckpt_dir / "training_config.json", "w") as f:
         json.dump(config, f, indent=2)
