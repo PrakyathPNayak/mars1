@@ -1509,8 +1509,14 @@ class MiniCheetahEnv(gym.Env):
         r_alive = 1.0
 
         # ── 9. Orientation penalty ──────────────────────────────
-        gravity_body = self._quat_rotate_inv(quat, np.array([0.0, 0.0, -1.0]))
-        r_orientation = float(np.sum(gravity_body[:2]**2))
+        # Terrain-relative: penalise deviation from terrain surface normal, not
+        # world up.  On a slope the robot MUST lean forward to climb — the old
+        # world-up reference fought that lean and caused 80 % slope failure.
+        _terrain_nrm = self._get_terrain_normal(
+            float(self.data.qpos[0]), float(self.data.qpos[1])
+        )
+        _terrain_nrm_body = self._quat_rotate_inv(quat, _terrain_nrm)
+        r_orientation = float(np.sum(_terrain_nrm_body[:2]**2))
 
         # ── 10. Angular velocity xy penalty ─────────────────────
         r_ang_vel_xy = float(base_angvel[0]**2 + base_angvel[1]**2)
@@ -1991,11 +1997,16 @@ class MiniCheetahEnv(gym.Env):
         if height_above_terrain < _min_h:
             return True
 
-        # Terminate if too tilted (>60° from vertical)
+        # Terminate if too tilted relative to terrain normal (>50° from terrain up).
+        # Using terrain-relative tilt so a robot on a slope is not unfairly terminated
+        # for leaning forward to match the incline.
         quat = self.data.qpos[3:7]
-        gravity_body = self._quat_rotate_inv(quat, np.array([0.0, 0.0, -1.0]))
-        tilt = float(np.sum(gravity_body[:2]**2))
-        if tilt > 0.75:  # ~60° tilt
+        _tnrm = self._get_terrain_normal(
+            float(self.data.qpos[0]), float(self.data.qpos[1])
+        )
+        _tnrm_body = self._quat_rotate_inv(quat, _tnrm)
+        tilt = float(np.sum(_tnrm_body[:2]**2))
+        if tilt > 0.587:  # sin(50°)² ≈ 0.587 from terrain normal
             return True
 
         # v31f: Terminate on excessive heading drift in walk/run when yaw NOT commanded
@@ -2276,6 +2287,31 @@ class MiniCheetahEnv(gym.Env):
         if self._terrain_gen is not None:
             return self._terrain_gen.get_height_at(x, y)
         return 0.0
+
+    def _get_terrain_normal(self, x: float, y: float) -> np.ndarray:
+        """Compute terrain surface normal (pointing away from surface) at (x, y).
+
+        Uses central finite differences of the heightfield.  A delta of 0.15 m
+        is large enough to average over individual stair-riser faces while still
+        capturing slope angles accurately.
+
+        Returns a unit vector in world frame pointing "up" from the terrain
+        surface.  Falls back to world-up [0,0,1] on flat/no terrain.
+        """
+        if self._terrain_gen is None:
+            return np.array([0.0, 0.0, 1.0])
+        delta = 0.15
+        h_xp = self._terrain_gen.get_height_at(x + delta, y)
+        h_xm = self._terrain_gen.get_height_at(x - delta, y)
+        h_yp = self._terrain_gen.get_height_at(x, y + delta)
+        h_ym = self._terrain_gen.get_height_at(x, y - delta)
+        # n = [-∂h/∂x, -∂h/∂y, 1] (outward surface normal, unnormalised)
+        nx = -(h_xp - h_xm) / (2.0 * delta)
+        ny = -(h_yp - h_ym) / (2.0 * delta)
+        nz = 1.0
+        normal = np.array([nx, ny, nz])
+        norm = float(np.linalg.norm(normal))
+        return normal / max(norm, 1e-6)
 
     # ══════════════════════════════════════════════════════════════
     #  Utility
