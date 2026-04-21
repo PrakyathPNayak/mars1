@@ -143,32 +143,29 @@ def finetune(args):
     # (recursion warning) and terrain obs stats differ from flat training.
     vec_env = VecNormalize(vec_env, norm_obs=True, norm_reward=True, clip_obs=10.0)
 
-    # ── load base policy ────────────────────────────────────────────────────
+    # ── load base policy and set it up for fine-tuning ──────────────────────
+    # Use PPO.load(..., env=vec_env) so the model knows the new env's obs/act
+    # spaces.  Then override LR and clip_range for terrain fine-tuning.
+    # This preserves all policy weights without a state_dict transfer.
     import warnings
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        base_model = PPO.load(base_ckpt, device=args.device)
-
-    # Clone policy weights into a new PPO that knows about our envs
-    model = PPO(
-        policy="MlpPolicy",
-        env=vec_env,
-        device=args.device,
-        n_steps=2048,
-        batch_size=512,
-        n_epochs=5,
-        learning_rate=args.finetune_lr,
-        clip_range=0.1,       # tighter clip to avoid forgetting base skill
-        ent_coef=0.005,       # small entropy bonus keeps exploration alive
-        vf_coef=0.5,
-        gamma=0.99,
-        gae_lambda=0.95,
-        verbose=1,
-        tensorboard_log=str(checkpoint_dir / "tb"),
-    )
-    # Transfer base policy weights
-    model.policy.load_state_dict(base_model.policy.state_dict(), strict=False)
-    print("[terrain_ft] Base policy weights transferred ✓")
+        model = PPO.load(
+            base_ckpt,
+            env=vec_env,
+            device=args.device,
+            custom_objects={
+                "learning_rate": args.finetune_lr,
+                "clip_range": 0.1,       # tighter clip — preserve flat skill
+                "ent_coef": 0.005,
+                "n_steps": 2048,
+                "batch_size": 512,
+                "n_epochs": 5,
+            },
+        )
+    # Override tensorboard log dir
+    model.tensorboard_log = str(checkpoint_dir / "tb")
+    print("[terrain_ft] Base policy loaded and ready for fine-tuning ✓")
 
     # ── callbacks ───────────────────────────────────────────────────────────
     ckpt_cb = CheckpointCallback(
@@ -190,14 +187,16 @@ def finetune(args):
                 return True
             self._last_probe = self.num_timesteps
             print(f"\n[probe @ {self.num_timesteps:,} steps]")
-            # Temporarily unwrap model for inference
-            import warnings
+            # Save current weights to a temp file and load for inference.
+            # PPO.load with env=None gives a model usable for predict().
+            import tempfile, warnings
+            with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
+                tmp_path = tmp.name
+            self.model.save(tmp_path)
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                probe_model = PPO.load(base_ckpt, device="cpu")
-            probe_model.policy.load_state_dict(
-                self.model.policy.state_dict(), strict=False
-            )
+                probe_model = PPO.load(tmp_path, device="cpu")
+            os.unlink(tmp_path)
             r_slope  = probe_terrain(probe_model, n_episodes=5, terrain_type="slope_up",  difficulty=0.3)
             r_stairs = probe_terrain(probe_model, n_episodes=5, terrain_type="stairs_up", difficulty=0.3)
             r_flat   = probe_terrain(probe_model, n_episodes=5, terrain_type="flat",       difficulty=0.0)
