@@ -22,6 +22,9 @@ def evaluate(checkpoint_path, n_episodes=20, render=False):
         episode_length=2000,
     )
     policy, normalize_fn = load_policy_for_inference(checkpoint_path)
+    if policy is None:
+        print(f"Error: Could not load policy from '{checkpoint_path}'. File not found or invalid.")
+        return None
 
     results = []
     for ep in range(n_episodes):

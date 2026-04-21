@@ -553,6 +553,7 @@ class MiniCheetahEnv(gym.Env):
         self._base_masses = None
         self._base_damping = None
         self._base_armature = None
+        self._base_friction = None
         self._base_kp = 60.0
         self._base_kd = 0.5
         self._base_max_torque = 33.5
@@ -694,6 +695,7 @@ class MiniCheetahEnv(gym.Env):
         self._base_masses = self.model.body_mass.copy()
         self._base_damping = self.model.dof_damping.copy()
         self._base_armature = self.model.dof_armature.copy()
+        self._base_friction = self.model.geom_friction.copy()
 
     def _apply_domain_randomization(self):
         """Randomize physical parameters for sim-to-real robustness.
@@ -715,10 +717,9 @@ class MiniCheetahEnv(gym.Env):
         mass_scale = 1.0 + rng.uniform(-0.15, 0.15, size=self._base_masses.shape)
         self.model.body_mass[:] = self._base_masses * mass_scale
 
-        # Floor friction ×0.8–2.0
-        # Geom 0 is typically the floor in Go1 models; randomize all static geoms
+        # Floor friction ×0.8–2.0; restore from base first to prevent cumulative drift
         friction_scale = rng.uniform(0.8, 2.0)
-        self.model.geom_friction[:, 0] *= friction_scale
+        self.model.geom_friction[:, 0] = self._base_friction[:, 0] * friction_scale
 
         # Joint damping ±20%
         damp_scale = 1.0 + rng.uniform(-0.20, 0.20, size=self._base_damping.shape)
@@ -796,6 +797,8 @@ class MiniCheetahEnv(gym.Env):
                 self.model.dof_damping[:] = self._base_damping
             if self._base_armature is not None:
                 self.model.dof_armature[:] = self._base_armature
+            if self._base_friction is not None:
+                self.model.geom_friction[:] = self._base_friction
             self.kp = self._base_kp
             self.kd = self._base_kd
             self.max_torque = self._base_max_torque
@@ -822,7 +825,11 @@ class MiniCheetahEnv(gym.Env):
             self._randomize_command_for_mode(rng)
             self.target_height = self._effective_target_height
             # v25: random command duration
-            self._next_cmd_resample = self.step_count + int(rng.integers(COMMAND_RESAMPLE_MIN, COMMAND_RESAMPLE_MAX + 1))
+            self._next_cmd_resample = self.step_count + int(
+                rng.integers(COMMAND_RESAMPLE_MIN, COMMAND_RESAMPLE_MAX + 1)
+                if hasattr(rng, 'integers')
+                else rng.randint(COMMAND_RESAMPLE_MIN, COMMAND_RESAMPLE_MAX + 1)
+            )
 
             # v23i9f: Bootstrap locomotion — give initial velocity matching command.
             # Policy experiences non-zero velocity from start → has gradient to learn.
@@ -926,7 +933,11 @@ class MiniCheetahEnv(gym.Env):
             rng = self.np_random if hasattr(self, 'np_random') and self.np_random is not None else np.random
             self._randomize_command_for_mode(rng)  # re-randomize vel/height
             self.target_height = self._effective_target_height
-            self._next_cmd_resample = self.step_count + int(rng.integers(COMMAND_RESAMPLE_MIN, COMMAND_RESAMPLE_MAX + 1))
+            self._next_cmd_resample = self.step_count + int(
+                rng.integers(COMMAND_RESAMPLE_MIN, COMMAND_RESAMPLE_MAX + 1)
+                if hasattr(rng, 'integers')
+                else rng.randint(COMMAND_RESAMPLE_MIN, COMMAND_RESAMPLE_MAX + 1)
+            )
 
         # Report to curriculum on episode end
         if (terminated or truncated) and self.curriculum is not None:

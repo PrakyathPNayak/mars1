@@ -62,6 +62,7 @@ def _build_mlp_args(args, run_dir: Path) -> types.SimpleNamespace:
         n_epochs=args.mlp_epochs,
         device=args.device,
         resume=None,
+        finetune_lr=None,
         ckpt_dir=str(run_dir / "mlp_training"),
         log_dir=str(run_dir / "logs_mlp"),
     )

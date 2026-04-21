@@ -1,15 +1,15 @@
 {
-  "timestamp": "2026-04-18 11:24:31",
-  "duration": 12.889199018478394,
-  "passed": 23,
+  "timestamp": "2026-04-21 07:58:22",
+  "duration": 17.2599995136261,
+  "passed": 39,
   "failed": 0,
-  "total": 23,
+  "total": 39,
   "tests": [
     {
       "name": "env_creation",
       "category": "unit",
       "passed": true,
-      "duration": 0.5489659309387207,
+      "duration": 0.41373634338378906,
       "message": "",
       "metrics": {
         "obs_dim": 196
@@ -19,17 +19,17 @@
       "name": "env_step",
       "category": "unit",
       "passed": true,
-      "duration": 0.17285704612731934,
+      "duration": 0.06369137763977051,
       "message": "",
       "metrics": {
-        "reward": 0.7851131558418274
+        "reward": 5.735586166381836
       }
     },
     {
       "name": "env_action_space",
       "category": "unit",
       "passed": true,
-      "duration": 0.11974859237670898,
+      "duration": 0.044147491455078125,
       "message": "",
       "metrics": {}
     },
@@ -37,7 +37,7 @@
       "name": "env_observation_space",
       "category": "unit",
       "passed": true,
-      "duration": 0.11520910263061523,
+      "duration": 0.03845930099487305,
       "message": "",
       "metrics": {}
     },
@@ -45,7 +45,7 @@
       "name": "env_domain_randomization",
       "category": "unit",
       "passed": true,
-      "duration": 0.11700320243835449,
+      "duration": 0.04316878318786621,
       "message": "",
       "metrics": {}
     },
@@ -53,7 +53,7 @@
       "name": "env_episode_termination",
       "category": "unit",
       "passed": true,
-      "duration": 0.14275312423706055,
+      "duration": 0.059056997299194336,
       "message": "",
       "metrics": {}
     },
@@ -61,7 +61,7 @@
       "name": "terrain_generator_all_types",
       "category": "unit",
       "passed": true,
-      "duration": 0.05436992645263672,
+      "duration": 0.10482382774353027,
       "message": "",
       "metrics": {
         "flat": {
@@ -69,8 +69,8 @@
           "max": 0.0
         },
         "rough": {
-          "min": -0.03675909340381622,
-          "max": 0.03921719640493393
+          "min": -0.0218006893992424,
+          "max": 0.0251152440905571
         },
         "slope_up": {
           "min": 0.0,
@@ -110,7 +110,7 @@
       "name": "terrain_env_creation",
       "category": "unit",
       "passed": true,
-      "duration": 0.45120692253112793,
+      "duration": 1.071915864944458,
       "message": "",
       "metrics": {
         "obs_dim": 57
@@ -120,10 +120,10 @@
       "name": "terrain_env_step",
       "category": "unit",
       "passed": true,
-      "duration": 0.16396403312683105,
+      "duration": 0.06736302375793457,
       "message": "",
       "metrics": {
-        "reward": "1.8245071",
+        "reward": "1.7901313",
         "components": 15
       }
     },
@@ -131,28 +131,28 @@
       "name": "terrain_env_skill_modes",
       "category": "unit",
       "passed": true,
-      "duration": 0.1713254451751709,
+      "duration": 0.07222104072570801,
       "message": "",
       "metrics": {
-        "walk": "0.70470047",
-        "trot": "0.56625694",
-        "run": "0.5650914",
-        "jump": "1.8245071",
-        "crouch": "2.0274315",
-        "stand": "2.3635955"
+        "walk": "0.67304456",
+        "trot": "0.53707063",
+        "run": "0.5359249",
+        "jump": "1.7901313",
+        "crouch": "1.9929657",
+        "stand": "2.334949"
       }
     },
     {
       "name": "terrain_foot_contacts",
       "category": "unit",
       "passed": true,
-      "duration": 0.2785806655883789,
+      "duration": 0.10216140747070312,
       "message": "",
       "metrics": {
         "contacts": [
           0.0,
-          1.0,
-          1.0,
+          0.0,
+          0.0,
           1.0
         ]
       }
@@ -161,18 +161,18 @@
       "name": "terrain_encoding",
       "category": "unit",
       "passed": true,
-      "duration": 0.10058426856994629,
+      "duration": 0.0005016326904296875,
       "message": "",
       "metrics": {
         "encoding": [
-          0.0018460534047335386,
-          0.014163085259497166,
-          0.03461754322052002,
-          -0.0426812581717968,
-          -0.003373357467353344,
-          -0.00019519909983500838,
-          0.014163085259497166,
-          0.07729880511760712
+          0.0016876913141459227,
+          0.006738555151969194,
+          0.019199898466467857,
+          -0.016574101522564888,
+          -0.0018657781183719635,
+          -0.0002163019380532205,
+          0.006738555151969194,
+          0.035773999989032745
         ]
       }
     },
@@ -180,7 +180,7 @@
       "name": "curriculum_basic",
       "category": "unit",
       "passed": true,
-      "duration": 0.0009210109710693359,
+      "duration": 0.00032830238342285156,
       "message": "",
       "metrics": {
         "level": 7,
@@ -191,7 +191,7 @@
       "name": "curriculum_advanced",
       "category": "unit",
       "passed": true,
-      "duration": 0.00014901161193847656,
+      "duration": 4.76837158203125e-05,
       "message": "",
       "metrics": {
         "terrain_type": "stairs_up",
@@ -203,7 +203,7 @@
       "name": "policy_forward",
       "category": "unit",
       "passed": true,
-      "duration": 3.220371723175049,
+      "duration": 0.6916694641113281,
       "message": "",
       "metrics": {
         "n_params": 404601
@@ -213,7 +213,7 @@
       "name": "policy_components",
       "category": "unit",
       "passed": true,
-      "duration": 0.005331277847290039,
+      "duration": 0.003564119338989258,
       "message": "",
       "metrics": {
         "phase_shape": [
@@ -230,7 +230,7 @@
       "name": "keyboard_controller",
       "category": "unit",
       "passed": true,
-      "duration": 0.0010921955108642578,
+      "duration": 0.031023263931274414,
       "message": "",
       "metrics": {}
     },
@@ -238,7 +238,7 @@
       "name": "exploration_policy",
       "category": "unit",
       "passed": true,
-      "duration": 0.0003879070281982422,
+      "duration": 0.0001456737518310547,
       "message": "",
       "metrics": {}
     },
@@ -246,7 +246,7 @@
       "name": "sb3_base_env_training",
       "category": "integration",
       "passed": true,
-      "duration": 3.888354778289795,
+      "duration": 1.366697072982788,
       "message": "",
       "metrics": {
         "trained": true
@@ -256,7 +256,7 @@
       "name": "sb3_terrain_env_training",
       "category": "integration",
       "passed": true,
-      "duration": 1.7910144329071045,
+      "duration": 0.20273876190185547,
       "message": "",
       "metrics": {
         "trained": true
@@ -266,7 +266,7 @@
       "name": "sb3_transformer_policy",
       "category": "integration",
       "passed": true,
-      "duration": 1.343581199645996,
+      "duration": 0.563086986541748,
       "message": "",
       "metrics": {
         "n_params": 218769
@@ -276,7 +276,7 @@
       "name": "history_wrapper",
       "category": "integration",
       "passed": true,
-      "duration": 0.11136460304260254,
+      "duration": 0.041198015213012695,
       "message": "",
       "metrics": {
         "obs_shape": [
@@ -288,10 +288,426 @@
       "name": "action_smoothing_wrapper",
       "category": "integration",
       "passed": true,
-      "duration": 0.08881902694702148,
+      "duration": 0.04309344291687012,
       "message": "",
       "metrics": {}
+    },
+    {
+      "name": "perf_base_flat",
+      "category": "performance",
+      "passed": true,
+      "duration": 1.9472243785858154,
+      "message": "",
+      "metrics": {
+        "scenario": "flat",
+        "n_episodes": 5,
+        "mean_reward": 1559.972134486567,
+        "std_reward": 1297.6373863388235,
+        "mean_steps": 200.0,
+        "survival_rate": 1.0,
+        "mean_speed": 0.270613541813717,
+        "mean_height": 0.21323065373270378,
+        "mean_energy": 0.0,
+        "foot_contact_ratio": 0.0,
+        "extra": {}
+      }
+    },
+    {
+      "name": "perf_terrain_flat",
+      "category": "performance",
+      "passed": true,
+      "duration": 0.9109587669372559,
+      "message": "",
+      "metrics": {
+        "scenario": "terrain_flat",
+        "n_episodes": 5,
+        "mean_reward": -1482.597900390625,
+        "std_reward": 188.10723876953125,
+        "mean_steps": 200.0,
+        "survival_rate": 1.0,
+        "mean_speed": 0.21085717078300595,
+        "mean_height": 0.3315418730626753,
+        "mean_energy": 0.013320568486994217,
+        "foot_contact_ratio": 0.57875,
+        "extra": {}
+      }
+    },
+    {
+      "name": "perf_terrain_rough",
+      "category": "performance",
+      "passed": true,
+      "duration": 0.8436405658721924,
+      "message": "",
+      "metrics": {
+        "scenario": "terrain_rough",
+        "n_episodes": 5,
+        "mean_reward": -1059.569580078125,
+        "std_reward": 361.5414733886719,
+        "mean_steps": 163.0,
+        "survival_rate": 0.2,
+        "mean_speed": 0.05407122895206586,
+        "mean_height": 0.30780113710124024,
+        "mean_energy": 0.008798583067393185,
+        "foot_contact_ratio": 0.9478925931607127,
+        "extra": {}
+      }
+    },
+    {
+      "name": "perf_terrain_stairs",
+      "category": "performance",
+      "passed": true,
+      "duration": 0.9263997077941895,
+      "message": "",
+      "metrics": {
+        "scenario": "terrain_stairs_up",
+        "n_episodes": 5,
+        "mean_reward": -1208.664794921875,
+        "std_reward": 188.20372009277344,
+        "mean_steps": 200.0,
+        "survival_rate": 1.0,
+        "mean_speed": 0.06766692462859404,
+        "mean_height": 0.5635909615914435,
+        "mean_energy": 0.010230954319308795,
+        "foot_contact_ratio": 0.8087500000000001,
+        "extra": {}
+      }
+    },
+    {
+      "name": "perf_terrain_gaps",
+      "category": "performance",
+      "passed": true,
+      "duration": 0.07729387283325195,
+      "message": "",
+      "metrics": {
+        "scenario": "terrain_gaps",
+        "n_episodes": 5,
+        "mean_reward": -16.006587982177734,
+        "std_reward": 1.6055517196655273,
+        "mean_steps": 9.0,
+        "survival_rate": 0.0,
+        "mean_speed": 8.172188461013542e-18,
+        "mean_height": 0.21888899749660498,
+        "mean_energy": 1.2853925670016794e-33,
+        "foot_contact_ratio": 0.0,
+        "extra": {}
+      }
+    },
+    {
+      "name": "perf_terrain_mixed",
+      "category": "performance",
+      "passed": true,
+      "duration": 0.5944328308105469,
+      "message": "",
+      "metrics": {
+        "scenario": "terrain_mixed",
+        "n_episodes": 5,
+        "mean_reward": -787.4022216796875,
+        "std_reward": 574.6891479492188,
+        "mean_steps": 120.8,
+        "survival_rate": 0.4,
+        "mean_speed": 0.10015672418238934,
+        "mean_height": 0.8076584367837729,
+        "mean_energy": 0.008415357588416186,
+        "foot_contact_ratio": 0.7010357142857143,
+        "extra": {}
+      }
+    },
+    {
+      "name": "perf_skill_walk",
+      "category": "performance",
+      "passed": true,
+      "duration": 0.9176552295684814,
+      "message": "",
+      "metrics": {
+        "scenario": "skill_walk",
+        "n_episodes": 5,
+        "mean_reward": -1482.597900390625,
+        "std_reward": 188.10723876953125,
+        "mean_steps": 200.0,
+        "survival_rate": 1.0,
+        "mean_speed": 0.21085717078300595,
+        "mean_height": 0.3315418730626753,
+        "mean_energy": 0.013320568486994217,
+        "foot_contact_ratio": 0.57875,
+        "extra": {}
+      }
+    },
+    {
+      "name": "perf_skill_trot",
+      "category": "performance",
+      "passed": true,
+      "duration": 0.9124405384063721,
+      "message": "",
+      "metrics": {
+        "scenario": "skill_walk",
+        "n_episodes": 5,
+        "mean_reward": -1482.597900390625,
+        "std_reward": 188.10723876953125,
+        "mean_steps": 200.0,
+        "survival_rate": 1.0,
+        "mean_speed": 0.21085717078300595,
+        "mean_height": 0.3315418730626753,
+        "mean_energy": 0.013320568486994217,
+        "foot_contact_ratio": 0.57875,
+        "extra": {}
+      }
+    },
+    {
+      "name": "perf_skill_run",
+      "category": "performance",
+      "passed": true,
+      "duration": 0.919536828994751,
+      "message": "",
+      "metrics": {
+        "scenario": "skill_run",
+        "n_episodes": 5,
+        "mean_reward": -1496.973876953125,
+        "std_reward": 193.8204803466797,
+        "mean_steps": 200.0,
+        "survival_rate": 1.0,
+        "mean_speed": 0.21085717078300595,
+        "mean_height": 0.3315418730626753,
+        "mean_energy": 0.004440189495664741,
+        "foot_contact_ratio": 0.57875,
+        "extra": {}
+      }
+    },
+    {
+      "name": "perf_skill_jump",
+      "category": "performance",
+      "passed": true,
+      "duration": 0.9263753890991211,
+      "message": "",
+      "metrics": {
+        "scenario": "skill_jump",
+        "n_episodes": 5,
+        "mean_reward": -1390.210693359375,
+        "std_reward": 172.96463012695312,
+        "mean_steps": 200.0,
+        "survival_rate": 1.0,
+        "mean_speed": 0.21085717078300595,
+        "mean_height": 0.3315418730626753,
+        "mean_energy": 0.004440189495664741,
+        "foot_contact_ratio": 0.57875,
+        "extra": {}
+      }
+    },
+    {
+      "name": "perf_skill_crouch",
+      "category": "performance",
+      "passed": true,
+      "duration": 0.91628098487854,
+      "message": "",
+      "metrics": {
+        "scenario": "skill_crouch",
+        "n_episodes": 5,
+        "mean_reward": -1370.930908203125,
+        "std_reward": 175.8531036376953,
+        "mean_steps": 200.0,
+        "survival_rate": 1.0,
+        "mean_speed": 0.21085717078300595,
+        "mean_height": 0.3315418730626753,
+        "mean_energy": 0.013320568486994217,
+        "foot_contact_ratio": 0.57875,
+        "extra": {}
+      }
+    },
+    {
+      "name": "perf_simulation_fps",
+      "category": "performance",
+      "passed": true,
+      "duration": 1.5400817394256592,
+      "message": "",
+      "metrics": {
+        "fps": 667.7925229535052,
+        "time_1000_steps": 1.4974710941314697
+      }
+    },
+    {
+      "name": "regression_standing_stability",
+      "category": "regression",
+      "passed": true,
+      "duration": 0.24554944038391113,
+      "message": "",
+      "metrics": {
+        "min_height": 0.25822748823239783,
+        "max_height": 0.2878532890321028
+      }
+    },
+    {
+      "name": "regression_determinism",
+      "category": "regression",
+      "passed": true,
+      "duration": 0.27419447898864746,
+      "message": "",
+      "metrics": {
+        "reward_diff": 0.0
+      }
+    },
+    {
+      "name": "regression_obs_bounds",
+      "category": "regression",
+      "passed": true,
+      "duration": 0.14007782936096191,
+      "message": "",
+      "metrics": {
+        "checked_steps": 100
+      }
+    },
+    {
+      "name": "regression_reward_sign",
+      "category": "regression",
+      "passed": true,
+      "duration": 0.14238786697387695,
+      "message": "",
+      "metrics": {
+        "mean_reward": 6.77230149269104
+      }
     }
   ],
-  "performance": []
+  "performance": [
+    {
+      "scenario": "flat",
+      "n_episodes": 5,
+      "mean_reward": 1559.972134486567,
+      "std_reward": 1297.6373863388235,
+      "mean_steps": 200.0,
+      "survival_rate": 1.0,
+      "mean_speed": 0.270613541813717,
+      "mean_height": 0.21323065373270378,
+      "mean_energy": 0.0,
+      "foot_contact_ratio": 0.0,
+      "extra": {}
+    },
+    {
+      "scenario": "terrain_flat",
+      "n_episodes": 5,
+      "mean_reward": -1482.597900390625,
+      "std_reward": 188.10723876953125,
+      "mean_steps": 200.0,
+      "survival_rate": 1.0,
+      "mean_speed": 0.21085717078300595,
+      "mean_height": 0.3315418730626753,
+      "mean_energy": 0.013320568486994217,
+      "foot_contact_ratio": 0.57875,
+      "extra": {}
+    },
+    {
+      "scenario": "terrain_rough",
+      "n_episodes": 5,
+      "mean_reward": -1059.569580078125,
+      "std_reward": 361.5414733886719,
+      "mean_steps": 163.0,
+      "survival_rate": 0.2,
+      "mean_speed": 0.05407122895206586,
+      "mean_height": 0.30780113710124024,
+      "mean_energy": 0.008798583067393185,
+      "foot_contact_ratio": 0.9478925931607127,
+      "extra": {}
+    },
+    {
+      "scenario": "terrain_stairs_up",
+      "n_episodes": 5,
+      "mean_reward": -1208.664794921875,
+      "std_reward": 188.20372009277344,
+      "mean_steps": 200.0,
+      "survival_rate": 1.0,
+      "mean_speed": 0.06766692462859404,
+      "mean_height": 0.5635909615914435,
+      "mean_energy": 0.010230954319308795,
+      "foot_contact_ratio": 0.8087500000000001,
+      "extra": {}
+    },
+    {
+      "scenario": "terrain_gaps",
+      "n_episodes": 5,
+      "mean_reward": -16.006587982177734,
+      "std_reward": 1.6055517196655273,
+      "mean_steps": 9.0,
+      "survival_rate": 0.0,
+      "mean_speed": 8.172188461013542e-18,
+      "mean_height": 0.21888899749660498,
+      "mean_energy": 1.2853925670016794e-33,
+      "foot_contact_ratio": 0.0,
+      "extra": {}
+    },
+    {
+      "scenario": "terrain_mixed",
+      "n_episodes": 5,
+      "mean_reward": -787.4022216796875,
+      "std_reward": 574.6891479492188,
+      "mean_steps": 120.8,
+      "survival_rate": 0.4,
+      "mean_speed": 0.10015672418238934,
+      "mean_height": 0.8076584367837729,
+      "mean_energy": 0.008415357588416186,
+      "foot_contact_ratio": 0.7010357142857143,
+      "extra": {}
+    },
+    {
+      "scenario": "skill_walk",
+      "n_episodes": 5,
+      "mean_reward": -1482.597900390625,
+      "std_reward": 188.10723876953125,
+      "mean_steps": 200.0,
+      "survival_rate": 1.0,
+      "mean_speed": 0.21085717078300595,
+      "mean_height": 0.3315418730626753,
+      "mean_energy": 0.013320568486994217,
+      "foot_contact_ratio": 0.57875,
+      "extra": {}
+    },
+    {
+      "scenario": "skill_walk",
+      "n_episodes": 5,
+      "mean_reward": -1482.597900390625,
+      "std_reward": 188.10723876953125,
+      "mean_steps": 200.0,
+      "survival_rate": 1.0,
+      "mean_speed": 0.21085717078300595,
+      "mean_height": 0.3315418730626753,
+      "mean_energy": 0.013320568486994217,
+      "foot_contact_ratio": 0.57875,
+      "extra": {}
+    },
+    {
+      "scenario": "skill_run",
+      "n_episodes": 5,
+      "mean_reward": -1496.973876953125,
+      "std_reward": 193.8204803466797,
+      "mean_steps": 200.0,
+      "survival_rate": 1.0,
+      "mean_speed": 0.21085717078300595,
+      "mean_height": 0.3315418730626753,
+      "mean_energy": 0.004440189495664741,
+      "foot_contact_ratio": 0.57875,
+      "extra": {}
+    },
+    {
+      "scenario": "skill_jump",
+      "n_episodes": 5,
+      "mean_reward": -1390.210693359375,
+      "std_reward": 172.96463012695312,
+      "mean_steps": 200.0,
+      "survival_rate": 1.0,
+      "mean_speed": 0.21085717078300595,
+      "mean_height": 0.3315418730626753,
+      "mean_energy": 0.004440189495664741,
+      "foot_contact_ratio": 0.57875,
+      "extra": {}
+    },
+    {
+      "scenario": "skill_crouch",
+      "n_episodes": 5,
+      "mean_reward": -1370.930908203125,
+      "std_reward": 175.8531036376953,
+      "mean_steps": 200.0,
+      "survival_rate": 1.0,
+      "mean_speed": 0.21085717078300595,
+      "mean_height": 0.3315418730626753,
+      "mean_energy": 0.013320568486994217,
+      "foot_contact_ratio": 0.57875,
+      "extra": {}
+    }
+  ]
 }

@@ -74,6 +74,11 @@ def main():
             total_steps=args.steps,
             n_envs=args.envs,
             resume=args.resume,
+            device="cpu",
+            ckpt_dir="checkpoints",
+            log_dir="logs/training",
+            n_epochs=10,
+            finetune_lr=None,
         )
         train(a)
 

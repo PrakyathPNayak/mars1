@@ -217,7 +217,7 @@ def dreamwaq_mixed(resolution: int, difficulty: float,
         by = rng.randint(0, n - 6)
         bw = rng.randint(4, 10)
         bh = rng.uniform(0.02, 0.15 * difficulty + 0.02)
-        heights[bx:bx + bw, by:bx + bw] = bh
+        heights[bx:bx + bw, by:by + bw] = bh
     # Add small trenches
     n_trenches = int(2 + 4 * difficulty)
     for _ in range(n_trenches):

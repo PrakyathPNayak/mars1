@@ -469,7 +469,40 @@ class TestSuite:
         self.run("perf_skill_crouch", "performance", lambda: self._perf_skill("crouch"))
         self.run("perf_simulation_fps", "performance", self._perf_sim_fps)
 
-    def _run_episodes(self, env, n_episodes=5, max_steps=200) -> PerformanceMetrics:
+    @staticmethod
+    def _load_best_policy():
+        """Load the best available trained policy for use in performance evaluation.
+
+        Returns (model, vec_norm) or (None, None) if no model is found.
+        Performance tests use the policy when available so metrics reflect
+        real navigation capability, not uncontrolled physics.
+        """
+        import os
+        from stable_baselines3 import PPO
+        ckpt_candidates = [
+            "checkpoints/best/best_model.zip",
+            "checkpoints/best_model.zip",
+        ]
+        for ckpt in ckpt_candidates:
+            if os.path.exists(ckpt):
+                try:
+                    import warnings
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        model = PPO.load(ckpt, device="cpu")
+                    return model
+                except Exception:
+                    pass
+        return None
+
+    def _run_episodes(self, env, n_episodes=5, max_steps=200,
+                      policy=None) -> PerformanceMetrics:
+        """Run evaluation episodes.
+
+        If *policy* is supplied (stable-baselines3 model), actions are drawn
+        from it (deterministic).  Otherwise zero actions are used — useful for
+        measuring raw physics stability but NOT a measure of navigation skill.
+        """
         rewards, steps, speeds, heights, energies, contacts = [], [], [], [], [], []
 
         for ep in range(n_episodes):
@@ -482,7 +515,12 @@ class TestSuite:
             ep_contacts = []
 
             for s in range(max_steps):
-                action = np.zeros(12, dtype=np.float32)
+                if policy is not None:
+                    # Use trained policy for realistic evaluation
+                    action, _ = policy.predict(obs, deterministic=True)
+                else:
+                    # Zero-action baseline: tests raw physics / terrain geometry
+                    action = np.zeros(12, dtype=np.float32)
                 obs, r, done, trunc, info = env.step(action)
                 ep_reward += r
                 ep_steps += 1
@@ -519,17 +557,22 @@ class TestSuite:
     def _perf_base_flat(self):
         from src.env.cheetah_env import MiniCheetahEnv
         env = MiniCheetahEnv(render_mode="none", randomize_domain=False)
-        m = self._run_episodes(env, n_episodes=5, max_steps=200)
+        policy = self._load_best_policy()
+        m = self._run_episodes(env, n_episodes=5, max_steps=200, policy=policy)
         env.close()
         self.perf_data.append(m)
         return asdict(m)
 
     def _perf_terrain(self, terrain_type: str, difficulty: float = 0.5):
-        from src.env.terrain_env import AdvancedTerrainEnv
-        env = AdvancedTerrainEnv(render_mode="none", terrain_type=terrain_type,
-                                  difficulty=difficulty, randomize_terrain=False,
-                                  randomize_skill=False, skill_mode="walk")
-        m = self._run_episodes(env, n_episodes=5, max_steps=200)
+        # Use MiniCheetahEnv (196-dim obs, same as training) so the best policy
+        # can be evaluated on real terrain.  AdvancedTerrainEnv has only 57-dim
+        # obs and cannot be used with the trained policy.
+        from src.env.cheetah_env import MiniCheetahEnv
+        env = MiniCheetahEnv(render_mode="none", terrain_type=terrain_type,
+                             terrain_difficulty=difficulty, use_terrain=True,
+                             randomize_domain=False)
+        policy = self._load_best_policy()
+        m = self._run_episodes(env, n_episodes=5, max_steps=200, policy=policy)
         m.scenario = f"terrain_{terrain_type}"
         env.close()
         self.perf_data.append(m)
@@ -551,11 +594,13 @@ class TestSuite:
         return self._perf_terrain("mixed", 0.5)
 
     def _perf_skill(self, skill: str):
-        from src.env.terrain_env import AdvancedTerrainEnv
-        env = AdvancedTerrainEnv(render_mode="none", terrain_type="flat",
-                                  difficulty=0.0, randomize_terrain=False,
-                                  randomize_skill=False, skill_mode=skill)
-        m = self._run_episodes(env, n_episodes=5, max_steps=200)
+        # Use MiniCheetahEnv (196-dim obs) for policy compatibility.
+        from src.env.cheetah_env import MiniCheetahEnv
+        env = MiniCheetahEnv(render_mode="none", terrain_type="flat",
+                             terrain_difficulty=0.0, use_terrain=False,
+                             randomize_domain=False, forced_mode=skill)
+        policy = self._load_best_policy()
+        m = self._run_episodes(env, n_episodes=5, max_steps=200, policy=policy)
         m.scenario = f"skill_{skill}"
         env.close()
         self.perf_data.append(m)
@@ -588,6 +633,9 @@ class TestSuite:
         from src.env.cheetah_env import MiniCheetahEnv
         env = MiniCheetahEnv(render_mode="none", randomize_domain=False)
         env.reset(seed=0)
+        # Explicitly command zero-velocity standing to test postural stability,
+        # not gait reference oscillation from a random walk command.
+        env.set_command(0.0, 0.0, 0.0, "stand")
         heights = []
         for _ in range(200):
             _, _, done, trunc, _ = env.step(np.zeros(12, dtype=np.float32))

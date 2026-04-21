@@ -1,9 +1,12 @@
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
+
 from stable_baselines3 import PPO
-#from src.env.terrain_env import AdvancedTerrainEnv
 import time
 
 # ---------- SETTINGS ----------
-MODEL_PATH = "runs/best_model.zip"
+MODEL_PATH = "checkpoints/best/best_model.zip"
 STEPS = 500
 
 # ---------- LOAD MODEL ----------
@@ -24,20 +27,12 @@ env = MiniCheetahEnv(render_mode="human")
 # ---------- RESET ----------
 obs, _ = env.reset()
 
-# 🔥 IMPORTANT: slice to match model input (45)
-obs = obs[:45]
-
 # ---------- RUN ----------
 for _ in range(STEPS):
 
-    # ✅ ALWAYS pass correct-sized observation
     action, _ = model.predict(obs, deterministic=True)
 
-    # Step environment
     obs, reward, terminated, truncated, info = env.step(action)
-
-    # 🔥 IMPORTANT: slice again after step
-    obs = obs[:45]
 
     # slow down for visualization
     time.sleep(0.02)
@@ -45,7 +40,6 @@ for _ in range(STEPS):
     # reset if episode ends
     if terminated or truncated:
         obs, _ = env.reset()
-        obs = obs[:45]
 
 time.sleep(0.5)
 env.close()

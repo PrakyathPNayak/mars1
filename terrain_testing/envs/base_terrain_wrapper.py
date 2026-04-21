@@ -192,15 +192,13 @@ class BaseTerrainWrapper:
 
         obs, info = self._env.reset(seed=seed, options=options)
         self._apply_terrain_overrides()
-        obs = obs[:45]
         info["terrain_name"] = self.terrain_name
         info["terrain_source"] = REGISTRY[self.terrain_name].source
         return obs, info
 
     def step(self, action):
         obs, reward, terminated, truncated, info = self._env.step(action)
-        # 🔥 FIX: trim observation to match trained model (45)
-        obs = obs[:45]
+        info["terrain_name"] = self.terrain_name
 
         return obs, reward, terminated, truncated, info
 

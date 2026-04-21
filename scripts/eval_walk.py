@@ -2,7 +2,8 @@
 """Quick evaluation of the best model for walking behavior."""
 import numpy as np
 import sys
-sys.path.insert(0, '/workspace/mars1')
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 from src.env.cheetah_env import MiniCheetahEnv
 from src.training.sb3_integration import ActionSmoothingWrapper
 from stable_baselines3 import PPO

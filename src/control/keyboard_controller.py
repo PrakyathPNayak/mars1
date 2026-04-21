@@ -109,6 +109,8 @@ class KeyboardController:
         if key_str == "1":
             self.speed_level = self.SPEED_WALK; self.mode = "walk"
         elif key_str == "2":
+            # v24: "trot" is not a valid SKILL_MODE in cheetah_env v23+; use "walk"
+            # at trot speed instead so set_command() doesn't silently fall back.
             self.speed_level = self.SPEED_TROT; self.mode = "walk"
         elif key_str == "3":
             self.speed_level = self.SPEED_RUN; self.mode = "run"

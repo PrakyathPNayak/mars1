@@ -201,7 +201,7 @@ def behavioral_cloning_transformer(
     n_heads: int = 4,
     n_layers: int = 3,
     history_len: int = 16,
-    obs_dim: int = 54,
+    obs_dim: int = ENV_OBS_DIM,
     act_dim: int = 12,
     bc_epochs: int = 100,
     bc_lr: float = 5e-4,
