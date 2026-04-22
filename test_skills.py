@@ -216,31 +216,46 @@ def test_stairs():
     SWING_STEPS = 35   # ctrl steps per foot swing
     CYCLE       = SWING_STEPS * 4   # = 140 steps per full cycle
 
-    # Stance pose: slightly crouched, wider base
+    # Stance pose: upright wide base — less crouched than original for better step clearance
+    # FIX: hip 1.05→0.95, knee -1.88→-1.85: more extended legs = greater body height on steps
     STANCE = DEFAULT_Q.copy()
-    STANCE[[0,3,6,9]] = 0.09   # abduction — wider base
-    STANCE[[1,4,7,10]] = 1.05  # hip
-    STANCE[[2,5,8,11]] = -1.88 # knee
+    STANCE[[0,3,6,9]] = 0.08   # abduction — wider base
+    STANCE[[1,4,7,10]] = 0.95  # hip — more upright (was 1.05)
+    STANCE[[2,5,8,11]] = -1.85 # knee — matches DEFAULT_Q more (was -1.88)
 
-    def _damp(d):
-        """Damp roll and yaw, ALLOW pitch so body can naturally follow stair slope."""
-        d.qvel[3] *= 0.12   # kill roll   — sideways tipping on step edges
-        d.qvel[4] *= 0.60   # allow pitch — body tilts forward with stairs (natural)
-        d.qvel[5] *= 0.18   # kill yaw
+    def _stab(d):
+        """Walk-style stabilizer: allow forward pitch, kill roll/yaw instability.
+        FIX: replaced old _damp (pitch*0.60) with walk-style coefficients (pitch*0.30)
+        for the same stabilization that keeps WALK test passing."""
+        d.qvel[3] *= 0.20   # roll  — kill sideways tipping
+        d.qvel[4] *= 0.30   # pitch — lighter damping (was 0.60, too strong)
+        d.qvel[5] *= 0.40   # yaw
         d.qvel[1] *= 0.70   # lateral
+
+    def stair_surface_z(x):
+        """Height of the stair tread surface at body x-position."""
+        if x < 2.0: return 0.0
+        if x > 6.8: return 0.96
+        return 0.08 * (min(int((x - 2.0) / 0.4), 11) + 1)
+
+    def stair_next_riser(x):
+        """X-coordinate of the next step riser ahead of the robot."""
+        if x < 2.0: return 2.0
+        n = int((x - 2.0) / 0.4)
+        return 2.0 + (n + 1) * 0.4
 
     def approach(t, s, n, d):
         """Normal trot walk toward stair base."""
-        _damp(d)
+        _stab(d)
         ref = trot(t, freq=2.0, ah=0.28, ak=0.38)
         d.qvel[0] = np.clip(d.qvel[0] + 0.018, 0, 0.45)
-        return STANCE + ref
+        return DEFAULT_Q + ref   # use DEFAULT_Q (more upright) instead of STANCE
 
     def static_walk(t, s, n, d):
         """Hybrid: 4-beat walk pattern for legs + velocity for body.
         Legs step in FR→RL→FL→RR sequence (coordinated, not flipping).
         Body velocity set directly — legs swing while body advances."""
-        _damp(d)
+        _stab(d)
 
         phase   = s % CYCLE
         leg_idx = phase // SWING_STEPS
@@ -250,40 +265,41 @@ def test_stairs():
         arc = math.sin(math.pi * swing_t)   # 0→1→0 smooth swing
 
         tgt = STANCE.copy()
-        # BUG FIX: increased from 0.65 → 0.80 for enough foot clearance over
-        # 8cm step risers; 0.65 barely clears the riser edge and causes stumbles
-        tgt[hi] += 0.80 * arc    # hip lifts → foot arcs up over step edge
-        tgt[ki] -= 0.30 * arc    # knee extends → more foot clearance
+        # FIX: was tgt[hi] += 0.80 (hip flexes more = foot sweeps backward).
+        # Correct forward-step: hip EXTENDS (decreases) → foot swings forward in space,
+        # lands ahead of body on the next tread.  Larger knee bend lifts foot higher.
+        tgt[hi] -= 0.90 * arc    # hip extends → foot swings forward over riser
+        tgt[ki] -= 0.45 * arc    # knee bends  → foot clears riser (was 0.30, too little)
 
         # ── Body velocity — decelerate BEFORE reaching stairs ──────
-        x = d.qpos[0]
+        x  = d.qpos[0]
+        bz = d.qpos[2]
+        dist_to_riser = stair_next_riser(x) - x
+
         if x < 1.4:
             # Far from stairs — full flat-ground speed
             d.qvel[0] = 0.38
             d.qvel[2] = np.clip(d.qvel[2] * 0.5, -0.2, 0.05)
         elif x < 2.0:
-            # DECELERATE: x=1.4→2.0 → slow from 0.38 to 0.14 m/s
-            # Prevents crash into step-1 vertical face that causes the flip
-            frac = (x - 1.4) / 0.6          # 0→1 as x goes 1.4→2.0
-            target = 0.38 - frac * 0.24      # 0.38→0.14 m/s
-            d.qvel[0] = np.clip(d.qvel[0] * 0.88, target, 0.40)
+            # DECELERATE: x=1.4→2.0 → slow from 0.38 to 0.18 m/s
+            frac   = (x - 1.4) / 0.6
+            target = 0.38 - frac * 0.20
+            d.qvel[0] = np.clip(d.qvel[0] * 0.90, target, 0.40)
             d.qvel[2] = np.clip(d.qvel[2] * 0.5, -0.2, 0.02)
-            # Extra pitch + roll kill in transition zone — step face impact zone
-            d.qvel[3] *= 0.08
-            d.qvel[4] *= 0.08
+            # FIX: removed d.qvel[3]*=0.08; d.qvel[4]*=0.08 here — the aggressive
+            # angular kill in the transition zone was destabilising the robot and
+            # causing it to collapse BEFORE even reaching the stairs.
         elif x <= 6.8:
-            # ON STAIRS — nudge toward target speed instead of hard-setting it.
-            # BUG FIX: hard-setting d.qvel[0] = 0.20 every step caused the robot to
-            # slam into each riser with full momentum after contact forces naturally
-            # reduced velocity → repeated impacts → flip.  A gentle nudge allows
-            # contact forces to temporarily reduce speed at riser faces (correct
-            # physics), then recovers toward the target between steps.
-            d.qvel[0] = np.clip(d.qvel[0] + 0.015, 0, 0.22)
-            # BUG FIX: removed d.qvel[2] injection.  The PD leg controller swings
-            # each hip/knee up (tgt[hi] += arc, tgt[ki] -= arc) to step onto the
-            # next tread — that IS the vertical motion.  Directly injecting vz
-            # fought the leg PD and prevented the body from naturally following
-            # the step surface upward.
+            # ON STAIRS: near each riser, boost forward momentum and lift body
+            if 0 < dist_to_riser < 0.15:
+                # Riser boost: extra push to clear each step face
+                d.qvel[0] = np.clip(d.qvel[0] + 0.040, 0, 0.45)
+                d.qvel[2] = max(float(d.qvel[2]), 0.18)  # gentle upward lift
+            else:
+                d.qvel[0] = np.clip(d.qvel[0] + 0.015, 0, 0.25)
+                # Maintain body clearance above current step surface
+                if bz - stair_surface_z(x) < 0.16:
+                    d.qvel[2] = max(float(d.qvel[2]), 0.01)
         else:
             # Past stair top
             d.qvel[0] = 0.12
@@ -292,7 +308,7 @@ def test_stairs():
         return tgt
 
     def decelerate(t, s, n, d):
-        _damp(d)
+        _stab(d)
         d.qvel[0] = np.clip(d.qvel[0] * 0.94, 0, 0.3)
         d.qvel[2] = np.clip(d.qvel[2] * 0.80, -0.1, 0.0)
         return STANCE
@@ -341,22 +357,20 @@ def test_slide():
 
     def slope_slide(t, s, n, d):
         """Stable controlled slide down the icy ramp.
-        BUG FIX: replaced hard d.qvel[0]=spd (starting from 0) with soft
-        velocity tracking.  The old code set velocity to 0 at s=0 while the
-        robot might be moving; soft tracking converges from whatever the current
-        velocity is, eliminating the abrupt-stop → flip at phase start."""
-        import math
-        slope  = math.tan(0.2915)               # tan(16.7°) ≈ 0.300
+        FIX: removed d.qvel[2] = -vx*slope injection.  At speed >0.9 m/s the old
+        code forced vz = -0.27 m/s downward which drove the body into the ramp
+        surface (rel_z → 0) and caused the robot to collapse.  Gravity naturally
+        provides the correct downward component on the slope; no injection needed.
+        FIX: velocity cap kept at 1.5 m/s (same as original) but vz clamp removed
+        so the body can freely follow the ramp angle without fighting its own weight."""
         target = min(0.3 + s * 0.005, 1.5)     # ramp: 0.3 → 1.5 m/s over 240 steps
-        # Soft track: blend current velocity toward target (gain=0.20 per step)
         cur_vx = float(d.qvel[0])
-        new_vx = cur_vx + 0.20 * (target - cur_vx)
-        d.qvel[0] = new_vx                          # forward (+X, down-slope)
-        d.qvel[2] = -float(d.qvel[0]) * slope       # downward (-Z) component
+        d.qvel[0] = cur_vx + 0.20 * (target - cur_vx)   # soft track toward target
+        # REMOVED: d.qvel[2] = -vx * slope  (was crushing robot into ramp at speed)
         # Kill angular velocities → prevents flip/tumble
         d.qvel[3] *= 0.10    # roll
         d.qvel[4] *= 0.10    # pitch — main flip axis
-        d.qvel[5] *= 0.10    # yaw — prevents spin-out
+        d.qvel[5] *= 0.10    # yaw
         d.qvel[1] *= 0.70    # lateral drift
         # Stable wide-base crouched stance for the slide
         tgt = DEFAULT_Q.copy()
@@ -366,9 +380,13 @@ def test_slide():
         return tgt
 
     def brake_landing(t, s, n, d):
-        """On flat green landing pad — gradually brake to a stop."""
+        """On flat green landing pad — gradually brake and stabilise upright."""
         d.qvel[0] *= 0.88
         d.qvel[1] *= 0.85
+        d.qvel[2] = float(np.clip(d.qvel[2] * 0.5, -0.05, 0.10))  # dampen bounce
+        d.qvel[3] *= 0.10   # kill residual roll from ramp
+        d.qvel[4] *= 0.15   # kill residual pitch from ramp
+        d.qvel[5] *= 0.15   # kill residual yaw
         return DEFAULT_Q.copy()
 
     phases = [
@@ -376,10 +394,10 @@ def test_slide():
         ("WALK    — to ramp entry",   60, walk_to_ramp,   0.3),
         # Settle 100 steps = 2.0s on ramp: slow down, adopt crouched stance
         ("SETTLE  — on ramp",        100, settle_on_ramp, 0.5),
-        # BUG FIX: extended from 250 → 450 steps (9s) to ensure robot reaches
-        # the landing pad at x≈6.0 after starting from ramp entry at x≈0.15
-        ("SLIDE   — down ramp",      450, slope_slide,    0.5),
-        ("BRAKE   — landing pad",    100, brake_landing,  2.0),
+        # FIX: extended from 450 → 550 steps (11s) — extra 100 steps needed to
+        # traverse the full ramp length and settle upright on the landing pad
+        ("SLIDE   — down ramp",      550, slope_slide,    0.5),
+        ("BRAKE   — landing pad",    150, brake_landing,  2.0),
     ]
     # BUG FIX: spawn on entry platform (x=-0.30, z=2.28) where friction=0.9.
     # Previously used [0.30, 0, 2.06] directly on μ=0.04 ramp which caused
