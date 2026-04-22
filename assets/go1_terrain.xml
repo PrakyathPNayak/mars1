@@ -4,7 +4,7 @@
   Based on Google DeepMind mujoco_menagerie Go1 (BSD-3-Clause).
 
   Changes from go1.xml:
-    - Flat plane replaced with MuJoCo heightfield (200x200 grid, 10m x 10m)
+    - Flat plane replaced with MuJoCo heightfield (400x400 grid, 40m x 40m)
     - Heightfield data set programmatically by environment on each reset
     - Supports: flat, slopes, stairs, rough, gaps, stepping stones, mixed terrain
     - All other robot parameters identical to go1.xml
@@ -35,10 +35,11 @@
     <mesh file="calf.stl"/>
     <mesh file="thigh.stl"/>
 
-    <!-- Heightfield terrain: 200x200 grid, 10m x 10m half-extent=5,
-         max elevation 2.0m, min depth 0.5m below reference.
-         Data set programmatically: 0→-0.5m, 1→+2.0m, flat=0.2 -->
-    <hfield name="terrain" nrow="200" ncol="200" size="5 5 2.0 0.5"/>
+    <!-- Heightfield terrain: 400x400 grid, 40m x 40m (half-extent=20),
+         max elevation 1.0m (robot-proportional), min depth 0.2m below reference.
+         Data set programmatically: 0→-0.2m, 1→+1.0m, flat=0.2.
+         Cell size = 0.1m — sufficient resolution for stair edges and rough terrain. -->
+    <hfield name="terrain" nrow="400" ncol="400" size="20 20 1.0 0.2"/>
   </asset>
 
   <default>

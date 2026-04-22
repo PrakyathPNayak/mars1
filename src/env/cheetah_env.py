@@ -123,11 +123,13 @@ TERRAIN_TYPES = [
 ]
 
 # Heightfield grid dimensions (must match MuJoCo XML)
-HFIELD_NROW = 200
-HFIELD_NCOL = 200
-HFIELD_SIZE = 5.0       # half-extent in meters (10m x 10m total)
-HFIELD_Z_TOP = 2.0      # max elevation
-HFIELD_Z_BOT = 0.5      # max depth below reference
+# Expanded from 200×200/10m to 400×400/40m for a bigger interactive arena.
+# Cell size = 40m / 400 = 0.10m — enough resolution for stair edges and rough terrain.
+HFIELD_NROW = 400
+HFIELD_NCOL = 400
+HFIELD_SIZE = 20.0      # half-extent in meters (40m × 40m total)
+HFIELD_Z_TOP = 1.0      # max elevation — capped to 1m so features stay robot-proportional
+HFIELD_Z_BOT = 0.2      # max depth below reference
 
 # ── Gait constants ────────────────────────────────────────────────
 FEET_AIR_TIME_THRESHOLD = 0.15
@@ -314,30 +316,66 @@ class TerrainGenerator:
                         heights[i, j] = padded[i:i+kernel, j:j+kernel].mean()
 
         elif terrain_type == "slope_up":
-            angle = 5 + 20 * difficulty  # degrees
-            slope = math.tan(math.radians(angle))
+            # Localized slope in the central half of the terrain so the robot
+            # has flat approach and flat exit.  Total rise capped to robot-
+            # proportional height (0.25–0.65m) regardless of terrain map size.
+            total_rise = 0.25 + 0.40 * difficulty          # 0.25–0.65m
+            angle_deg  = 5.0 + 7.0 * difficulty            # 5–12°
+            slope_tan  = math.tan(math.radians(angle_deg))
+            cell_size  = self.size / n                      # metres per cell
+            traversal_m = total_rise / slope_tan            # metres of actual incline
+            slope_w   = max(4, int(traversal_m / cell_size))
+            start_i   = max(0, (n - slope_w) // 2)
+            end_i     = min(n, start_i + slope_w)
             for i in range(n):
-                heights[i, :] = slope * (i / n) * self.size
+                if i < start_i:
+                    heights[i, :] = 0.0
+                elif i < end_i:
+                    heights[i, :] = total_rise * (i - start_i) / (end_i - start_i)
+                else:
+                    heights[i, :] = total_rise
 
         elif terrain_type == "slope_down":
-            angle = 5 + 20 * difficulty
-            slope = math.tan(math.radians(angle))
+            # Mirror of slope_up — localized descent, same proportional limits.
+            total_rise = 0.25 + 0.40 * difficulty
+            angle_deg  = 5.0 + 7.0 * difficulty
+            slope_tan  = math.tan(math.radians(angle_deg))
+            cell_size  = self.size / n
+            traversal_m = total_rise / slope_tan
+            slope_w   = max(4, int(traversal_m / cell_size))
+            start_i   = max(0, (n - slope_w) // 2)
+            end_i     = min(n, start_i + slope_w)
             for i in range(n):
-                heights[i, :] = -slope * (i / n) * self.size
+                if i < start_i:
+                    heights[i, :] = total_rise
+                elif i < end_i:
+                    heights[i, :] = total_rise * (1.0 - (i - start_i) / (end_i - start_i))
+                else:
+                    heights[i, :] = 0.0
 
         elif terrain_type == "stairs_up":
-            step_h = 0.03 + 0.17 * difficulty   # 3–20cm step height
-            step_w = max(4, int(n / (5 + 10 * difficulty)))
+            # Step height: 3–10cm (robot-proportional, was 3–20cm which is too tall).
+            # Step width: expressed in real-world metres so it scales with map size.
+            # A Go1 stride is ~0.4m, so 0.3–0.5m step width is appropriate.
+            step_h   = 0.03 + 0.07 * difficulty       # 0.03–0.10m per step
+            step_w_m = 0.50 - 0.20 * difficulty       # 0.30–0.50m per step
+            cell_size = self.size / n
+            step_w   = max(3, int(step_w_m / cell_size))
+            # Cap total height so the staircase doesn't grow unreasonably tall.
+            max_total_h = 0.40 + 0.40 * difficulty    # 0.40–0.80m total rise
             for i in range(n):
                 step_idx = i // step_w
-                heights[i, :] = step_idx * step_h
+                heights[i, :] = min(step_idx * step_h, max_total_h)
 
         elif terrain_type == "stairs_down":
-            step_h = 0.03 + 0.17 * difficulty
-            step_w = max(4, int(n / (5 + 10 * difficulty)))
+            step_h   = 0.03 + 0.07 * difficulty
+            step_w_m = 0.50 - 0.20 * difficulty
+            cell_size = self.size / n
+            step_w   = max(3, int(step_w_m / cell_size))
+            max_total_h = 0.40 + 0.40 * difficulty
             for i in range(n):
                 step_idx = (n - 1 - i) // step_w
-                heights[i, :] = step_idx * step_h
+                heights[i, :] = min(step_idx * step_h, max_total_h)
 
         elif terrain_type == "gaps":
             gap_w = max(2, int(3 + 5 * difficulty))
