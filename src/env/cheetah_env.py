@@ -181,6 +181,7 @@ REWARD_SCALES = {
     "r_jump_phase":     5.0,
     "r_alive":          2.0,       # Increased — anchor rewards positive
     "r_terrain_progress": 1.0,
+    "r_climb":           3.0,       # slope/stairs climbing bonus (upward vel × gradient)
     "r_foot_clearance":  0.5,
     "r_energy":         -0.0005,   # Light energy penalty
     # Penalties (all bounded or small)
@@ -1567,6 +1568,23 @@ class MiniCheetahEnv(gym.Env):
             dir_alignment = math.cos(actual_dir - cmd_dir)
             r_terrain_progress = actual_vel * max(0.0, dir_alignment)
 
+        # ── 18b. Climbing reward (slope/stairs navigation) ──────
+        # On slopes and stairs the robot must generate upward velocity (vz > 0) to climb.
+        # The existing r_lin_vel_z = vz^2 penalty (used in stand mode) would fight this,
+        # but walk/run reward formulas do NOT include r_lin_vel_z, so no conflict.
+        # This adds a POSITIVE signal for upward movement when terrain is sloped,
+        # proportional to slope steepness — zero on flat ground.
+        r_climb = 0.0
+        if mode in ("walk", "run") and cmd_speed > 0.1:
+            # _terrain_nrm computed above for orientation reward; normal=(nx,ny,nz)
+            # slope_gradient: 0 for flat, ~0.19 for 11° slope (d=0.3), ~0.36 for 20°
+            _slope_grad = math.sqrt(float(_terrain_nrm[0])**2 + float(_terrain_nrm[1])**2)
+            if _slope_grad > 0.05:  # only on actual slopes (>3° gradient)
+                vz = float(base_linvel[2])
+                # Reward upward velocity scaled by steepness; no penalty for downward
+                # (the terrain-relative orientation penalty already discourages falling)
+                r_climb = max(0.0, vz) * _slope_grad
+
         # ── 19. Foot clearance reward (v23) ─────────────────────
         r_foot_clearance_reward = foot_clearance  # already computed above
 
@@ -1623,6 +1641,7 @@ class MiniCheetahEnv(gym.Env):
             "r_jump_phase": r_jump_phase,
             "r_alive": r_alive,
             "r_terrain_progress": r_terrain_progress,
+            "r_climb": r_climb,
             "r_foot_clearance": r_foot_clearance_reward,
             "r_energy": r_energy,
             "r_orientation": r_orientation,
@@ -1897,6 +1916,7 @@ class MiniCheetahEnv(gym.Env):
                     + 10.0 * r_wz_lin         # v31s10g5: reduced 15→10 — overshoot fix (15 gave 173% yaw-)
                     + 2.0 * r_height_walk    # height tracking (crouch)
                     + 0.5 * r_gait           # gait quality
+                    + 3.0 * r_climb          # slope/stairs climbing: reward upward vel on sloped terrain
                     - 0.1 * r_orientation    # prevent flipping only
                     - 0.02 * r_smooth        # action smoothness
                     - 2.0 * r_vx_overshoot   # prevent sprinting past target
@@ -1916,6 +1936,7 @@ class MiniCheetahEnv(gym.Env):
                     "r_wz_lin": 10.0 * r_wz_lin,
                     "r_height_walk": 2.0 * r_height_walk,
                     "r_gait": 0.5 * r_gait,
+                    "r_climb": 3.0 * r_climb,
                     "r_orientation": -0.1 * r_orientation,
                     "r_smooth": -0.02 * r_smooth,
                     "r_vx_overshoot": -2.0 * r_vx_overshoot,
