@@ -250,7 +250,9 @@ def test_stairs():
         arc = math.sin(math.pi * swing_t)   # 0→1→0 smooth swing
 
         tgt = STANCE.copy()
-        tgt[hi] += 0.65 * arc    # hip lifts → foot arcs up over step edge
+        # BUG FIX: increased from 0.65 → 0.80 for enough foot clearance over
+        # 8cm step risers; 0.65 barely clears the riser edge and causes stumbles
+        tgt[hi] += 0.80 * arc    # hip lifts → foot arcs up over step edge
         tgt[ki] -= 0.30 * arc    # knee extends → more foot clearance
 
         # ── Body velocity — decelerate BEFORE reaching stairs ──────
@@ -270,9 +272,18 @@ def test_stairs():
             d.qvel[3] *= 0.08
             d.qvel[4] *= 0.08
         elif x <= 6.8:
-            # ON STAIRS — slow steady climb
-            d.qvel[0] = 0.20
-            d.qvel[2] = 0.20 * 0.20         # = 0.04 m/s upward
+            # ON STAIRS — nudge toward target speed instead of hard-setting it.
+            # BUG FIX: hard-setting d.qvel[0] = 0.20 every step caused the robot to
+            # slam into each riser with full momentum after contact forces naturally
+            # reduced velocity → repeated impacts → flip.  A gentle nudge allows
+            # contact forces to temporarily reduce speed at riser faces (correct
+            # physics), then recovers toward the target between steps.
+            d.qvel[0] = np.clip(d.qvel[0] + 0.015, 0, 0.22)
+            # BUG FIX: removed d.qvel[2] injection.  The PD leg controller swings
+            # each hip/knee up (tgt[hi] += arc, tgt[ki] -= arc) to step onto the
+            # next tread — that IS the vertical motion.  Directly injecting vz
+            # fought the leg PD and prevented the body from naturally following
+            # the step surface upward.
         else:
             # Past stair top
             d.qvel[0] = 0.12
@@ -299,60 +310,82 @@ def test_stairs():
 
 def test_slide():
     print("  SKILL: Slide DOWN icy ramp  (μ=0.04, angle=16.7°)")
-    print("  Robot teleports onto ramp surface → settles → ctrl=0 → gravity slides it down\n")
+    print("  Robot starts on entry platform → walks to ramp → slides to landing pad\n")
+    # BUG FIX NOTES:
+    # Previously spawned at [0.30, 0, 2.06] directly on the μ=0.04 ramp.
+    # The 500-step run_sim settlement used pd(DEFAULT_Q) on the slippery surface:
+    #   → robot slid 1.22m at 2.44 m/s before slope_slide even started
+    #   → slope_slide set spd=0 at s=0 → sudden stop of a 2.4 m/s body → flip
+    #   → 250 steps were insufficient to reach the landing pad from x≈1.5+
+    # Fix: spawn on the HIGH-FRICTION entry platform (μ=0.9, same z=1.80 surface),
+    # walk to ramp entry, then slide with soft velocity tracking.
+
+    def walk_to_ramp(t, s, n, d):
+        """Trot from entry platform toward ramp start (x≈0)."""
+        ref = trot(t, freq=1.8, ah=0.20, ak=0.30)
+        d.qvel[0] = np.clip(d.qvel[0] + 0.015, 0, 0.38)
+        d.qvel[3] *= 0.20; d.qvel[4] *= 0.50; d.qvel[5] *= 0.20
+        return DEFAULT_Q + ref
 
     def settle_on_ramp(t, s, n, d):
-        """Settle in crouched wide-base stance — same as slide stance, no abrupt transition."""
+        """Slow down on ramp and adopt low wide-base crouched stance.
+        Robot is now on the μ=0.04 surface; kill forward speed gradually."""
         tgt = DEFAULT_Q.copy()
-        tgt[HIP]       = 1.00    # crouched
-        tgt[KNEE]      = -1.90
-        tgt[[0,3,6,9]] = 0.10   # abduction out — wider base = more stable on slope
-        # Kill angular drift during settle too
+        tgt[HIP]       = 1.00    # hip flex  — lower body
+        tgt[KNEE]      = -1.90   # knee flex — further lower
+        tgt[[0,3,6,9]] = 0.10    # abduction outward — wider, more stable base
+        # Gently kill forward velocity and angular drift
+        d.qvel[0] = float(d.qvel[0]) * 0.88   # decay toward 0 over ~20 steps
         d.qvel[3] *= 0.30; d.qvel[4] *= 0.30; d.qvel[5] *= 0.30
         return tgt
 
     def slope_slide(t, s, n, d):
-        """Stable controlled slide — velocity injection + aggressive angular damping.
-        Key: zero out angular velocities each step so robot can't flip/tumble."""
+        """Stable controlled slide down the icy ramp.
+        BUG FIX: replaced hard d.qvel[0]=spd (starting from 0) with soft
+        velocity tracking.  The old code set velocity to 0 at s=0 while the
+        robot might be moving; soft tracking converges from whatever the current
+        velocity is, eliminating the abrupt-stop → flip at phase start."""
         import math
-        # Gentle acceleration: 0→1.5 m/s over 250 steps (5 seconds)
-        spd   = min(s * 0.006, 1.5)
-        slope = math.tan(0.2915)          # tan(16.7°) = 0.300
-
-        # ── Velocity injection along slope ──────────────────────────
-        d.qvel[0] =  spd                  # forward (+X, down-slope)
-        d.qvel[2] = -spd * slope          # downward (-Z) component
-
-        # ── Kill ALL angular velocities → prevents flip/tumble ──────
-        d.qvel[3] *= 0.10                 # roll  — almost zero
-        d.qvel[4] *= 0.10                 # pitch — the main flip axis
-        d.qvel[5] *= 0.10                 # yaw   — prevents spin-out
-
-        # ── Kill lateral drift ───────────────────────────────────────
-        d.qvel[1] *= 0.70
-
-        # ── Stable wide-base crouched stance ─────────────────────────
+        slope  = math.tan(0.2915)               # tan(16.7°) ≈ 0.300
+        target = min(0.3 + s * 0.005, 1.5)     # ramp: 0.3 → 1.5 m/s over 240 steps
+        # Soft track: blend current velocity toward target (gain=0.20 per step)
+        cur_vx = float(d.qvel[0])
+        new_vx = cur_vx + 0.20 * (target - cur_vx)
+        d.qvel[0] = new_vx                          # forward (+X, down-slope)
+        d.qvel[2] = -float(d.qvel[0]) * slope       # downward (-Z) component
+        # Kill angular velocities → prevents flip/tumble
+        d.qvel[3] *= 0.10    # roll
+        d.qvel[4] *= 0.10    # pitch — main flip axis
+        d.qvel[5] *= 0.10    # yaw — prevents spin-out
+        d.qvel[1] *= 0.70    # lateral drift
+        # Stable wide-base crouched stance for the slide
         tgt = DEFAULT_Q.copy()
-        tgt[HIP]       = 1.00             # hip flex — crouched
-        tgt[KNEE]      = -1.90            # knee flex
-        tgt[[0,3,6,9]] = 0.10            # abduction outward — wider base
-        return tgt                        # pd() runs → legs stay above ramp
+        tgt[HIP]       = 1.00
+        tgt[KNEE]      = -1.90
+        tgt[[0,3,6,9]] = 0.10
+        return tgt
 
     def brake_landing(t, s, n, d):
-        """On flat green landing pad — gradually brake."""
+        """On flat green landing pad — gradually brake to a stop."""
         d.qvel[0] *= 0.88
         d.qvel[1] *= 0.85
         return DEFAULT_Q.copy()
 
     phases = [
-        ("SETTLE  — on ramp",       100, settle_on_ramp, 0.5),
-        ("SLIDE   — down ramp",     250, slope_slide,    0.5),
-        ("BRAKE   — landing pad",    80, brake_landing,  2.0),
+        # Walk 60 steps × 20ms = 1.2s at ≈0.38 m/s → from x=-0.30 to x≈+0.15 (ramp entry)
+        ("WALK    — to ramp entry",   60, walk_to_ramp,   0.3),
+        # Settle 100 steps = 2.0s on ramp: slow down, adopt crouched stance
+        ("SETTLE  — on ramp",        100, settle_on_ramp, 0.5),
+        # BUG FIX: extended from 250 → 450 steps (9s) to ensure robot reaches
+        # the landing pad at x≈6.0 after starting from ramp entry at x≈0.15
+        ("SLIDE   — down ramp",      450, slope_slide,    0.5),
+        ("BRAKE   — landing pad",    100, brake_landing,  2.0),
     ]
-    # Ramp surface at x=0.30:  z = 1.80 - 0.30*tan(16.7°) = 1.71m
-    # Trunk above surface: ~0.35m → spawn z=2.06 for leg clearance on angled surface
+    # BUG FIX: spawn on entry platform (x=-0.30, z=2.28) where friction=0.9.
+    # Previously used [0.30, 0, 2.06] directly on μ=0.04 ramp which caused
+    # uncontrolled sliding during the 500-step settlement phase.
     run_sim(os.path.join(ROOT, XML["slide"]), phases,
-            spawn_pos=[0.30, 0, 2.06])
+            spawn_pos=[-0.30, 0, 2.28])
 
 # ── JUMP ─────────────────────────────────────────────────────────────────────
 
