@@ -97,6 +97,25 @@ demo checkpoint="checkpoints/best/best_model.zip":
 demo-no-policy:
     {{PYTHON}} run.py demo --no-policy
 
+# Visual tour of best-performing terrains — full keyboard control + live HUD
+# Cycles flat → stairs → ice → rough → slopes → obstacles (3 episodes each, 500 steps)
+visual-test checkpoint="checkpoints/best/best_model.zip":
+    MUJOCO_GL=egl {{PYTHON}} terrain_testing/scripts/visual_test.py --checkpoint {{checkpoint}}
+
+# Visual test on a single terrain (e.g. `just visual-test-single pyramid_stairs`)
+visual-test-single terrain="pyramid_stairs" checkpoint="checkpoints/best/best_model.zip":
+    MUJOCO_GL=egl {{PYTHON}} terrain_testing/scripts/visual_test.py \
+        --terrain {{terrain}} --checkpoint {{checkpoint}} --episodes 5
+
+# Auto-walk visual tour (no pynput / keyboard required — scripted forward walk)
+visual-test-auto checkpoint="checkpoints/best/best_model.zip":
+    MUJOCO_GL=egl {{PYTHON}} terrain_testing/scripts/visual_test.py \
+        --checkpoint {{checkpoint}} --auto
+
+# List the curated best-terrain set
+visual-test-list:
+    {{PYTHON}} terrain_testing/scripts/visual_test.py --list
+
 # Record a video rollout
 record checkpoint="checkpoints/best/best_model.zip" output="logs/rollout.mp4":
     {{PYTHON}} scripts/record_video.py --checkpoint {{checkpoint}} --output {{output}}

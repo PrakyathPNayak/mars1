@@ -54,14 +54,11 @@ def load_policy(checkpoint_path, vecnorm_path=None):
 
     _vecnorm = None
     if vecnorm_path and os.path.exists(vecnorm_path):
-        import warnings
-        from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
-        # Load stats into a dummy env just to hold the normaliser
         print(f"Loading VecNormalize stats: {vecnorm_path}")
         try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                _vecnorm = VecNormalize.load(vecnorm_path, DummyVecEnv([lambda: None]))
+            import pickle
+            with open(vecnorm_path, "rb") as f:
+                _vecnorm = pickle.load(f)
             _vecnorm.training = False
             _vecnorm.norm_reward = False
         except Exception as e:
