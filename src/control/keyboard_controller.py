@@ -38,6 +38,9 @@ class KeyboardController:
         self._keys_held = set()
         self._lock = threading.Lock()
         self._listener = None
+        # SPACE sets this flag; movement keys clear it so that holding SPACE
+        # while another direction key is pressed still stops the robot.
+        self._force_stop = False
 
     def start(self):
         if KEYBOARD_BACKEND == "pynput":
@@ -62,19 +65,29 @@ class KeyboardController:
             self._update_from_held_keys()
             return float(self.vx), float(self.vy), float(self.wz), self.mode
 
+    _MOVEMENT_KEYS = frozenset(
+        ["w", "s", "a", "d", "up", "down", "left", "right", "q", "e"]
+    )
+
     def _update_from_held_keys(self):
         if self.exploring:
             return
+        # SPACE sets _force_stop; it is cleared only when a direction key is
+        # newly pressed (_on_press below). Held keys do NOT clear it so that
+        # holding W while pressing SPACE still stops the robot.
+        if self._force_stop:
+            self.vx = self.vy = self.wz = 0.0
+            return
 
+        keys = self._keys_held
         vx, vy, wz = 0.0, 0.0, 0.0
-        speed = self.SPEED_RUN if "shift" in self._keys_held else self.speed_level
+        speed = self.SPEED_RUN if "shift" in keys else self.speed_level
         if self.crouching:
             speed *= 0.3
 
         # Only one directional command is active — use the most recent key.
         # Priority order: last key pressed wins (pynput adds to _keys_held
         # in order, so we just pick the first match).
-        keys = self._keys_held
         if "w" in keys or "up" in keys:
             vx = speed
         elif "s" in keys or "down" in keys:
@@ -95,6 +108,12 @@ class KeyboardController:
             key_str = self._key_to_str(key)
             if key_str:
                 self._keys_held.add(key_str)
+                # A new directional key press resumes control after SPACE stop
+                if key_str in self._MOVEMENT_KEYS and self._force_stop:
+                    self._force_stop = False
+                    # Reset mode to walk so the robot doesn't stay in stand mode
+                    if self.mode == "stand":
+                        self.mode = "walk"
             self._handle_mode_keys(key_str)
 
     def _on_release(self, key):
@@ -120,7 +139,9 @@ class KeyboardController:
             self.crouching = not self.crouching
             self.mode = "crouch" if self.crouching else "walk"
         elif key_str == "space":
-            self.vx = self.vy = self.wz = 0.0; self.mode = "stand"
+            self.vx = self.vy = self.wz = 0.0
+            self.mode = "stand"
+            self._force_stop = True  # keep stopped even if movement keys are held
         elif key_str == "x":
             self.exploring = not self.exploring
             self.mode = "explore" if self.exploring else "walk"

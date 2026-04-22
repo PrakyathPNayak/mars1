@@ -29,8 +29,8 @@ Keyboard controls
 -----------------
     W/↑  Forward      S/↓  Backward     A/←  Strafe L   D/→  Strafe R
     Q    Turn left    E    Turn right
-    SHIFT+dir → run speed    CTRL → toggle crouch    J → jump
-    SPACE → stop/stand       1/2/3 → walk/trot/run mode
+    SHIFT+dir → run speed    CTRL → toggle crouch (lowers body)    J → jump
+    SPACE → stop/stand       1=walk  2=trot  3=run mode
     N → skip to next terrain   R → restart current episode
     ESC / Ctrl+C → quit
 """
@@ -240,12 +240,12 @@ def run_episode(
     _clear_hud_space(10)
 
     for step in range(1, max_steps + 1):
+        _step_wall = time.time()   # wall-clock start for real-time throttle
+
         # ── Get command ───────────────────────────────────────────────────────
         if kb is not None and kb.active:
             vx, vy, wz, mode = kb.get_command()
-            # Sanitize crouch → stand (not a valid SKILL_MODE)
-            if mode == "crouch":
-                mode = "stand"
+            # Pass crouch directly — set_command() handles it (lowers body height)
         else:
             # Auto scripted: walk forward
             vx, vy, wz, mode = auto_vx, 0.0, 0.0, "walk"
@@ -260,6 +260,13 @@ def run_episode(
 
         obs, reward, terminated, truncated, _ = env.step(action)
         total_reward += reward
+
+        # Real-time throttle: sleep so each step takes exactly env.dt wall-clock
+        # seconds. Without this the simulation runs 10-50x faster than real time.
+        _step_dt = getattr(env.unwrapped, "dt", 0.02)
+        _step_elapsed = time.time() - _step_wall
+        if _step_elapsed < _step_dt:
+            time.sleep(_step_dt - _step_elapsed)
 
         if terminated:
             alive = False
@@ -352,8 +359,8 @@ def main():
                         help="Lock difficulty — no per-episode randomization")
     parser.add_argument("--episodes", type=int, default=3,
                         help="Episodes per terrain (default 3)")
-    parser.add_argument("--steps", type=int, default=500,
-                        help="Max steps per episode (default 500)")
+    parser.add_argument("--steps", type=int, default=2000,
+                        help="Max steps per episode (default 2000 ≈ 40s real-time)")
     parser.add_argument("--checkpoint", default=_DEFAULT_CHECKPOINT,
                         help=f"Path to PPO checkpoint (default: {_DEFAULT_CHECKPOINT})")
     parser.add_argument("--vecnorm", default=None,

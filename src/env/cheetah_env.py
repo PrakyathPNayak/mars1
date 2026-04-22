@@ -781,7 +781,7 @@ class MiniCheetahEnv(gym.Env):
             start_terrain_h = self._terrain_gen.get_height_at(0.0, 0.0)
 
         # Set initial pose
-        self.data.qpos[2] = HEIGHT_DEFAULT + start_terrain_h + 0.02  # small margin
+        self.data.qpos[2] = HEIGHT_DEFAULT + start_terrain_h + 0.08  # margin for uneven terrain
         self.data.qpos[3] = 1.0  # quat w
         self.data.qpos[4:7] = 0.0
         self.data.qpos[7:7 + NUM_JOINTS] = DEFAULT_STANCE
