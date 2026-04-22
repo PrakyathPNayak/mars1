@@ -45,9 +45,12 @@ def run(checkpoint_path=None, use_policy=True):
         policy, normalize_fn = None, lambda obs: obs
 
     # Create env with render_mode="none" — we manage the viewer ourselves
+    # FIX: enable interesting terrain (stairs, slopes, rough, mixed) for interactive exploration
     env = MiniCheetahEnv(
         render_mode="none",
-        use_terrain=False,
+        use_terrain=True,
+        terrain_type="mixed",  # combination of stairs, slopes, rough, gaps
+        terrain_difficulty=0.6,  # moderate-to-challenging
         episode_length=100_000,
     )
     env.randomize_commands = False
