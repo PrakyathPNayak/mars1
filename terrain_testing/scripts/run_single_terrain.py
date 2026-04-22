@@ -30,6 +30,7 @@ import sys
 import time
 
 import numpy as np
+from stable_baselines3 import PPO
 
 # ── path setup ────────────────────────────────────────────────────────────────
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -42,45 +43,43 @@ for _p in [_TERRAIN_TESTING, _REPO_ROOT, os.path.join(_REPO_ROOT, "src")]:
 from maps.map_registry import list_terrains
 from envs.base_terrain_wrapper import BaseTerrainWrapper
 
-'''
-def load_policy(checkpoint_path: str):
-    """Load SB3 PPO policy from checkpoint."""
-    try:
-        from stable_baselines3 import PPO
-    except ImportError:
-        print("stable-baselines3 not installed. Run: pip install stable-baselines3")
-        sys.exit(1)
+def load_policy(checkpoint_path, vecnorm_path=None):
+    """Load SB3 PPO checkpoint with optional VecNormalize stats.
+
+    If vecnorm_path points to a valid .pkl the policy will normalise
+    observations exactly as during training — critical for correct predictions.
+    """
     print(f"Loading checkpoint: {checkpoint_path}")
-    model = PPO.load(checkpoint_path)
-    return model
-'''
-from stable_baselines3 import PPO
-import torch
+    model = PPO.load(checkpoint_path, device="cpu")
 
-def load_policy(checkpoint_path):
-    print(f"Loading checkpoint: {checkpoint_path}")
+    _vecnorm = None
+    if vecnorm_path and os.path.exists(vecnorm_path):
+        import warnings
+        from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+        # Load stats into a dummy env just to hold the normaliser
+        print(f"Loading VecNormalize stats: {vecnorm_path}")
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                _vecnorm = VecNormalize.load(vecnorm_path, DummyVecEnv([lambda: None]))
+            _vecnorm.training = False
+            _vecnorm.norm_reward = False
+        except Exception as e:
+            print(f"[warn] Could not load vecnorm ({e}); using raw observations")
+            _vecnorm = None
 
-    # 🔥 FORCE SB3 TO IGNORE SAVED FUNCTIONS
-    custom_objects = {
-        "learning_rate": 0.0003,
-        "lr_schedule": lambda _: 0.0003,
-        "clip_range": lambda _: 0.2,
-        "clip_range_vf": None,
-    }
+    class _WrappedPolicy:
+        """Thin shim that normalises obs before calling model.predict."""
+        def __init__(self, m, vn):
+            self._model = m
+            self._vn = vn
 
-    model = PPO.load(
-        checkpoint_path,
-        custom_objects=custom_objects,
-        device="cpu"
-    )
+        def predict(self, obs, deterministic=True):
+            if self._vn is not None:
+                obs = self._vn.normalize_obs(np.array(obs, dtype=np.float32))
+            return self._model.predict(obs, deterministic=deterministic)
 
-    # 🔥 HARD OVERRIDE (very important)
-    model.policy.optimizer = torch.optim.Adam(
-        model.policy.parameters(),
-        lr=0.0003
-    )
-
-    return model
+    return _WrappedPolicy(model, _vecnorm)
 
 def run_episode(env, policy=None, max_steps=2000, verbose=True):
     """Run one episode. Returns dict of metrics."""
@@ -147,8 +146,9 @@ def main():
     parser.add_argument("--fixed-difficulty", action="store_true",
                         help="Lock difficulty (no randomization)")
     parser.add_argument("--skill", default=None,
-                        choices=["walk", "trot", "run", "jump", "crouch", "stand", None],
-                        help="Lock skill mode (default: randomize)")
+                        choices=["walk", "run", "jump", "stand", None],
+                        help="Lock skill mode (default: randomize). "
+                             "Note: 'trot'/'crouch' are not valid SKILL_MODES.")
     parser.add_argument("--steps", type=int, default=1000,
                         help="Max steps per episode")
     parser.add_argument("--episodes", type=int, default=3,
@@ -157,6 +157,9 @@ def main():
                         choices=["none", "human", "rgb_array"])
     parser.add_argument("--checkpoint", default=None,
                         help="Path to SB3 PPO checkpoint (.zip)")
+    parser.add_argument("--vecnorm", default=None,
+                        help="Path to VecNormalize .pkl (default: auto-detect "
+                             "checkpoints/vec_normalize.pkl beside checkpoint)")
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
@@ -177,7 +180,21 @@ def main():
         randomize_domain=True,
     )
 
-    policy = load_policy(args.checkpoint) if args.checkpoint else None
+    policy = None
+    if args.checkpoint:
+        # Auto-detect vecnorm: look beside checkpoint, then at project default
+        vecnorm_path = args.vecnorm
+        if vecnorm_path is None:
+            ckpt_dir = os.path.dirname(os.path.abspath(args.checkpoint))
+            candidates = [
+                os.path.join(ckpt_dir, "vec_normalize.pkl"),
+                os.path.join(_REPO_ROOT, "checkpoints", "vec_normalize.pkl"),
+            ]
+            for c in candidates:
+                if os.path.exists(c):
+                    vecnorm_path = c
+                    break
+        policy = load_policy(args.checkpoint, vecnorm_path=vecnorm_path)
 
     all_metrics = []
     for ep in range(args.episodes):
