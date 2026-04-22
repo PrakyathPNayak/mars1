@@ -456,6 +456,9 @@ def main():
                 render_mode="human",
                 randomize_domain=True,
             )
+            # BUG FIX: disable command re-randomization so keyboard controls
+            # are not silently overwritten every 50-1000 env steps.
+            env.unwrapped.randomize_commands = False
 
             all_metrics = []
             for ep in range(1, args.episodes + 1):

@@ -31,6 +31,11 @@ except ImportError:
             out /= k
         return out.astype(np.float32)
 
+# Physical size of the terrain in metres (matches HFIELD_SIZE*2 in cheetah_env.py).
+# Slope and rough-terrain generators must scale heights by this so that:
+#   height_m = tan(angle_deg) * _TERRAIN_PHYSICAL_SIZE  →  correct physical angle.
+_TERRAIN_PHYSICAL_SIZE = 10.0   # 2 * HFIELD_SIZE = 2 * 5.0 m
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
@@ -58,21 +63,25 @@ def pyramid_stairs(resolution: int, difficulty: float,
                    rng: np.random.RandomState) -> np.ndarray:
     """Pyramid-shaped stair terrain from legged_gym (Rudin 2022).
 
-    Stairs rise from the edges toward a central plateau.
+    BUG FIX (v2): original code used dist from centre to assign heights,
+    making edges the highest point (a bowl).  Correct: centre is the peak
+    plateau and stairs step DOWN as you move outward (proper pyramid).
+
     step_height: 0.03–0.22 m based on difficulty.
-    step_width: 30–80 cm (finer at high difficulty).
+    step_width:  30–80 cm (finer at high difficulty).
     """
     n = resolution
-    step_h = 0.03 + 0.19 * difficulty          # 3–22 cm
-    step_w = max(4, int(n * (0.3 - 0.2 * difficulty)))  # finer steps at high d
-    heights = np.zeros((n, n), dtype=np.float32)
-    cx, cy = n // 2, n // 2
+    step_h = 0.03 + 0.19 * difficulty          # 3–22 cm per step
+    step_w = max(4, int(n * (0.3 - 0.2 * difficulty)))  # pixels per step ring
     max_height = 0.50
+    cx, cy = n // 2, n // 2
+    heights = np.zeros((n, n), dtype=np.float32)
     for i in range(n):
         for j in range(n):
             dist = max(abs(i - cx), abs(j - cy))
             step_idx = dist // step_w
-            heights[i, j] = min(step_idx * step_h, max_height)
+            # Proper pyramid: centre = max_height, stairs descend outward
+            heights[i, j] = max(max_height - step_idx * step_h, 0.0)
     return heights
 
 
@@ -121,21 +130,26 @@ def sloped_terrain(resolution: int, difficulty: float,
 
     Slope angle: 0–25 degrees.
     Direction randomly chosen per episode (controlled by rng).
+
+    BUG FIX (v2): heights were not scaled by the physical terrain size, so
+    a 25° slope produced only a 2.5° incline.  Heights are now
+    tan(angle) * _TERRAIN_PHYSICAL_SIZE so the angle is physically correct.
     """
     n = resolution
     angle_deg = 3.0 + 22.0 * difficulty
     slope = math.tan(math.radians(angle_deg))
+    # Scale so the height change over the full terrain equals tan(angle)*size
+    h_scale = slope * _TERRAIN_PHYSICAL_SIZE
     direction = rng.randint(0, 4)   # 0=+x, 1=-x, 2=+y, 3=-y
-    heights = np.zeros((n, n), dtype=np.float32)
-    idx = np.linspace(0, 1, n)
+    idx = np.linspace(0.0, 1.0, n)
     if direction == 0:
-        heights = np.outer(idx, np.ones(n)).astype(np.float32) * slope
+        heights = np.outer(idx, np.ones(n)).astype(np.float32) * h_scale
     elif direction == 1:
-        heights = np.outer(1 - idx, np.ones(n)).astype(np.float32) * slope
+        heights = np.outer(1.0 - idx, np.ones(n)).astype(np.float32) * h_scale
     elif direction == 2:
-        heights = np.outer(np.ones(n), idx).astype(np.float32) * slope
+        heights = np.outer(np.ones(n), idx).astype(np.float32) * h_scale
     else:
-        heights = np.outer(np.ones(n), 1 - idx).astype(np.float32) * slope
+        heights = np.outer(np.ones(n), 1.0 - idx).astype(np.float32) * h_scale
     return heights
 
 
@@ -147,13 +161,17 @@ def rma_rough(resolution: int, difficulty: float,
               rng: np.random.RandomState) -> np.ndarray:
     """Random rough terrain as used in RMA (Kumar 2021).
 
-    Gaussian noise σ = 0.005–0.025 m, smoothed.
+    Gaussian noise σ = 0.015–0.055 m, lightly smoothed.
     A1 robot experiments used σ ≈ 0.02 m (2 cm RMS roughness).
+
+    BUG FIX (v2): original amplitude was too small (0.005–0.025m) and
+    over-smoothed (sigma=2px=10cm), giving <6mm effective bumps.
+    Amplitude tripled; smooth sigma reduced to 0.8px for visible texture.
     """
     n = resolution
-    sigma = 0.005 + 0.020 * difficulty
+    sigma = 0.015 + 0.040 * difficulty   # was 0.005 + 0.020
     heights = rng.normal(0.0, sigma, (n, n)).astype(np.float32)
-    heights = _smooth(heights, sigma=2.0)
+    heights = _smooth(heights, sigma=0.8)  # was 2.0 — light touch only
     return heights
 
 
@@ -189,15 +207,16 @@ def dreamwaq_rough(resolution: int, difficulty: float,
                    rng: np.random.RandomState) -> np.ndarray:
     """Rough terrain variant matching DreamWaQ training distribution.
 
-    Uses two-scale noise: coarse + fine. Coarse σ: 0–5 cm.
-    Fine σ: 0–1 cm. Matches the proprioceptive history encoding approach.
+    Two-scale noise: coarse + fine.
+    BUG FIX (v2): coarse amplitude tripled, coarse smooth sigma 4.0→1.5 px
+    so large bumps are physically present instead of Gaussian-washed flat.
     """
     n = resolution
-    coarse_sigma = 0.01 + 0.04 * difficulty
-    fine_sigma = 0.002 + 0.008 * difficulty
+    coarse_sigma = 0.03 + 0.07 * difficulty  # was 0.01 + 0.04 — tripled
+    fine_sigma = 0.005 + 0.015 * difficulty  # was 0.002 + 0.008
     coarse = rng.normal(0, coarse_sigma, (n, n)).astype(np.float32)
     fine = rng.normal(0, fine_sigma, (n, n)).astype(np.float32)
-    coarse = _smooth(coarse, sigma=4.0)
+    coarse = _smooth(coarse, sigma=1.5)   # was 4.0 — reduces over-blurring
     fine = _smooth(fine, sigma=0.8)
     return coarse + fine
 
@@ -272,11 +291,14 @@ def anymal_rough(resolution: int, difficulty: float,
     """Rough terrain from Hwangbo 2019 ANYmal paper.
 
     2 cm RMS roughness, Gaussian bumps, matches ANYmal training environment.
+
+    BUG FIX (v2): amplitude increased, smoothing reduced so terrain is
+    visibly rough rather than near-flat.
     """
     n = resolution
-    rms = 0.005 + 0.015 * difficulty    # 0.5–2 cm RMS
+    rms = 0.015 + 0.030 * difficulty    # was 0.005 + 0.015 — tripled base
     heights = rng.normal(0.0, rms, (n, n)).astype(np.float32)
-    return _smooth(heights, sigma=1.0)
+    return _smooth(heights, sigma=0.8)  # was 1.0
 
 
 def anymal_steps(resolution: int, difficulty: float,
@@ -508,18 +530,18 @@ def asymmetric_slope(resolution: int, difficulty: float,
     """Custom C5: Left side slopes up, right side slopes down.
 
     Tests roll compensation. Creates a permanent lateral tilt inducement.
+    BUG FIX (v2): heights now scaled by _TERRAIN_PHYSICAL_SIZE so the
+    physical slope angle matches the specified angle_deg (was 10x too shallow).
     """
     n = resolution
     angle_deg = 3.0 + 15.0 * difficulty
-    slope = math.tan(math.radians(angle_deg))
+    slope = math.tan(math.radians(angle_deg)) * _TERRAIN_PHYSICAL_SIZE
     heights = np.zeros((n, n), dtype=np.float32)
     for j in range(n):
-        # Left half: rises left→centre; right half: drops centre→right
         if j < n // 2:
             heights[:, j] = slope * (n // 2 - j) / n
         else:
             heights[:, j] = -slope * (j - n // 2) / n
-    # Add a small random rough component
     noise = rng.normal(0, 0.005 * difficulty, (n, n)).astype(np.float32)
     return heights + noise
 
