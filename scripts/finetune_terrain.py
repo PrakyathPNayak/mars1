@@ -212,13 +212,22 @@ def finetune(args):
             device=args.device,
             custom_objects={
                 "learning_rate": args.finetune_lr,
-                "clip_range": 0.2,       # same as base — enough room to adapt
-                # ft_v4: raise ent_coef 0.005→0.02 to counteract entropy collapse
-                # that stopped ft_v2 from exploring new terrain gaits.
+                # ft_v5: tighter clip_range (0.15 vs 0.2) to reduce update size per step.
+                # Previous runs had clip_fraction=0.47-0.59 and approx_kl=0.07-0.10,
+                # meaning every update was hitting the clip boundary — this drove
+                # entropy collapse.  0.15 limits the per-step policy ratio change.
+                "clip_range": 0.15,
                 "ent_coef": args.ent_coef,
                 "n_steps": 2048,
                 "batch_size": 512,
-                "n_epochs": 10,          # more epochs per batch for faster adaptation
+                # ft_v5: n_epochs 10→5 so we make fewer gradient passes per batch.
+                # Fewer passes = less entropy collapse per collected rollout.
+                "n_epochs": 5,
+                # ft_v5: target_kl prevents runaway updates.  PPO will stop epoch
+                # loop early if approx_kl > target_kl, capping the update size.
+                # Previous ft_v4 had approx_kl=0.07-0.10 (4-5x too high); with
+                # target_kl=0.02 the policy moves slowly but without collapsing.
+                "target_kl": args.target_kl,
             },
         )
     model.tensorboard_log = str(checkpoint_dir / "tb")
@@ -368,9 +377,12 @@ def main():
                         help="Parallel envs for fine-tuning")
     parser.add_argument("--finetune-lr", type=float, default=2e-4,
                         help="Learning rate for fine-tuning (default 2e-4)")
-    parser.add_argument("--ent-coef", type=float, default=0.02,
-                        help="Entropy coefficient for fine-tuning (default 0.02 — higher than "
+    parser.add_argument("--ent-coef", type=float, default=0.05,
+                        help="Entropy coefficient for fine-tuning (default 0.05 — higher than "
                              "base 0.005 to counteract entropy collapse in long runs)")
+    parser.add_argument("--target-kl", type=float, default=0.02,
+                        help="PPO target KL divergence for early stopping (default 0.02). "
+                             "Prevents runaway updates that drove entropy collapse in ft_v4.")
     parser.add_argument("--device",   default="cpu",
                         help="torch device (cpu or cuda)")
     parser.add_argument("--checkpoint-dir", default="checkpoints/terrain_ft",
