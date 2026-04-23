@@ -32,8 +32,20 @@
   "only_positive_rewards": false,
   "command_resample_interval": 200,
   "command_mode_randomization": {
-    "modes": ["stand", "walk", "run", "crouch", "jump"],
-    "weights": [0.20, 0.25, 0.20, 0.15, 0.20]
+    "modes": [
+      "stand",
+      "walk",
+      "run",
+      "crouch",
+      "jump"
+    ],
+    "weights": [
+      0.20,
+      0.25,
+      0.20,
+      0.15,
+      0.20
+    ]
   },
   "velocity_ranges": {
     "stand": "0, 0, 0 (always zero)",
@@ -61,8 +73,14 @@
     "reference": "Go1 specs: 23.7 Nm hip/thigh, 35.55 Nm knee"
   },
   "domain_randomization": {
-    "mass_range": [0.85, 1.15],
-    "friction_range": [0.8, 2.0],
+    "mass_range": [
+      0.85,
+      1.15
+    ],
+    "friction_range": [
+      0.8,
+      2.0
+    ],
     "obs_noise_std": 0.02
   },
   "reward_scales_v7": {

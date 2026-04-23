@@ -416,16 +416,66 @@ class TerrainGenerator:
                 heights[bx:bx+bw, by:by+bh_size] = h
 
         elif terrain_type == "mixed":
-            section_types = self.rng.choice(
-                ["rough", "stairs_up", "slope_up", "gaps", "flat"],
-                size=4
+            # Arena layout for interactive/demo use:
+            #   - flat central spawn zone (radius ~3m around origin) so robot never
+            #     spawns glitched inside a stair or slope
+            #   - each of the 4 quadrants outside the zone has a distinct feature:
+            #       +X → stairs up (ascending away from origin)
+            #       -X → gentle slope up
+            #       +Y → rolling rough terrain
+            #       -Y → low scattered bumps
+            #   - features taper to zero near the spawn zone for smooth transitions
+            cell_size = self.size / n                       # metres per cell
+            cx = cy = n // 2                                # origin cell
+            spawn_r_m  = 3.0                                # flat spawn zone radius
+            taper_m    = 1.5                                # smooth ramp width
+
+            # feature parameters
+            step_h     = 0.04 + 0.06 * difficulty           # 4–10 cm per step
+            step_w_m   = 0.45 - 0.15 * difficulty           # 30–45 cm wide
+            step_w_c   = max(3, int(step_w_m / cell_size))
+            max_stairs = 0.30 + 0.30 * difficulty           # cap total rise
+            slope_max  = 0.20 + 0.25 * difficulty           # slope peak
+            rough_amp  = 0.04 + 0.06 * difficulty           # bump amplitude
+
+            # coordinate grids (metres from origin)
+            i_idx  = np.arange(n)
+            dx_col = (i_idx - cx) * cell_size               # (n,) along row axis
+            dy_col = (i_idx - cy) * cell_size               # (n,) along col axis
+            DX, DY = np.meshgrid(dx_col, dy_col, indexing='ij')
+            dist   = np.hypot(DX, DY)
+
+            # --- compute each feature map vectorized ---
+            # +X stairs
+            steps_from_edge = np.maximum(0, (np.arange(n) - (cx + int(spawn_r_m / cell_size))) // step_w_c)
+            stairs_col = np.minimum(steps_from_edge * step_h, max_stairs).astype(np.float32)
+            stairs_map = np.broadcast_to(stairs_col[:, None], (n, n)).copy()
+
+            # -X slope
+            run_m      = np.maximum(0.0, -DX - spawn_r_m)
+            slope_map  = np.minimum(run_m * 0.15 + 0.05 * difficulty, slope_max)
+
+            # +Y rough (rolling bumps)
+            rough_map  = rough_amp * (np.sin(DX * 0.8) * np.cos(DY * 0.6)
+                                      + 0.5 * np.sin(DX * 1.7 + DY * 1.3))
+
+            # -Y scattered small bumps
+            bumps_map  = rough_amp * 0.6 * (np.sin(DX * 2.1) + np.cos(DY * 2.3))
+
+            # quadrant masks based on dominant axis from origin
+            abs_dx, abs_dy = np.abs(DX), np.abs(DY)
+            x_dominant = abs_dx >= abs_dy
+            out = np.where(
+                x_dominant & (DX > 0),  stairs_map,
+                np.where(
+                    x_dominant & (DX <= 0), slope_map,
+                    np.where(DY > 0, rough_map, bumps_map),
+                ),
             )
-            quarter = n // 4
-            for idx, st in enumerate(section_types):
-                sub = self.generate(st, difficulty)
-                start = idx * quarter
-                end = start + quarter
-                heights[start:end, :] = sub[start:end, :]
+
+            # smooth taper in 1.5m band around spawn zone, then hard-flat inside
+            blend = np.clip((dist - spawn_r_m) / taper_m, 0.0, 1.0)
+            heights = (out * blend).astype(np.float32)
 
         self._heightfield = heights
         return heights
@@ -813,13 +863,19 @@ class MiniCheetahEnv(gym.Env):
         terrain_cfg = self._get_terrain_config(rng)
         self._generate_terrain(terrain_cfg, rng)
 
-        # Compute starting height based on terrain at origin
+        # Compute starting height based on terrain at origin.
+        # Sample a small footprint (±0.25m) and take the MAX so the robot never
+        # spawns glitched into a stair edge or bump.
         start_terrain_h = 0.0
         if self._terrain_gen is not None:
-            start_terrain_h = self._terrain_gen.get_height_at(0.0, 0.0)
+            probe = [-0.25, -0.12, 0.0, 0.12, 0.25]
+            start_terrain_h = max(
+                self._terrain_gen.get_height_at(px, py)
+                for px in probe for py in probe
+            )
 
-        # Set initial pose
-        self.data.qpos[2] = HEIGHT_DEFAULT + start_terrain_h + 0.08  # margin for uneven terrain
+        # Set initial pose — 10cm margin above highest nearby terrain cell.
+        self.data.qpos[2] = HEIGHT_DEFAULT + start_terrain_h + 0.10
         self.data.qpos[3] = 1.0  # quat w
         self.data.qpos[4:7] = 0.0
         self.data.qpos[7:7 + NUM_JOINTS] = DEFAULT_STANCE
