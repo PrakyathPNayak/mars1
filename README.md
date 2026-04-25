@@ -138,28 +138,39 @@ just tensorboard logdir=runs/20260403_120000/logs_mlp
 | SPACE | Stop motion / clear command |
 | ESC ESC | Quit (press twice within 500ms) |
 
-## Reward Design (v3)
+## Reward Design (v23)
 
-26-term reward function for the Go1 (see `src/env/cheetah_env.py`).
-Designed from legged_gym (Rudin 2022) + Humanoid-Gym (Gu 2024) references,
-with diagnostic-driven fixes for stand stability and crouch accuracy.
+22-component reward function for the Go1 (see `REWARD_SCALES` in
+`src/env/cheetah_env.py`). Per-mode multipliers in `MODE_REWARD_MULTIPLIERS`
+swap which terms are active for `stand`, `walk`, `run`, `jump`. A final
+`MODE_REWARD_SCALE` (stand=0.40, walk/run=1.0, jump=0.35) equalises return
+magnitudes across modes (v31p).
 
-**Key positive terms (dominate at convergence ~6/step):**
-- `r_linvel` × 4.0 — exp-kernel xy velocity tracking (σ=0.25)
-- `r_yaw` × 2.0 — yaw rate tracking
-- `r_feet_air_time` × 2.0 — gait frequency via leg-swing timing
-- `r_body_height` × 2.0 — `exp(-Δh²/0.02) − 1.0` (zero at target, negative elsewhere)
+**Tracking (exp kernel `exp(-err²/σ²)`, command-active gated):**
+- `r_vel_x` × 2.0 — forward velocity tracking, σ adaptive
+- `r_vel_y` × 2.0 — lateral velocity tracking
+- `r_yaw` × 2.5 — yaw rate tracking
+- `r_fwd_vel` × 10.0 — EMA-smoothed forward speed bonus
 
-**Key penalty terms (v3 strengthened):**
-- `r_dof_vel` × −0.1 — Σ joint_vel² — key anti-shake (new in v3)
-- `r_stand_still` × −3.0 — gated by mode ≠ crouch/jump
-- `r_smooth` × −0.3 — action rate (6× from v2)
-- `r_posture` × −1.5 — squared joint error from mode target (replaces narrow exp kernel)
+**Gait & posture:**
+- `r_gait` × 2.5 — air-time + diagonal symmetry + clearance + stride freq
+- `r_posture` × 1.0 — height-interpolated hip/knee targets
+- `r_body_height` × 1.5 — terrain-relative trunk height (key for slopes)
+- `r_foot_clearance` × 0.5 — swing foot above local terrain (0.08m target)
 
-**Command mode randomization:** stand (15%), walk (15%), trot (25%), run (15%), explore (10%), crouch (20%).
-Each mode uses appropriate velocity ranges. Re-sampled every 200 steps mid-episode.
+**Penalties (bounded or small):**
+- `r_orientation` × −2.0 — terrain-normal-relative tilt
+- `r_joint_limit` × −10.0 — soft barrier at 0.1 rad from limits
+- `r_lin_vel_z` × −2.0 — vertical bounce
+- `r_smooth` × −0.02 — action L2 rate
+- `r_standstill` × −3.0 — quadratic on EMA speed deficit
 
-See [docs/architecture.md](docs/architecture.md) for full reward tables and diagnostics.
+**Mode-specific:**
+- `r_stillness` (stand only) — joint + body motion penalty
+- `r_jump_phase` × 5.0 (jump only) — crouch/launch/flight/landing FSM
+- `r_terrain_progress` × 1.0 — velocity projected onto commanded direction
+
+See [docs/architecture.md](docs/architecture.md) for the full table.
 
 ## Robot: Unitree Go1
 
