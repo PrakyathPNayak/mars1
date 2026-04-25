@@ -138,6 +138,11 @@ just tensorboard logdir=runs/20260403_120000/logs_mlp
 | SPACE | Stop motion / clear command |
 | ESC ESC | Quit (press twice within 500ms) |
 
+See [INTERACTIVE_GUIDE.md](INTERACTIVE_GUIDE.md) for terrain selection,
+difficulty levels, and the full list of supported terrain types
+(`flat`, `rough`, `slope_up`, `slope_down`, `stairs_up`, `stairs_down`,
+`gaps`, `stepping_stones`, `random_blocks`, `mixed`).
+
 ## Reward Design (v23)
 
 22-component reward function for the Go1 (see `REWARD_SCALES` in
