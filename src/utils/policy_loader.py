@@ -79,6 +79,14 @@ def load_policy_for_inference(
         "checkpoints/best/best_model.zip",
         "checkpoints/cheetah_final.zip",
     ]
+    # Warn explicitly when a user-supplied checkpoint is missing so the silent
+    # fallback to the default search path doesn't surprise callers.
+    if checkpoint_path and not os.path.exists(checkpoint_path):
+        print(f"[WARN] Requested checkpoint not found: {checkpoint_path} "
+              f"(falling back to default search)")
+    # Dedup while preserving order (user path may equal a default).
+    seen = set()
+    candidates = [c for c in candidates if c and not (c in seen or seen.add(c))]
 
     policy = None
     for ckpt in candidates:
