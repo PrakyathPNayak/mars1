@@ -173,6 +173,117 @@ class SensoryGroupEncoder(nn.Module):
         return fused
 
 
+# ── Topology-Aware Hierarchical Encoder ──────────────────────────────
+
+# Per-leg slices into the 196-dim observation. Joint order in the env
+# is FR, FL, RR, RL with 3 joints per leg (hip-abduction, hip-pitch, knee).
+_LEG_NAMES = ("FR", "FL", "RR", "RL")
+_LEG_JOINT_IDX = {
+    "FR": [0, 1, 2],
+    "FL": [3, 4, 5],
+    "RR": [6, 7, 8],
+    "RL": [9, 10, 11],
+}
+_LEG_FOOT_IDX = {"FR": 0, "FL": 1, "RR": 2, "RL": 3}
+
+
+class TopologyAwareHierarchicalEncoder(nn.Module):
+    """Two-tier attention along the quadruped kinematic tree.
+
+    Tier 1 (limb level): one token per leg, built from that leg's joint
+    positions, joint velocities, foot contact, and foot height above
+    terrain. The four leg tokens self-attend so each leg can condition on
+    the others, which is what enables coordinated gaits (trot, bound).
+
+    Tier 2 (body level): four high-level tokens — pooled-legs, trunk
+    (linvel, angvel, gravity, base height), ground (heightmap + CPG
+    phase), and command (cmd, skill, cmd_decomp, height_ctrl) — cross
+    attend so locomotion intent and terrain context can modulate the
+    leg-pool representation. Output is the mean over the body-tier
+    tokens, matching the d_model contract of SensoryGroupEncoder.
+
+    Drop-in for SensoryGroupEncoder. Selected via the
+    `use_topology_encoder` flag on HierarchicalTransformerPolicy.
+    """
+
+    # Body-tier slices (offsets into the 196-dim obs)
+    _TRUNK_SLICES = [(24, 30), (30, 33), (59, 60)]      # linvel+angvel, gravity, base_h
+    _GROUND_SLICES = [(64, 66), (75, 196)]               # cpg_phase, heightmap
+    _COMMAND_SLICES = [(45, 49), (49, 53), (53, 59), (66, 71)]  # cmd, skill, decomp, h_ctrl
+
+    def __init__(self, d_model: int = 128, n_heads: int = 4, dropout: float = 0.05):
+        super().__init__()
+        self.d_model = d_model
+
+        # Tier 1: per-leg projection (3 pos + 3 vel + 1 contact + 1 foot_h = 8)
+        leg_in_dim = 3 + 3 + 1 + 1
+        self.leg_proj = nn.Sequential(
+            nn.Linear(leg_in_dim, d_model),
+            nn.LayerNorm(d_model),
+            nn.SiLU(),
+        )
+        self.leg_attn = nn.MultiheadAttention(
+            d_model, num_heads=n_heads, batch_first=True, dropout=dropout
+        )
+        self.leg_norm = nn.LayerNorm(d_model)
+
+        # Tier 2: body-level projections
+        trunk_dim = sum(e - s for s, e in self._TRUNK_SLICES)
+        ground_dim = sum(e - s for s, e in self._GROUND_SLICES)
+        command_dim = sum(e - s for s, e in self._COMMAND_SLICES)
+        self.trunk_proj = self._mlp(trunk_dim, d_model)
+        self.ground_proj = self._mlp(ground_dim, d_model)
+        self.command_proj = self._mlp(command_dim, d_model)
+        self.legs_pool_proj = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.LayerNorm(d_model),
+            nn.SiLU(),
+        )
+        self.body_attn = nn.MultiheadAttention(
+            d_model, num_heads=n_heads, batch_first=True, dropout=dropout
+        )
+        self.body_norm = nn.LayerNorm(d_model)
+
+    @staticmethod
+    def _mlp(in_dim: int, d_model: int) -> nn.Module:
+        return nn.Sequential(
+            nn.Linear(in_dim, d_model),
+            nn.LayerNorm(d_model),
+            nn.SiLU(),
+        )
+
+    @staticmethod
+    def _gather(obs: torch.Tensor, slices) -> torch.Tensor:
+        return torch.cat([obs[..., s:e] for s, e in slices], dim=-1)
+
+    def forward(self, obs: torch.Tensor) -> torch.Tensor:
+        """obs: (batch, 196) -> (batch, d_model)."""
+        # Tier 1: build per-leg tokens
+        leg_tokens = []
+        for name in _LEG_NAMES:
+            j = _LEG_JOINT_IDX[name]
+            f = _LEG_FOOT_IDX[name]
+            jp = obs[..., j]                          # (B, 3)
+            jv = obs[..., [12 + k for k in j]]        # (B, 3)
+            contact = obs[..., 60 + f:60 + f + 1]     # (B, 1)
+            foot_h = obs[..., 71 + f:71 + f + 1]      # (B, 1)
+            leg_in = torch.cat([jp, jv, contact, foot_h], dim=-1)
+            leg_tokens.append(self.leg_proj(leg_in))
+        legs = torch.stack(leg_tokens, dim=-2)        # (B, 4, d)
+        legs_attn, _ = self.leg_attn(legs, legs, legs)
+        legs = self.leg_norm(legs + legs_attn)
+        legs_pool = self.legs_pool_proj(legs.mean(dim=-2))  # (B, d)
+
+        # Tier 2: body-level tokens
+        trunk = self.trunk_proj(self._gather(obs, self._TRUNK_SLICES))
+        ground = self.ground_proj(self._gather(obs, self._GROUND_SLICES))
+        command = self.command_proj(self._gather(obs, self._COMMAND_SLICES))
+        body = torch.stack([legs_pool, trunk, ground, command], dim=-2)  # (B, 4, d)
+        body_attn, _ = self.body_attn(body, body, body)
+        body = self.body_norm(body + body_attn)
+        return body.mean(dim=-2)
+
+
 # ── Morphological Symmetry Module ────────────────────────────────────
 
 class SymmetryAugmenter(nn.Module):
@@ -414,6 +525,7 @@ class HierarchicalTransformerPolicy(nn.Module):
         n_experts: int = 6,
         history_len: int = HISTORY_LEN,
         dropout: float = 0.05,
+        use_topology_encoder: bool = False,
     ):
         super().__init__()
         self.obs_dim = obs_dim
@@ -424,8 +536,14 @@ class HierarchicalTransformerPolicy(nn.Module):
         # 1. Observation Normalization
         self.obs_normalizer = RunningNormalizer(obs_dim)
 
-        # 2. Sensory Group Encoder
-        self.sensory_encoder = SensoryGroupEncoder(d_model)
+        # 2. Sensory encoder. Topology-aware variant builds per-leg tokens
+        # and then cross-attends limb / trunk / ground / command at the body
+        # tier; the original SensoryGroupEncoder treats every sensor group
+        # as a flat token. Off by default to preserve checkpoint compat.
+        if use_topology_encoder:
+            self.sensory_encoder = TopologyAwareHierarchicalEncoder(d_model)
+        else:
+            self.sensory_encoder = SensoryGroupEncoder(d_model)
 
         # 3. Morphological Symmetry
         self.symmetry_aug = SymmetryAugmenter(d_model, obs_dim)
@@ -604,14 +722,18 @@ class TransformerFeaturesExtractor(nn.Module):
     """
 
     def __init__(self, observation_space, d_model: int = 256,
-                 history_len: int = HISTORY_LEN):
+                 history_len: int = HISTORY_LEN,
+                 use_topology_encoder: bool = False):
         super().__init__()
         self.d_model = d_model
         self.history_len = history_len
         self.obs_dim = observation_space.shape[0]
         self.features_dim = d_model  # output dimension
 
-        self.sensory_encoder = SensoryGroupEncoder(d_model)
+        if use_topology_encoder:
+            self.sensory_encoder = TopologyAwareHierarchicalEncoder(d_model)
+        else:
+            self.sensory_encoder = SensoryGroupEncoder(d_model)
         self.symmetry_aug = SymmetryAugmenter(d_model)
         self.pos_encoding = SinusoidalPositionalEncoding(d_model, max_len=history_len)
         self.temporal_layers = nn.ModuleList([
