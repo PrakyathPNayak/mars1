@@ -41,3 +41,7 @@ checkpoints/
 *.bak
 *.tmp
 key.txt
+
+# Office / report lock files
+.~lock.*#
+~$*
