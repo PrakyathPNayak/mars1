@@ -188,14 +188,14 @@ Full config in [`training_config.json`](training_config.json).
 | n_steps | 4096 | 2048 |
 | BC epochs | — | 100 |
 | Network | MLP [2048,1024,512] | Transformer d=256, 3L, 4-expert MoE |
-| Observation | 49-dim | 49-dim × 16-step history |
+| Observation | 196-dim | 196-dim × 16-step history |
 
 ## Project Structure
 
 ```
 src/
 ├── env/
-│   ├── cheetah_env.py       # Go1 Gymnasium environment (49-dim obs, reward v3)
+│   ├── cheetah_env.py       # Go1 Gymnasium environment (196-dim obs, reward v23)
 │   └── terrain_env.py       # Terrain variant
 ├── training/
 │   ├── train.py             # Stage 1: MLP PPO
