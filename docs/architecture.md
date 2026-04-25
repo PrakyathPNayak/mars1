@@ -1,9 +1,10 @@
-# MIT Mini Cheetah RL Locomotion — Architecture
+# Unitree Go1 RL Locomotion — Architecture
 
 ## Overview
 Complete RL environment for training and deploying locomotion policies
-on the MIT Mini Cheetah quadruped. Supports keyboard control, autonomous
-exploration, and sim-to-real transfer via domain randomization.
+on the Unitree Go1 quadruped (MuJoCo Menagerie). Supports keyboard control,
+autonomous exploration, and terrain-aware policies trained via a two-stage
+hierarchical pipeline (PPO MLP expert → Transformer+MoE fine-tuning).
 
 ## Package Structure
 ```
@@ -11,12 +12,12 @@ exploration, and sim-to-real transfer via domain randomization.
 ├── run.py                       # Main entrypoint
 ├── Makefile                     # Convenience targets (test, test-full, report)
 ├── assets/
-│   ├── mini_cheetah.xml         # MuJoCo MJCF model (capsule collision geometry)
-│   └── mini_cheetah_params.json # Physical parameters
+│   ├── go1.xml                  # MuJoCo MJCF model (mujoco_menagerie)
+│   └── go1_terrain.xml          # Variant with heightfield terrain
 ├── src/
 │   ├── env/
-│   │   ├── cheetah_env.py       # Base Gymnasium environment (48-dim obs)
-│   │   └── terrain_env.py       # Advanced terrain environment (57-dim obs)
+│   │   ├── cheetah_env.py       # Go1 Gymnasium environment (196-dim obs, v23)
+│   │   └── terrain_env.py       # Terrain variant
 │   ├── control/
 │   │   ├── keyboard_controller.py
 │   │   └── exploration_policy.py
