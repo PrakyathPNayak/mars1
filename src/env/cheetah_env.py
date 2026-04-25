@@ -6,7 +6,7 @@ v23: Complete redesign for robust, precise, terrain-aware locomotion.
 Robot: Unitree Go1 (from mujoco_menagerie, BSD-3-Clause)
 
 == KEY CHANGES FROM v22 ==
-  - Perfect sensors: NO domain randomization, NO sensor noise, NO push perturbations
+  - Lightweight domain randomization: mass, friction, joint damping, PD gains, motor strength
   - Terrain system: Procedural heightfield (slopes, stairs, rough, gaps, stepping stones)
   - Heightmap observation: 11x11 local terrain scan in body frame
   - Continuous height control: Walk/stand at any height 0.10–0.30m
