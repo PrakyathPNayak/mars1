@@ -132,12 +132,11 @@ just tensorboard logdir=runs/20260403_120000/logs_mlp
 | A / ← | Strafe left |
 | D / → | Strafe right |
 | Q / E | Turn left / right |
-| SHIFT + dir | Run speed |
-| CTRL | Toggle crouch |
+| 1 / 2 / 3 | Walk / Trot / Run speed |
+| C | Toggle crouch (low body height) |
 | J | Jump |
-| SPACE | Stop / stand |
-| 1 / 2 / 3 | Walk / Trot / Run mode |
-| X | Toggle exploration mode |
+| SPACE | Stop motion / clear command |
+| ESC ESC | Quit (press twice within 500ms) |
 
 ## Reward Design (v3)
 
